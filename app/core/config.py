@@ -134,6 +134,14 @@ class Settings(BaseSettings):
     # owner rules are off.
     owner_rule_recipients: str = Field(default="", alias="OWNER_RULE_RECIPIENTS")
 
+    # The doctor's own Telegram bot (app.services.doctor_telegram): new
+    # appointments, the day's list, and a day off in one message. The token
+    # is from @BotFather; unset leaves the bot off. The usernames are the
+    # Telegram handles allowed to use it -- anybody else who finds the bot is
+    # told it is not for them, since it lists patients by name and number.
+    doctor_telegram_bot_token: str | None = Field(default=None, alias="DOCTOR_TELEGRAM_BOT_TOKEN")
+    doctor_telegram_usernames: str = Field(default="", alias="DOCTOR_TELEGRAM_USERNAMES")
+
     @property
     def owner_rule_recipient_usernames(self) -> list[str]:
         return [name.strip() for name in self.owner_rule_recipients.split(",") if name.strip()]
@@ -279,6 +287,8 @@ class Settings(BaseSettings):
         "admin_instagram_usernames",
         "admin_command_keyword",
         "owner_rule_recipients",
+        "doctor_telegram_bot_token",
+        "doctor_telegram_usernames",
         "seed_faqs_from",
         "seed_doctors_from",
         "public_base_url",

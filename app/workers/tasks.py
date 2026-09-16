@@ -7,10 +7,11 @@ guardrails, the answer prompt, the transcript — is shared business logic.
 The Telegram bot's inbound edge enqueues these same two jobs.
 """
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable, Mapping
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,6 +52,7 @@ from app.services.debounce import (
     pop_batch_if_current_generation,
     restore_batch,
 )
+from app.services import doctor_telegram
 from app.services.delivery import send_reply
 from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.knowledge_base import record_rule_in_knowledge_base
@@ -645,7 +647,27 @@ async def resolve_username(
 configure_logging()
 
 
+async def _start_doctor_telegram(ctx: dict[str, Any]) -> None:
+    """Start the doctor's Telegram bot beside the queue, if it is configured."""
+    stop = asyncio.Event()
+    ctx["doctor_telegram_stop"] = stop
+    ctx["doctor_telegram_task"] = asyncio.create_task(doctor_telegram.run_forever(stop))
+
+
+async def _stop_doctor_telegram(ctx: dict[str, Any]) -> None:
+    stop = ctx.get("doctor_telegram_stop")
+    task = ctx.get("doctor_telegram_task")
+    if stop is not None:
+        stop.set()
+    if task is not None:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 class WorkerSettings:
+    on_startup = _start_doctor_telegram
+    on_shutdown = _stop_doctor_telegram
     functions = [
         process_inbound_message,
         fire_debounce_window,
