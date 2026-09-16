@@ -1,0 +1,413 @@
+"""Letting the assistant offer a real free slot and book it.
+
+Asked to book an appointment, the assistant used to ask for a phone number
+so that somebody would call back. That is a worse answer than the clinic can
+actually give: the schedule is right here, the free slots are known, and the
+patient is already typing. A receptionist would say "bugun 14:00 bo'sh,
+to'g'ri keladimi?" -- so this makes that answer possible.
+
+Two halves, and the split is deliberate.
+
+Reading: before the model is asked anything, the real free slots are looked
+up and written into the prompt as facts. The model never computes
+availability, never guesses a time, and cannot offer a slot that is taken --
+it picks from a list it was handed. This is also what lets it answer "when
+are you free?", because it is holding the whole week rather than one
+suggestion.
+
+Writing: the model marks the slot the patient accepted with
+[[BOOK:YYYY-MM-DDTHH:MM]] at the end of its reply. The marker is stripped
+before the patient sees anything, the slot is re-checked against the
+database, and only then is the appointment created.
+
+A marker rather than tool calling, because LLMProvider is text in, text out
+and the fallback backend (Qwen through Hugging Face) speaks a different tool
+protocol from OpenAI. One marker works identically on both, in a single
+call.
+
+The honest weakness is the gap between offering a slot and writing the row:
+another booking can land in between. It is re-checked at write time and
+never double-booked -- the database's partial unique index is the real
+guard -- but by then the reply has already been written, so a lost race is
+answered with a fixed correction rather than by asking the model again.
+That costs a call this deployment may not have, and the race is rare in a
+single clinic; the alternative, telling a patient they are booked when they
+are not, is the one failure that ends with somebody standing in a waiting
+room.
+"""
+
+import logging
+import re
+import uuid
+from collections import Counter
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import select
+
+from app.models.appointment import Appointment, AppointmentStatus
+from app.repositories.appointment import AppointmentRepository
+from app.repositories.doctor import DoctorRepository
+from app.services.appointment import (
+    CLINIC_TIMEZONE,
+    SlotAlreadyBookedError,
+    assign_doctor,
+    create_appointment,
+    day_slots,
+)
+
+logger = logging.getLogger(__name__)
+
+# A booking still worth honouring: anything not cancelled or completed.
+ACTIVE_STATUSES = (AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED)
+
+# Today plus the next two working days. Far enough that "ertaga" and "u kun"
+# are always answerable, short enough that the list stays something a person
+# would read out rather than a wall of times.
+HORIZON_DAYS = 2
+
+# The most slots to write into the prompt. A clinic open 09:00-19:00 on a
+# 30-minute grid has twenty slots a day, so three empty days would be sixty
+# lines of nothing but times -- enough to crowd out the FAQ context that
+# answers what the patient actually asked.
+MAX_SLOTS = 24
+
+BOOKING_MARKER = re.compile(
+    r"\[\[\s*BOOK\s*:\s*(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})"
+    r"(?:\s*\|\s*(?P<name>[^\]|]{1,80}?))?\s*\]\]"
+)
+
+# Anything that was trying to be a marker and failed -- "[[BOOK:tomorrow at
+# two]]", a half-written one, a repeated one. It books nothing, but it is
+# removed all the same: showing a patient "[[BOOK:" is worse than failing to
+# book, because it is the one thing that says out loud that nobody is typing.
+PLACEHOLDER_NAMES = frozenset(
+    {
+        "name",
+        "your name",
+        "patient",
+        "patient name",
+        "full name",
+        "ism",
+        "ismi",
+        "ismingiz",
+        "ism familiya",
+        "ism-familiya",
+        "ism sharif",
+        "ism-sharif",
+        "ism sharifingiz",
+        "ism-sharifingiz",
+        "ism familiyangiz",
+        "familiya",
+        "bemor",
+        "bemor ismi",
+        "fio",
+        "f.i.o",
+        "имя",
+        "фио",
+        "пациент",
+    }
+)
+
+MALFORMED_MARKER = re.compile(r"\[\[\s*BOOK[^\]]*\]?\]?")
+
+# Said when the slot the patient accepted was taken between the assistant
+# offering it and the row being written. Fixed text, in the same position as
+# app.services.answer.NO_MATCH_RESPONSE and with the same limitation: it
+# cannot mirror the patient's language. Rare enough to be worth that, and
+# far better than a confirmation that is not true.
+SLOT_LOST_NOTICE = (
+    "\n\nKechirasiz, bu vaqtni hozirgina band qilishdi. Qaysi vaqt sizga qulay bo'lardi?"
+)
+
+
+async def free_slots(
+    repo: AppointmentRepository,
+    now: datetime,
+    *,
+    horizon_days: int = HORIZON_DAYS,
+    capacity: int = 1,
+) -> list[datetime]:
+    """Every free, working-hours slot from `now` to the end of the horizon.
+
+    One query for the window's busy slots, then the grid is walked in
+    memory -- the same shape as app.services.appointment.find_next_free_slot,
+    which returns only the first one.
+    """
+    local_now = now.astimezone(CLINIC_TIMEZONE)
+    last_day = local_now.date() + timedelta(days=horizon_days)
+    window_end = datetime.combine(last_day, datetime.max.time(), tzinfo=CLINIC_TIMEZONE)
+
+    # Counted rather than collected: with several doctors a slot is only
+    # full once each of them is taken.
+    booked = Counter(
+        appointment.scheduled_at
+        for appointment in await repo.list_active_between(
+            local_now.astimezone(UTC), window_end.astimezone(UTC)
+        )
+    )
+
+    slots: list[datetime] = []
+    for day_offset in range(horizon_days + 1):
+        day = local_now.date() + timedelta(days=day_offset)
+        for slot in day_slots(day):
+            # Strictly after now: offering a slot that started ten minutes
+            # ago is how a patient ends up told to come at a time that has
+            # already passed.
+            if slot <= local_now:
+                continue
+            if booked[slot.astimezone(UTC)] >= capacity:
+                continue
+            slots.append(slot)
+            if len(slots) >= MAX_SLOTS:
+                return slots
+    return slots
+
+
+def _day_label(slot: datetime, local_now: datetime) -> str:
+    """How one day of the book is headed.
+
+    "Today" and "tomorrow" are spelled out rather than left to be worked out
+    from the date. Asked to do that arithmetic itself the model gets it wrong
+    in the direction that costs a booking: a patient was told "ertaga
+    2026-08-31" on 31 August, said no, and the slot the front desk thought was
+    agreed was never written down.
+
+    The date stays alongside the word, because the marker in rule 8 is written
+    from it and a label alone would leave nothing to write.
+    """
+    days = (slot.date() - local_now.date()).days
+    named = {0: "TODAY", 1: "TOMORROW"}.get(days)
+    dated = f"{slot:%A %Y-%m-%d}"
+    return f"{named} — {dated}" if named else dated
+
+
+def render(slots: Sequence[datetime], now: datetime) -> str:
+    """The free slots as a prompt section, in clinic-local time.
+
+    The current time is included because every useful answer here is
+    relative to it: without knowing it is Monday 12:40, "bugun" and "ertaga"
+    are guesses, and a model that guesses them offers appointments in the
+    past.
+    """
+    local_now = now.astimezone(CLINIC_TIMEZONE)
+    # Said again here, at the very end of the prompt, on purpose. Rule 7
+    # tells the assistant to come away with a phone number, and against a
+    # bare "qabulga yozing" that instruction kept winning: the patient
+    # asked to be booked and was asked for their number instead, which is
+    # the exact behaviour this feature exists to remove. Repeating it as
+    # the last thing before the conversation is what made it hold.
+    header = (
+        "\n\nTHE APPOINTMENT BOOK\n"
+        "- A patient who asks to be booked is offered a time from this list, "
+        "in this reply. Not a phone number, not a callback, not the call "
+        "centre \u2014 you can book them yourself, so book them.\n"
+        f"- Right now it is {local_now:%A %Y-%m-%d %H:%M} in the clinic's own time zone."
+    )
+    if not slots:
+        return (
+            f"{header}\n- There is nothing free in the next {HORIZON_DAYS + 1} days. "
+            "Do not offer a time. Say you will check with the team and ask when "
+            "would suit them."
+        )
+
+    by_day: dict[str, list[str]] = {}
+    for slot in slots:
+        local = slot.astimezone(CLINIC_TIMEZONE)
+        by_day.setdefault(_day_label(local, local_now), []).append(f"{local:%H:%M}")
+
+    lines = [f"- {day}: {', '.join(times)}" for day, times in by_day.items()]
+    return (
+        f"{header}\n- These slots are free, and only these. Each lasts 30 minutes.\n"
+        + "\n".join(lines)
+        + '\n- Say the day the way a person would — "bugun", "ertaga", '
+        '"1-sentabr". Never read a date out in 2026-09-01 form: a patient '
+        'being told to come on "ertaga 2026-08-31" is being handed a '
+        "machine's notes. This is about the sentence the patient reads; the "
+        "[[BOOK:...]] marker still carries the exact 2026-09-01T13:00 date "
+        "from the list, because it is machinery the patient never sees."
+    )
+
+
+def extract(reply: str) -> tuple[str, datetime | None, str | None]:
+    """Split the patient-facing text from the booking the assistant made.
+
+    Returns the reply with every marker removed -- including a malformed
+    one, because a patient must never be shown the machinery -- the slot as
+    a clinic-local aware datetime, and the patient's name if the assistant
+    asked for one.
+
+    The name is optional in the marker rather than required. A booking
+    without a name is still a booking the clinic can keep; refusing to write
+    one because the patient never said their name would throw away the
+    appointment to protect the tidiness of a column.
+    """
+    match = BOOKING_MARKER.search(reply)
+    cleaned = MALFORMED_MARKER.sub("", BOOKING_MARKER.sub("", reply)).strip()
+    if match is None:
+        return cleaned, None, None
+    try:
+        naive = datetime.fromisoformat(f"{match.group(1)}T{match.group(2)}")
+    except ValueError:  # pragma: no cover - the regex already fixes the shape
+        return cleaned, None, None
+    name = (match.group("name") or "").strip()
+    # The prompt shows the marker's shape as [[BOOK:...|<ism>]], and a model
+    # copying the shape rather than filling it in writes the placeholder
+    # itself. A row in the clinic's diary reading "Name" is worse than one
+    # with no name at all: the front desk cannot tell it is a placeholder.
+    candidate = " ".join(name.lower().strip("<>[]{}()").replace("_", " ").split())
+    if candidate in PLACEHOLDER_NAMES:
+        name = ""
+    return cleaned, naive.replace(tzinfo=CLINIC_TIMEZONE), name or None
+
+
+async def _active_for_conversation(
+    repo: AppointmentRepository, conversation_id: uuid.UUID
+) -> Appointment | None:
+    """This conversation's live appointment, if it already has one."""
+    result = await repo.session.execute(
+        select(Appointment)
+        .where(
+            Appointment.conversation_id == conversation_id,
+            Appointment.status.in_(ACTIVE_STATUSES),
+        )
+        .order_by(Appointment.created_at.desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+async def _move(
+    repo: AppointmentRepository,
+    appointment: Appointment,
+    slot: datetime,
+    name: str | None,
+) -> Appointment:
+    """Point an existing booking at `slot`, and record a name if one arrived.
+
+    A slot somebody else holds is left alone: the patient keeps the
+    appointment they already have, which is a better answer than losing it
+    to a time that was never available.
+    """
+    # The latest name wins, rather than only filling an empty column.
+    # Placeholder-catching is a losing game -- the model has written "Name",
+    # "Ismingiz" and "Ism-sharif" so far, each a form of "put the name here"
+    # in a different language -- so when one slips through, the real name
+    # arriving a turn later has to be able to replace it.
+    if name:
+        appointment.patient_name = name
+
+    target = slot.astimezone(UTC)
+    if appointment.scheduled_at == target:
+        await repo.session.flush()
+        return appointment
+
+    clash = await repo.get_active_at(target)
+    if clash is not None and clash.id != appointment.id:
+        logger.warning(
+            "booking_move_refused appointment_id=%s slot=%s taken_by=%s",
+            appointment.id,
+            slot,
+            clash.id,
+        )
+        await repo.session.flush()
+        return appointment
+
+    logger.warning(
+        "booking_moved appointment_id=%s from=%s to=%s",
+        appointment.id,
+        appointment.scheduled_at,
+        target,
+    )
+    appointment.scheduled_at = target
+    await repo.session.flush()
+    return appointment
+
+
+async def settle(
+    session_repo: AppointmentRepository,
+    reply: str,
+    *,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    source: str,
+    patient_name: str | None = None,
+) -> tuple[str, Appointment | None]:
+    """Book whatever the assistant marked, and return what the patient sees.
+
+    The slot is validated against the database here rather than against the
+    list that was offered: a time the assistant produced from somewhere else
+    is fine if it is genuinely free, and a time from the list is not fine if
+    it has since been taken. What matters is the schedule, not the prompt.
+    """
+    text, slot, marked_name = extract(reply)
+    if slot is None:
+        return text, None
+
+    # One live appointment per conversation, always.
+    #
+    # A patient who agrees to a time and then answers "my name is ..." gets
+    # a second confirmation from the assistant, marker and all -- sometimes
+    # naming a different slot than the one it just booked. Creating a row
+    # for each would leave that patient holding two appointments, one of
+    # which nobody will come to, and the clinic looking at a diary that
+    # disagrees with what it told them.
+    #
+    # So the existing booking is moved rather than duplicated. The reply has
+    # already been written and says the new time; making the diary say the
+    # same thing is the only outcome where the patient and the clinic agree.
+    existing = await _active_for_conversation(session_repo, conversation_id)
+    if existing is not None:
+        return text, await _move(session_repo, existing, slot, marked_name)
+
+    # Chosen before the insert so the row carries a real name: every booking
+    # so far has been recorded against "Tayinlanmagan", which is also what
+    # patients were being reminded of.
+    doctors = await DoctorRepository(session_repo.session).list_active()
+    try:
+        doctor_id, doctor_name = await assign_doctor(session_repo, doctors, slot.astimezone(UTC))
+        appointment = await create_appointment(
+            session_repo,
+            scheduled_at=slot.astimezone(UTC),
+            source=source,
+            doctor_id=doctor_id,
+            doctor_name=doctor_name,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            patient_name=marked_name or patient_name,
+        )
+    except SlotAlreadyBookedError:
+        # Whose booking is it? The assistant re-confirming a time it already
+        # booked -- which it does, a turn later, when the patient answers
+        # "my name is ..." -- lands here holding a slot this very
+        # conversation owns. Telling that patient the time was just taken,
+        # in the same message that confirms it, is the most confusing thing
+        # this code could say, and it is the common case rather than the
+        # rare one.
+        existing = await session_repo.get_active_at(slot.astimezone(UTC))
+        if existing is not None and existing.conversation_id == conversation_id:
+            logger.info(
+                "booking_already_made appointment_id=%s conversation_id=%s",
+                existing.id,
+                conversation_id,
+            )
+            # Their name may have arrived only now, with the second marker.
+            if marked_name and not existing.patient_name:
+                existing.patient_name = marked_name
+            return text, existing
+        logger.warning("booking_slot_lost conversation_id=%s slot=%s", conversation_id, slot)
+        return text + SLOT_LOST_NOTICE, None
+    except Exception:
+        # Never fatal: the reply is already written and the patient is
+        # waiting for it. A booking that did not happen is recoverable by a
+        # human reading the dashboard; a message that never arrives is not.
+        logger.exception("booking_failed conversation_id=%s slot=%s", conversation_id, slot)
+        return text + SLOT_LOST_NOTICE, None
+
+    logger.warning(
+        "booking_created appointment_id=%s conversation_id=%s slot=%s",
+        appointment.id,
+        conversation_id,
+        slot,
+    )
+    return text, appointment

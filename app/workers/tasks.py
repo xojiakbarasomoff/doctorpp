@@ -1,0 +1,592 @@
+"""Background jobs: turn a recorded inbound message into a sent reply.
+
+Platform-neutral. The job arguments carry a channel id rather than anything
+Instagram-shaped, the reply goes out through app.services.delivery (which
+dispatches on the channel's type), and every step in between — retrieval,
+guardrails, the answer prompt, the transcript — is shared business logic.
+The Telegram bot's inbound edge enqueues these same two jobs.
+"""
+
+import logging
+import uuid
+from collections.abc import Callable, Mapping
+from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
+from typing import Any
+
+from arq import Retry, cron
+from arq.connections import RedisSettings
+from sqlalchemy.ext.asyncio import AsyncSession
+
+# Imported for the side effect of registering the built-in channel adapters,
+# which app.services.delivery then looks up by channel type. The worker is a
+# separate process from the web app, so it must do this itself.
+from app import channels  # noqa: F401  - importing it registers the adapters
+from app.channels.base import ChannelAdapter
+from app.core.config import get_settings
+from app.core.db import db_session
+from app.core.logging import configure_logging
+from app.core.redaction import preview
+from app.core.tenant_context import reset_current_tenant, set_current_tenant
+from app.models.appointment import Appointment
+from app.models.channel import Channel
+from app.models.conversation import Conversation
+from app.rag.embeddings import EmbeddingProvider
+from app.rag.llm import LLMProvider
+from app.repositories.appointment import AppointmentRepository
+from app.services.answer import generate_answer
+from app.services.appointment import CLINIC_TIMEZONE
+from app.services.booking import settle as settle_booking
+from app.services.conversation import (
+    context_for_reply,
+    last_inbound_at,
+    record_outbound_message,
+)
+from app.services.conversation_signals import find_phone_number
+from app.services.debounce import (
+    join_messages,
+    pop_batch_if_current_generation,
+    restore_batch,
+)
+from app.services.delivery import send_reply
+from app.services.admin_commands import add_rule, is_admin, parse_rule
+from app.services.knowledge_base import record_rule_in_knowledge_base
+from app.services.profile import ensure_instagram_username
+from app.services.reminders import send_due_reminders
+from app.services.sheets import (
+    AppointmentRow,
+    LeadRow,
+    mirror_appointment,
+    mirror_lead,
+    summarise_problem,
+)
+from app.services.tenant_resolution import bot_replies_enabled
+from app.services.token_refresh import refresh_instagram_tokens
+from app.services.webhook_watch import verify_telegram_webhooks
+
+logger = logging.getLogger(__name__)
+
+# How long to wait before each retry of a failed batch, in order. The first
+# few are short because most failures are a blip; the last is long enough to
+# ride out a provider having a bad few minutes. Shorter in total than the TTL
+# restore_batch sets, or the last attempt would find nothing to answer.
+_RETRY_BACKOFF_SECONDS = (30, 120, 300, 600)
+
+# Must match arq's max_tries in WorkerSettings: after this many attempts the
+# job is abandoned, and the log line at that point is the only notice anyone
+# gets that a patient went unanswered.
+_MAX_ATTEMPTS = 5
+
+
+async def process_inbound_message(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    conversation_id: str,
+    sender_external_id: str,
+    message_text: str,
+    reply_context: Mapping[str, Any] | None = None,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    embedding_provider: EmbeddingProvider | None = None,
+    llm_provider: LLMProvider | None = None,
+    adapter: ChannelAdapter | None = None,
+) -> None:
+    """ARQ job: answer one inbound message (or one debounced batch) and send
+    the reply back over the channel it arrived on.
+
+    Runs in the worker process, not the request that received the webhook —
+    that request's DB session and tenant context don't survive past its 200
+    response, so this re-establishes both from the plain, serializable
+    arguments the inbound edge enqueued (a UUID isn't one of those, hence
+    the ids arrive as str and are parsed back here).
+
+    The channel id is carried explicitly rather than looked up from the
+    tenant, so the reply always goes out over the account the patient
+    actually wrote to — see app.services.delivery for what the previous
+    "first active channel" lookup got wrong.
+
+    session_factory defaults to app.core.db.db_session (a genuinely fresh
+    session against the real engine — in production this job never receives
+    one from a caller). It is injectable for the same reason
+    embedding_provider/llm_provider/adapter are: tests call this function
+    directly, bypassing the queue. That is not just convenience — a *second*,
+    independent db_session() in a test cannot see that test's own uncommitted
+    fixture data, so tests must be able to point the job at the same
+    transactional session the test itself is using.
+    """
+    tenant_uuid = uuid.UUID(tenant_id)
+    conversation_uuid = uuid.UUID(conversation_id)
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with session_factory() as session:
+            if not await bot_replies_enabled(session, tenant_uuid):
+                # Belt to the webhook's braces. The webhook stops queueing the
+                # moment the clinic switches the assistant off, but jobs
+                # already in Redis outlive that -- including any scheduled
+                # before the switch was flipped. Checked again here so
+                # switching off is immediate rather than "immediate once the
+                # queue drains".
+                logger.info(
+                    "worker_bot_disabled_for_tenant",
+                    extra={"tenant_id": tenant_id, "conversation_id": conversation_id},
+                )
+                return
+            history = await context_for_reply(session, conversation_uuid)
+            reply = await generate_answer(
+                session,
+                message_text,
+                embedding_provider=embedding_provider,
+                llm_provider=llm_provider,
+                history=history,
+            )
+
+            # The reply may carry a booking the assistant agreed to. Settled
+            # here rather than inside generate_answer: that function reads,
+            # and this writes a row the clinic will act on, so it belongs in
+            # the same place as the rest of this task's transaction.
+            conversation = await session.get(Conversation, conversation_uuid)
+            channel = await session.get(Channel, uuid.UUID(channel_id))
+            # Bound before the branch: the spreadsheet mirror below reads it
+            # whether or not a booking happened, and a conversation the job
+            # cannot load would otherwise raise NameError there — after the
+            # patient has already been answered.
+            appointment: Appointment | None = None
+            if conversation is not None:
+                reply, appointment = await settle_booking(
+                    AppointmentRepository(session),
+                    reply,
+                    user_id=conversation.user_id,
+                    conversation_id=conversation_uuid,
+                    # "instagram" / "telegram", so the dashboard's SOURCE
+                    # column says where the booking came from — beside
+                    # "operator" for the ones staff enter by hand.
+                    source=str(channel.type) if channel is not None else "bot",
+                )
+                if appointment is not None:
+                    await session.commit()
+
+            # Full reply text stays out of INFO — it is patient-adjacent
+            # content that should not sit in logs that may ship to external
+            # monitoring (TZ section 7, personal data). Length + truncated
+            # preview at INFO; full text only at DEBUG, under a distinct
+            # event name so it is never ambiguous with the redacted INFO line.
+            logger.info(
+                "webhook_reply_generated",
+                extra={
+                    "tenant_id": tenant_id,
+                    "conversation_id": conversation_id,
+                    "sender_external_id": sender_external_id,
+                    "history_turns": len(history),
+                    "reply_length": len(reply),
+                    "reply_preview": preview(reply),
+                },
+            )
+            logger.debug(
+                "webhook_reply_full_text",
+                extra={"sender_external_id": sender_external_id, "reply": reply},
+            )
+
+            # The real recorded time the patient last wrote, now that inbound
+            # messages are persisted — not the "assume now" placeholder this
+            # used before, which left the reply-window check unable to
+            # observe staleness at all. Falling back to now() only covers a
+            # conversation whose inbound row is somehow missing, where
+            # refusing to reply would be the worse failure.
+            patient_last_wrote = await last_inbound_at(session, conversation_uuid)
+
+            # The clinic's own spreadsheet, for the owners who never open a
+            # dashboard. Only when there is something worth a row -- a phone
+            # number the patient typed, or a booking -- because a row per
+            # message would be a page of the same person, and the sheet is
+            # keyed on the number.
+            patient_said = [turn["content"] for turn in history if turn["role"] == "user"]
+            patient_said.append(message_text)
+            phone = next(
+                (found for text in patient_said if (found := find_phone_number(text))), None
+            )
+            lead = (
+                LeadRow(
+                    name=appointment.patient_name if appointment is not None else None,
+                    phone=phone,
+                    source=str(channel.type) if channel is not None else "bot",
+                    comment=summarise_problem(patient_said),
+                    # The day of the visit, not the day they wrote. Somebody
+                    # who messages on the 28th to be seen on the 31st belongs
+                    # in the 31st's list, because that is the list the front
+                    # desk works from that morning. With nothing booked yet,
+                    # today is the only day they belong to.
+                    day=(
+                        appointment.scheduled_at.astimezone(CLINIC_TIMEZONE).date()
+                        if appointment is not None
+                        else datetime.now(UTC).astimezone(CLINIC_TIMEZONE).date()
+                    ),
+                )
+                if phone or appointment is not None
+                else None
+            )
+
+            try:
+                delivered_over = await send_reply(
+                    session,
+                    channel_id=uuid.UUID(channel_id),
+                    recipient_external_id=sender_external_id,
+                    text=reply,
+                    last_user_message_at=patient_last_wrote or datetime.now(UTC),
+                    reply_context=reply_context,
+                    adapter=adapter,
+                )
+            finally:
+                # In a finally, and after the send rather than before it, for
+                # two different reasons.
+                #
+                # After: writing to Google takes a round trip the patient
+                # would otherwise spend waiting for their answer.
+                #
+                # Regardless: a patient who left a number is a patient the
+                # clinic wants to ring, and a delivery that failed -- a
+                # blocked bot, an expired token, a closed messaging window --
+                # is the case where they want to ring them *most*. Skipping
+                # the row exactly then would lose the lead the reply could
+                # not reach. mirror_lead never raises, so this cannot mask
+                # the delivery error it runs beside.
+                if lead is not None:
+                    await mirror_lead(lead)
+                # The booking itself, with the time on it. The lead list
+                # says somebody wants to come; the appointment book says
+                # when, with whom, and whether anyone has confirmed it --
+                # which is what the front desk works from in the morning.
+                if appointment is not None:
+                    await mirror_appointment(
+                        AppointmentRow(
+                            appointment_id=appointment.id,
+                            created_at=appointment.created_at or datetime.now(UTC),
+                            scheduled_at=appointment.scheduled_at,
+                            patient_name=appointment.patient_name,
+                            phone=appointment.patient_phone or phone,
+                            doctor=appointment.doctor_name,
+                            channel=str(channel.type) if channel is not None else "web",
+                            client_id=sender_external_id,
+                            status=appointment.status,
+                            note=summarise_problem(patient_said),
+                        )
+                    )
+
+            # Recorded only when it actually went out: a reply in the
+            # transcript the patient never received would make the next
+            # reply's history describe a conversation that did not happen.
+            if delivered_over is not None:
+                await record_outbound_message(
+                    session,
+                    conversation_id=conversation_uuid,
+                    channel_type=delivered_over,
+                    text=reply,
+                )
+                await session.commit()
+    finally:
+        reset_current_tenant(token)
+
+
+async def fire_debounce_window(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    conversation_id: str,
+    sender_external_id: str,
+    generation: int,
+    reply_context: Mapping[str, Any] | None = None,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    embedding_provider: EmbeddingProvider | None = None,
+    llm_provider: LLMProvider | None = None,
+    adapter: ChannelAdapter | None = None,
+) -> None:
+    """ARQ job: fires once a patient's debounce window has elapsed with no
+    further messages. Scheduled (deferred) by
+    app.services.debounce.handle_inbound_message for every non-emergency
+    message; most scheduled calls for a burst of messages from the same
+    patient are stale by the time they run (a later message reset the
+    window) and no-op here via pop_batch_if_current_generation — only the
+    last one scheduled for the current generation actually claims and
+    processes the batch.
+
+    Uses ctx["redis"] (the worker's own pool, set by arq itself) rather than
+    a second cached pool, and hands the claimed batch to
+    process_inbound_message unchanged — same generate-and-send logic,
+    whether it is answering one message or a joined batch of several.
+    """
+    pool = ctx["redis"]
+    messages = await pop_batch_if_current_generation(
+        pool, uuid.UUID(tenant_id), uuid.UUID(channel_id), sender_external_id, generation
+    )
+    if not messages:
+        return
+
+    try:
+        await process_inbound_message(
+            ctx,
+            tenant_id,
+            channel_id,
+            conversation_id,
+            sender_external_id,
+            join_messages(messages),
+            reply_context,
+            session_factory=session_factory,
+            embedding_provider=embedding_provider,
+            llm_provider=llm_provider,
+            adapter=adapter,
+        )
+    except Exception as exc:
+        # The claim above emptied Redis, so these words exist nowhere else.
+        # Put them back before letting the failure out, or a rate-limited
+        # model means a patient wrote and nobody ever answered -- and nothing
+        # anywhere records that it happened.
+        await restore_batch(
+            pool,
+            uuid.UUID(tenant_id),
+            uuid.UUID(channel_id),
+            sender_external_id,
+            generation,
+            messages,
+        )
+        attempt = int(ctx.get("job_try") or 1)
+        defer = _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS)) - 1]
+        if attempt >= _MAX_ATTEMPTS:
+            # The last word on this batch. It stays in Redis until its TTL,
+            # but nothing will come back for it, so this line is the only
+            # place the clinic can learn the patient was left unanswered.
+            logger.error(
+                "debounce_batch_abandoned attempts=%d messages=%d sender=%s error=%s",
+                attempt,
+                len(messages),
+                sender_external_id,
+                exc,
+            )
+            raise
+        logger.warning(
+            "debounce_batch_deferred attempt=%d defer=%ds messages=%d error=%s",
+            attempt,
+            defer,
+            len(messages),
+            exc,
+        )
+        raise Retry(defer=defer) from exc
+
+
+async def send_appointment_reminders(
+    ctx: dict[str, Any],
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    now: datetime | None = None,
+    adapter: ChannelAdapter | None = None,
+) -> None:
+    """Cron job: remind patients about appointments that are coming up.
+
+    Runs across every tenant — it has no request and no operator to take one
+    from — and app.services.reminders sets the tenant per appointment before
+    touching anything scoped. See that module for why a reminder is marked
+    sent only once it has actually gone out.
+    """
+    async with session_factory() as session:
+        run = await send_due_reminders(session, now=now, adapter=adapter)
+
+    if run.sent or run.failed or run.skipped:
+        logger.info(
+            "appointment_reminders_run",
+            extra={"sent": run.sent, "failed": run.failed, "skipped": run.skipped},
+        )
+
+
+async def refresh_channel_tokens(
+    ctx: dict[str, Any],
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+) -> None:
+    """Cron job: renew Instagram tokens before they run out.
+
+    Daily, though a token lasts sixty days. The margin is the point: a job
+    that runs far more often than it needs to can miss most of its runs and
+    still never let a clinic's Instagram go quiet.
+    """
+    async with session_factory() as session:
+        run = await refresh_instagram_tokens(session)
+    if run.touched:
+        logger.info(
+            "instagram_token_refresh_run refreshed=%d skipped=%d failed=%d",
+            run.refreshed,
+            run.skipped,
+            run.failed,
+        )
+
+
+async def verify_channel_webhooks(
+    ctx: dict[str, Any],
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+) -> None:
+    """Cron job: make sure Telegram is still delivering to this deployment.
+
+    Unlike the token job, this guards against something that can happen at
+    any moment rather than on a known schedule -- anything holding the bot
+    token can clear the registration, and nothing on this side notices,
+    because the symptom is the absence of traffic. Frequent and cheap: the
+    check is one read-only call per bot and only writes when the answer is
+    wrong.
+    """
+    async with session_factory() as session:
+        run = await verify_telegram_webhooks(
+            session, public_base_url=get_settings().public_base_url
+        )
+    if run.notable:
+        logger.info(
+            "telegram_webhook_watch_run ok=%d repaired=%d skipped=%d failed=%d",
+            run.ok,
+            run.repaired,
+            run.skipped,
+            run.failed,
+        )
+
+
+async def apply_admin_rule(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    user_id: str,
+    sender_external_id: str,
+    message_text: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    adapter: ChannelAdapter | None = None,
+) -> None:
+    """ARQ job: store a rule the clinic's admin sent by direct message.
+
+    The webhook decides only that this *looks* like an admin command -- the
+    message starts with the keyword -- and everything that costs anything
+    happens here: the handle is resolved if it is not known yet, the sender is
+    checked against the nominated admins, the rule is stored, and the admin is
+    told what the assistant now believes.
+
+    Verification lives here rather than in the webhook because it may need a
+    call to Meta to learn who is writing, and a webhook that waits on Meta is
+    a webhook Meta retries. A message that turns out not to be from an admin
+    is dropped with a log line and nothing else: whoever sent it already got
+    the ordinary reply, since the webhook queued that too.
+    """
+    settings = get_settings()
+    tenant_uuid = uuid.UUID(tenant_id)
+    rule = parse_rule(message_text, settings.admin_command_keyword)
+    if rule is None:
+        return
+
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with session_factory() as session:
+            username = await ensure_instagram_username(
+                session, channel_id=uuid.UUID(channel_id), user_id=uuid.UUID(user_id)
+            )
+            await session.commit()
+            if not is_admin(username, settings.admin_usernames):
+                logger.warning(
+                    "admin_rule_refused",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "sender_external_id": sender_external_id,
+                        "username": username,
+                    },
+                )
+                return
+
+            rules = await add_rule(session, tenant_id=tenant_uuid, rule=rule)
+            # The rule is also written into the knowledge base, inactive, so
+            # that it is visible on the screen the clinic reads -- and never
+            # retrieved. An instruction sitting among the answers is an
+            # instruction a patient's question can land on, and "never say we
+            # do IVF" read out to somebody asking about IVF is worse than not
+            # showing it at all.
+            await record_rule_in_knowledge_base(session, rule=rule, position=len(rules))
+            await session.commit()
+
+            await send_reply(
+                session,
+                channel_id=uuid.UUID(channel_id),
+                recipient_external_id=sender_external_id,
+                text=(
+                    f"Qabul qilindi. Endi shu qoidaga amal qilaman:\n«{rule}»\n\n"
+                    f"Jami {len(rules)} ta qoida. Ularni dashboard → Sozlamalar "
+                    f"bo'limida ko'rish, tahrirlash yoki o'chirish mumkin."
+                ),
+                last_user_message_at=datetime.now(UTC),
+                adapter=adapter,
+            )
+            logger.info(
+                "admin_rule_applied",
+                extra={"tenant_id": tenant_id, "username": username, "rule_count": len(rules)},
+            )
+    finally:
+        reset_current_tenant(token)
+
+
+async def resolve_username(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    user_id: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+) -> None:
+    """ARQ job: put the patient's Instagram handle on their row, once.
+
+    Its own job rather than a step inside process_inbound_message, for two
+    reasons. A patient who writes while the assistant is switched off never
+    reaches that job at all -- and those are exactly the conversations an
+    operator is about to answer by hand, so they are the ones that most need
+    a name on them. And a lookup against Meta has no business sitting on the
+    path that answers a patient: it is slower than the reply is allowed to
+    be, and it is allowed to fail, which the reply is not.
+
+    Enqueued on every inbound message and cheap on all but the first: a
+    patient who already has a handle is one SELECT and nothing else.
+    """
+    token = set_current_tenant(uuid.UUID(tenant_id))
+    try:
+        async with session_factory() as session:
+            resolved = await ensure_instagram_username(
+                session,
+                channel_id=uuid.UUID(channel_id),
+                user_id=uuid.UUID(user_id),
+            )
+            if resolved is not None:
+                await session.commit()
+    finally:
+        reset_current_tenant(token)
+
+
+# The worker is a separate process from the web app, so it needs its own
+# handler installed -- app.main's call never runs here.
+configure_logging()
+
+
+class WorkerSettings:
+    functions = [
+        process_inbound_message,
+        fire_debounce_window,
+        resolve_username,
+        apply_admin_rule,
+    ]
+    # Named here as well as in _MAX_ATTEMPTS so the retry ladder in
+    # fire_debounce_window and arq's own limit cannot drift apart.
+    max_tries = _MAX_ATTEMPTS
+    # Every five minutes. The reminder windows are hours wide and the job
+    # catches up on anything it missed, so this is about how promptly a
+    # reminder lands inside its window rather than about not losing one.
+    cron_jobs = [
+        cron(send_appointment_reminders, minute=set(range(0, 60, 5))),
+        # 03:20 rather than on the hour: nothing else the clinic depends
+        # on runs then, and Meta is quietest.
+        cron(refresh_channel_tokens, hour={3}, minute={20}),
+        # Every ten minutes. A cleared webhook is a total outage on that
+        # channel, so the interval is really the worst case a patient
+        # waits before the bot can hear them again.
+        cron(verify_channel_webhooks, minute=set(range(0, 60, 10))),
+    ]
+    redis_settings = RedisSettings.from_dsn(get_settings().redis_url)

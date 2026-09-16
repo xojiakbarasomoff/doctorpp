@@ -1,0 +1,237 @@
+"""The conversation store: who is talking to a clinic, and what was said.
+
+Shared business logic, deliberately platform-neutral. Nothing here mentions
+Instagram or Telegram — a channel arrives as an id plus its type string, and
+the patient as whatever id that platform issued. Both bots record their
+traffic through this one module, so a clinic's conversation history is a
+single table's worth of rows however the patient reached it, and neither
+adapter grows its own copy of "find or make the user, find or make the
+conversation, append the message".
+
+Before this existed the Instagram pipeline persisted nothing at all: the
+User/Conversation/Message models and their repositories were written but
+never called, so every reply was generated from a single message with no
+history, the operator-takeover flag on Conversation could never be read, and
+the reply-window check had no real timestamp to measure against.
+"""
+
+import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.conversation import Conversation
+from app.models.message import Message, MessageSender
+from app.models.user import User
+from app.rag.llm import ChatMessage
+from app.repositories.conversation import OPEN_STATUS, ConversationRepository
+from app.repositories.message import MessageRepository
+from app.repositories.user import UserRepository
+
+# How much of a conversation is replayed to the LLM. Enough for a patient to
+# refer back to what they just asked ("va narxi qancha?" after a treatment
+# question), short enough that a long-running chat cannot push the system
+# prompt's rules out of the model's attention or grow the per-reply cost
+# without bound. Counted in messages, both sides included.
+DEFAULT_HISTORY_LIMIT = 10
+
+
+@dataclass(frozen=True)
+class InboundContext:
+    """What the pipeline needs to know after an inbound message is recorded."""
+
+    conversation_id: uuid.UUID
+    user_id: uuid.UUID
+    # False once an operator has taken this conversation over. The message is
+    # still recorded — a patient's words belong in the transcript regardless
+    # of who answers them — but the bot must not reply on top of a human.
+    is_bot_enabled: bool
+
+
+async def _get_or_create_user(
+    session: AsyncSession, *, channel_id: uuid.UUID, external_id: str
+) -> User:
+    """The User for this platform id, created on first contact.
+
+    Two webhook deliveries for a patient's first two message bubbles can
+    arrive concurrently and both find no row. The unique constraint on
+    (tenant_id, channel_id, external_id) is what actually decides which one
+    wins; the loser catches the IntegrityError and re-reads the row the
+    winner inserted, inside a SAVEPOINT so only the failed insert is undone
+    rather than everything the caller has done so far.
+    """
+    repo = UserRepository(session)
+    existing = await repo.get_by_external_id(channel_id=channel_id, external_id=external_id)
+    if existing is not None:
+        return existing
+    try:
+        async with session.begin_nested():
+            return await repo.create(channel_id=channel_id, external_id=external_id)
+    except IntegrityError:
+        raced = await repo.get_by_external_id(channel_id=channel_id, external_id=external_id)
+        if raced is None:
+            # The constraint that fired was not the one we expected to lose
+            # to — re-raising beats returning a row we never found.
+            raise
+        return raced
+
+
+async def _get_or_create_open_conversation(
+    session: AsyncSession, *, user_id: uuid.UUID
+) -> Conversation:
+    """This patient's open conversation, opened on first contact. Races the
+    same way, and for the same reason, as _get_or_create_user.
+    """
+    repo = ConversationRepository(session)
+    existing = await repo.get_open_for_user(user_id)
+    if existing is not None:
+        return existing
+    try:
+        async with session.begin_nested():
+            return await repo.create(user_id=user_id, status=OPEN_STATUS)
+    except IntegrityError:
+        raced = await repo.get_open_for_user(user_id)
+        if raced is None:
+            raise
+        return raced
+
+
+async def register_inbound_message(
+    session: AsyncSession,
+    *,
+    channel_id: uuid.UUID,
+    channel_type: str,
+    sender_external_id: str,
+    text: str,
+    reply_context: Mapping[str, Any] | None = None,
+) -> InboundContext:
+    """Record one message from a patient and return the context to act on it.
+
+    Called by every platform's inbound edge, before any answering happens:
+    the transcript must contain what the patient said whether the bot
+    answers, an operator does, or nothing does. Requires a tenant in context
+    (see app.core.tenant_context) — every write here goes through a
+    tenant-scoped repository.
+
+    Does not commit. The caller owns the transaction, so recording the
+    message and whatever it decides to do next either both happen or
+    neither does.
+
+    `reply_context` is the platform's own routing detail for answering this
+    message (see ChannelAdapter.send_text). It is stored on the message
+    rather than only passed to the queue so that an operator replying from
+    the dashboard hours later can route their reply the same way the bot
+    would have — for a Telegram Business conversation, over the same
+    business connection.
+    """
+    user = await _get_or_create_user(session, channel_id=channel_id, external_id=sender_external_id)
+    conversation = await _get_or_create_open_conversation(session, user_id=user.id)
+    await MessageRepository(session).create(
+        conversation_id=conversation.id,
+        sender=MessageSender.PATIENT,
+        content=text,
+        channel=channel_type,
+        meta=dict(reply_context) if reply_context else {},
+    )
+    return InboundContext(
+        conversation_id=conversation.id,
+        user_id=user.id,
+        is_bot_enabled=conversation.is_bot_enabled,
+    )
+
+
+async def record_outbound_message(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    channel_type: str,
+    text: str,
+    sender: MessageSender = MessageSender.BOT,
+) -> Message:
+    """Record a reply the clinic sent, so the transcript holds both sides.
+
+    Written after the send succeeds, not before: a message in the transcript
+    that the patient never received would make the next reply's history
+    describe a conversation that did not happen.
+    """
+    return await MessageRepository(session).create(
+        conversation_id=conversation_id,
+        sender=sender,
+        content=text,
+        channel=channel_type,
+    )
+
+
+async def last_inbound_at(session: AsyncSession, conversation_id: uuid.UUID) -> datetime | None:
+    return await MessageRepository(session).last_inbound_at(conversation_id)
+
+
+def _to_chat_messages(messages: Sequence[Message]) -> list[ChatMessage]:
+    """Map stored messages onto the LLM's two-role view.
+
+    An operator's message is presented as "assistant": from the model's side
+    it is a turn the clinic already took, and hiding it would leave the
+    model contradicting a human colleague's answer in the very next reply.
+    """
+    return [
+        ChatMessage(
+            role="user" if message.sender == MessageSender.PATIENT else "assistant",
+            content=message.content,
+        )
+        for message in messages
+    ]
+
+
+async def recent_history(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+) -> list[ChatMessage]:
+    """The tail of a conversation, oldest first, in the LLM's message shape."""
+    messages = await MessageRepository(session).list_recent(conversation_id, limit)
+    return _to_chat_messages(messages)
+
+
+async def context_for_reply(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+) -> list[ChatMessage]:
+    """The conversation's earlier turns, excluding the messages about to be
+    answered.
+
+    The inbound edge records a patient's message before anything answers it,
+    so the tail of the transcript at reply time is exactly the batch being
+    answered — one message, or several if they arrived inside the debounce
+    window and were joined. Dropping the trailing patient turns leaves the
+    conversation as it stood before this question, which is what belongs in
+    front of it as context; passing them as well would show the model the
+    same question twice, once split up and once joined.
+    """
+    turns = await recent_history(session, conversation_id, limit=limit)
+    while turns and turns[-1]["role"] == "user":
+        turns.pop()
+    return turns
+
+
+async def reply_context_for(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> dict[str, Any] | None:
+    """How to route a reply into this conversation, as captured from the
+    patient's most recent message.
+
+    What an operator's dashboard reply needs: the bot's own reply carries
+    the context straight through the queue, but a human answering later has
+    only the conversation to go on.
+    """
+    messages = await MessageRepository(session).list_recent(conversation_id, 20)
+    for message in reversed(messages):
+        if message.sender == MessageSender.PATIENT and message.meta:
+            return dict(message.meta)
+    return None

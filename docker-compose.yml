@@ -1,0 +1,59 @@
+# Pinned so the stack keeps its identity no matter which directory it is
+# started from. Compose otherwise derives the project name from the folder,
+# which names the volumes too — so moving this project into instagram/ (and
+# renaming it again when the merge finishes) would silently point Postgres at
+# a brand-new, empty volume while the old one sat there holding the data.
+name: dental-assistant
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["arq", "app.workers.tasks.WorkerSettings"]
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-dental_ig_assistant}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

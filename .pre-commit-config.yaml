@@ -1,0 +1,34 @@
+# The three revs below must match the exact pins in pyproject.toml's [dev]
+# extra. They are the same three gates CI runs, so a hook that formats to a
+# different version's rules just hands you a diff CI then rejects.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        args: [--strict]
+        files: ^app/
+        additional_dependencies:
+          - fastapi>=0.115
+          - pydantic>=2.9
+          - pydantic-settings>=2.5
+          - sqlalchemy>=2.0
+          - pgvector>=0.3
+          - openai>=1.50
+          - google-genai>=1.0
+          - arq>=0.26
+          - jinja2>=3.1
+          - python-multipart>=0.0.12
+          - itsdangerous>=2.2
+          - bcrypt>=4.2

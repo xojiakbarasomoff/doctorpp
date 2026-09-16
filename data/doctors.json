@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Abdirova Umida Irsaliyevna",
+    "specialty": "Akusher-ginekolog",
+    "working_hours": "09:00 - 18:00"
+  },
+  {
+    "name": "Abduqaharova Nargiza Abdurahimovna",
+    "specialty": "Ginekolog, reproduktolog",
+    "working_hours": "09:00 - 18:00"
+  },
+  {
+    "name": "Ismoilova Guzal Maqsudbekovna",
+    "specialty": "Endokrinolog, dermatolog, kosmetolog",
+    "working_hours": "09:00 - 18:00"
+  },
+  {
+    "name": "Axmadaliyev Temur G'iyosiddin o'g'li",
+    "specialty": "Urolog-androlog",
+    "working_hours": "09:00 - 18:00"
+  },
+  {
+    "name": "Xusanov Sanjarbek Muhammadsohibovich",
+    "specialty": "Urolog-androlog, endourolog, onkourolog",
+    "working_hours": "09:00 - 18:00"
+  },
+  {
+    "name": "Iriskulov Nabijan Kadirkulovich",
+    "specialty": "LOR",
+    "working_hours": "09:00 - 18:00"
+  }
+]

@@ -1,0 +1,307 @@
+"""Reading patient conversations, and taking one over.
+
+Operator takeover is the feature this makes real. `Conversation.is_bot_enabled`
+existed as a column nothing read, so switching the bot off had no effect;
+both inbound edges now check it before answering, and this is where a human
+turns it off and starts replying themselves.
+"""
+
+import uuid
+from datetime import UTC, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.admin.deps import require_patient_access, verify_csrf_header
+from app.api.admin.schemas import (
+    BotToggle,
+    ConversationDetail,
+    ConversationSummary,
+    MessageOut,
+    OperatorReply,
+)
+from app.api.auth import get_current_operator
+from app.core.db import get_db_session
+from app.core.redaction import preview
+from app.core.tenant_context import get_current_tenant
+from app.models.channel import Channel
+from app.models.conversation import Conversation
+from app.models.message import Message, MessageSender
+from app.models.operator import Operator
+from app.models.user import User
+from app.repositories.conversation import ConversationRepository
+from app.repositories.message import MessageRepository
+from app.services.conversation import (
+    record_outbound_message,
+    reply_context_for,
+)
+from app.services.delivery import send_reply
+
+router = APIRouter(prefix="/api/admin/conversations", tags=["Admin — Conversations"])
+
+# How much of a transcript the detail view returns. Long enough to read the
+# whole of a normal clinic conversation, bounded so one very long thread
+# cannot make the endpoint slow for everybody.
+TRANSCRIPT_LIMIT = 200
+
+
+async def _summaries(
+    session: AsyncSession, conversations: list[Conversation]
+) -> list[ConversationSummary]:
+    """One extra query for the patients and one for the last messages, not
+    two per row.
+    """
+    if not conversations:
+        return []
+
+    user_ids = {conversation.user_id for conversation in conversations}
+    users = {
+        user.id: user
+        for user in (await session.execute(select(User).where(User.id.in_(user_ids)))).scalars()
+    }
+    channel_ids = {user.channel_id for user in users.values()}
+    channels = {
+        channel.id: channel
+        for channel in (
+            await session.execute(select(Channel).where(Channel.id.in_(channel_ids)))
+        ).scalars()
+    }
+
+    # The newest message per conversation, resolved in one pass rather than
+    # a query per row.
+    newest = (
+        select(
+            Message.conversation_id,
+            func.max(Message.created_at).label("last_at"),
+        )
+        .where(Message.conversation_id.in_([c.id for c in conversations]))
+        .group_by(Message.conversation_id)
+        .subquery()
+    )
+    last_messages = {
+        message.conversation_id: message
+        for message in (
+            await session.execute(
+                select(Message).join(
+                    newest,
+                    (Message.conversation_id == newest.c.conversation_id)
+                    & (Message.created_at == newest.c.last_at),
+                )
+            )
+        ).scalars()
+    }
+
+    rows = []
+    for conversation in conversations:
+        user = users.get(conversation.user_id)
+        channel = channels.get(user.channel_id) if user is not None else None
+        last = last_messages.get(conversation.id)
+        rows.append(
+            ConversationSummary(
+                id=conversation.id,
+                status=conversation.status,
+                is_bot_enabled=conversation.is_bot_enabled,
+                patient_name=user.name if user is not None else None,
+                patient_username=user.username if user is not None else None,
+                patient_external_id=user.external_id if user is not None else "",
+                channel=channel.type if channel is not None else "",
+                last_message_at=last.created_at if last is not None else None,
+                # Truncated in the list the same way it is in the logs: a
+                # roster of conversations does not need the full text of
+                # every one, and this view is often left open on a screen.
+                last_message_preview=preview(last.content) if last is not None else None,
+                updated_at=conversation.updated_at,
+            )
+        )
+    return rows
+
+
+@router.get("", response_model=list[ConversationSummary])
+async def list_conversations(
+    operator: Operator = Depends(get_current_operator),
+    session: AsyncSession = Depends(get_db_session),
+    status_filter: str | None = Query(default=None, alias="status"),
+    only_taken_over: bool = Query(default=False),
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[ConversationSummary]:
+    tenant_id = get_current_tenant()
+    # When each conversation last heard anything, from either side. The list
+    # used to be ordered by conversations.updated_at, which nothing touches
+    # when a message arrives -- only toggling the bot or closing a thread
+    # moves it -- so a patient writing right now could sit halfway down the
+    # screen under people who wrote yesterday. The inbox is read top-down;
+    # the newest message is what belongs at the top.
+    #
+    # Scoped to this tenant's conversations inside the aggregate, so the
+    # grouping never walks another clinic's messages.
+    last_activity = (
+        select(
+            Message.conversation_id.label("conversation_id"),
+            func.max(Message.created_at).label("last_at"),
+        )
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(Conversation.tenant_id == tenant_id)
+        .group_by(Message.conversation_id)
+        .subquery()
+    )
+    stmt = (
+        select(Conversation)
+        .outerjoin(last_activity, last_activity.c.conversation_id == Conversation.id)
+        .where(Conversation.tenant_id == tenant_id)
+    )
+    if status_filter:
+        stmt = stmt.where(Conversation.status == status_filter)
+    if only_taken_over:
+        stmt = stmt.where(Conversation.is_bot_enabled.is_(False))
+    if q and q.strip():
+        # Matched in the database rather than in the dashboard, because the
+        # list is capped at `limit`: filtering what was already fetched would
+        # search the most recent 50 conversations and quietly miss the patient
+        # who wrote last week -- which is the one somebody is searching for.
+        #
+        # The handle first, since that is what the operator is typing, then
+        # the display name, then the platform id: an operator who has an id
+        # from somewhere else can still paste it. The leading "@" people type
+        # out of habit is stripped, and matching is case-insensitive because
+        # Instagram handles are lowercase and nobody types them that way.
+        needle = f"%{q.strip().lstrip('@').lower()}%"
+        stmt = stmt.join(User, User.id == Conversation.user_id).where(
+            or_(
+                func.lower(User.username).like(needle),
+                func.lower(User.name).like(needle),
+                func.lower(User.external_id).like(needle),
+            )
+        )
+    # A conversation with no messages yet sorts by when it was opened, and
+    # the id breaks exact ties so a refresh never shuffles two rows that
+    # arrived in the same instant -- the dashboard polls this, and rows that
+    # swap places on every poll read as the screen twitching.
+    stmt = stmt.order_by(
+        func.coalesce(last_activity.c.last_at, Conversation.created_at).desc(),
+        Conversation.id.desc(),
+    ).limit(limit)
+
+    conversations = list((await session.execute(stmt)).scalars())
+    return await _summaries(session, conversations)
+
+
+async def _load(session: AsyncSession, conversation_id: uuid.UUID) -> Conversation:
+    conversation = await ConversationRepository(session).get(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suhbat topilmadi")
+    return conversation
+
+
+@router.get("/{conversation_id}", response_model=ConversationDetail)
+async def get_conversation(
+    conversation_id: uuid.UUID,
+    operator: Operator = Depends(get_current_operator),
+    session: AsyncSession = Depends(get_db_session),
+) -> ConversationDetail:
+    conversation = await _load(session, conversation_id)
+    messages = await MessageRepository(session).list_recent(conversation.id, TRANSCRIPT_LIMIT)
+    [summary] = await _summaries(session, [conversation])
+    return ConversationDetail(
+        conversation=summary,
+        messages=[
+            MessageOut(
+                id=message.id,
+                sender=message.sender,
+                content=message.content,
+                channel=message.channel,
+                created_at=message.created_at,
+            )
+            for message in messages
+        ],
+    )
+
+
+@router.post(
+    "/{conversation_id}/bot",
+    response_model=ConversationSummary,
+    dependencies=[Depends(verify_csrf_header)],
+)
+async def set_bot_enabled(
+    conversation_id: uuid.UUID,
+    payload: BotToggle,
+    operator: Operator = Depends(require_patient_access),
+    session: AsyncSession = Depends(get_db_session),
+) -> ConversationSummary:
+    """Hand the conversation to a human, or hand it back.
+
+    Turning the bot off does not close the conversation or stop recording
+    it — the patient's messages keep reaching the transcript, which is what
+    the operator reads in order to answer.
+    """
+    conversation = await _load(session, conversation_id)
+    await ConversationRepository(session).update(
+        conversation, is_bot_enabled=payload.is_bot_enabled
+    )
+    await session.commit()
+    # updated_at is filled by the database's own onupdate, so the in-memory
+    # row is stale here. Refreshed explicitly rather than left to load
+    # lazily while the response is being built, which would be IO outside
+    # the awaited path.
+    await session.refresh(conversation)
+    [summary] = await _summaries(session, [conversation])
+    return summary
+
+
+@router.post(
+    "/{conversation_id}/reply",
+    response_model=MessageOut,
+    dependencies=[Depends(verify_csrf_header)],
+)
+async def reply_as_operator(
+    conversation_id: uuid.UUID,
+    payload: OperatorReply,
+    operator: Operator = Depends(require_patient_access),
+    session: AsyncSession = Depends(get_db_session),
+) -> MessageOut:
+    """Send a message to the patient as the clinic, over whichever channel
+    they wrote in on.
+
+    Goes out through the same delivery service the bot uses, so it reaches
+    Instagram or Telegram without this route knowing which, and is routed
+    by the context captured from the patient's own last message — for a
+    Telegram Business conversation, back over that same connection.
+    """
+    conversation = await _load(session, conversation_id)
+    user = await session.get(User, conversation.user_id)
+    if user is None:  # pragma: no cover - conversation.user_id is a FK
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Bemor topilmadi")
+
+    delivered_over = await send_reply(
+        session,
+        channel_id=user.channel_id,
+        recipient_external_id=user.external_id,
+        text=payload.text,
+        last_user_message_at=datetime.now(UTC),
+        reply_context=await reply_context_for(session, conversation.id),
+    )
+    if delivered_over is None:
+        # The platform refused or the channel is unusable. Nothing is
+        # recorded: a message in the transcript the patient never received
+        # would have the operator believe they had answered.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Xabar yuborilmadi — kanal sozlanmagan yoki javob oynasi yopilgan",
+        )
+
+    message = await record_outbound_message(
+        session,
+        conversation_id=conversation.id,
+        channel_type=delivered_over,
+        text=payload.text,
+        sender=MessageSender.OPERATOR,
+    )
+    await session.commit()
+    return MessageOut(
+        id=message.id,
+        sender=message.sender,
+        content=message.content,
+        channel=message.channel,
+        created_at=message.created_at,
+    )

@@ -1,0 +1,42 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables. Deny every .env* and re-admit only the committed
+# examples, rather than listing the real ones by name -- the next one
+# somebody adds (.env.railway, .env.staging) must not have to be
+# remembered here to stay out of a commit.
+.env
+.env.*
+!.env*.example
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy / ruff caches
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Stray output from `railway config pull` when the TypeScript SDK is absent.
+.railway-config-pull-*/

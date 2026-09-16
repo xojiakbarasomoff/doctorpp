@@ -1,0 +1,337 @@
+"""Instagram's inbound edge.
+
+This module and app.channels.instagram are the only places that know what an
+Instagram webhook payload looks like. Its job is narrow on purpose:
+authenticate the delivery, parse it, work out which channel it belongs to,
+and hand each genuine message to the shared services — the conversation
+store, then the debounce buffer. Everything after that point (retrieval,
+guardrails, the answer prompt, delivery) is platform-neutral and shared with
+the Telegram bot, so this file is roughly what a Telegram webhook route will
+mirror rather than duplicate.
+"""
+
+import hashlib
+import hmac
+import logging
+
+from arq.connections import ArqRedis
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import Settings, get_settings
+from app.core.db import get_db_session
+from app.core.queue import get_arq_pool
+from app.core.redaction import preview
+from app.core.tenant_context import reset_current_tenant, set_current_tenant
+from app.services.admin_commands import parse_rule
+from app.services.conversation import register_inbound_message
+from app.services.debounce import handle_inbound_message
+from app.services.idempotency import claim_event
+from app.services.tenant_resolution import (
+    ResolvedChannel,
+    bot_replies_enabled,
+    resolve_instagram_channel,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+class WebhookSender(BaseModel):
+    id: str
+
+
+class WebhookRecipient(BaseModel):
+    id: str
+
+
+class WebhookMessage(BaseModel):
+    # Meta's own id for this message. Parsed because it is the idempotency
+    # key: Meta redelivers a payload whose 200 came back too slowly or not
+    # at all, and without a claim on this id the same message is recorded
+    # and answered twice. Optional because Meta does not guarantee it on
+    # every event shape, and a message with no id is better handled once
+    # without dedup than dropped.
+    mid: str | None = None
+    text: str | None = None
+    is_echo: bool = False
+
+
+class MessagingEvent(BaseModel):
+    sender: WebhookSender
+    recipient: WebhookRecipient
+    message: WebhookMessage | None = None
+
+
+class WebhookEntry(BaseModel):
+    id: str
+    messaging: list[MessagingEvent] = []
+
+
+class WebhookPayload(BaseModel):
+    object: str
+    entry: list[WebhookEntry] = []
+
+
+def _verify_signature(raw_body: bytes, signature_header: str | None, app_secret: str) -> bool:
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(app_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    provided = signature_header.removeprefix("sha256=")
+    return hmac.compare_digest(expected, provided)
+
+
+def _signature_failure_detail(
+    raw_body: bytes, signature_header: str | None, app_secret: str
+) -> str:
+    """Log-safe `k=v` detail explaining *why* a signature check failed.
+
+    The app secret never lands in a log line — only its length and a
+    truncated fingerprint, which is enough to tell whether the value
+    deployed on the host is the one you think it is (compare fingerprints
+    across environments) without disclosing it. secret_surrounding_whitespace
+    catches the most common deploy mistake: a value pasted into a hosting
+    dashboard with a trailing newline or wrapping quotes, which silently
+    changes the HMAC while looking identical on screen.
+
+    Returned as one preformatted string rather than a dict because the
+    caller decides whether this failure is fatal and both branches log
+    the same detail (see receive_webhook). New call sites should prefer
+    `extra=`, which app.core.logging now renders the same way.
+    """
+    expected = hmac.new(app_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    fields: dict[str, object] = {
+        "expected": f"sha256={expected}",
+        "received": signature_header,
+        "body_length": len(raw_body),
+        "secret_length": len(app_secret),
+        "secret_fingerprint": hashlib.sha256(app_secret.encode("utf-8")).hexdigest()[:8],
+        "secret_surrounding_whitespace": app_secret != app_secret.strip(),
+    }
+    return " ".join(f"{key}={value}" for key, value in fields.items())
+
+
+def _is_echo(event: MessagingEvent, page_id: str) -> bool:
+    if event.message is not None and event.message.is_echo:
+        return True
+    return event.sender.id == page_id
+
+
+async def _handle_event(
+    session: AsyncSession,
+    pool: ArqRedis,
+    channel: ResolvedChannel,
+    event: MessagingEvent,
+    page_id: str,
+) -> None:
+    """One messaging event, from an already-resolved channel under an
+    already-set tenant context. Returns without doing anything for every
+    event shape this pipeline has nothing to say to.
+    """
+    if event.message is None:
+        # Not a message event (e.g. read receipt, postback) — nothing to do yet.
+        return
+
+    if _is_echo(event, page_id):
+        logger.info(
+            "webhook_echo_skipped",
+            extra={"sender_id": event.sender.id, "recipient_id": event.recipient.id},
+        )
+        return
+
+    if event.message.text is None:
+        # Attachment-only message (image, sticker, etc) — nothing for the
+        # FAQ/LLM pipeline to answer yet.
+        logger.info(
+            "webhook_attachment_only_skipped",
+            extra={"sender_id": event.sender.id, "recipient_id": event.recipient.id},
+        )
+        return
+
+    # Claimed before anything is recorded, so a redelivery cannot append a
+    # second copy of the patient's message to the transcript or trigger a
+    # second reply. A message Meta sent without an id is processed without
+    # a claim — handling it once too often beats never handling it.
+    if event.message.mid is not None and not await claim_event(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_type=channel.channel_type,
+        event_id=event.message.mid,
+    ):
+        logger.info(
+            "webhook_duplicate_skipped",
+            extra={"mid": event.message.mid, "sender_id": event.sender.id},
+        )
+        return
+
+    # Full message text stays out of INFO — it is patient content that
+    # should not sit in logs that may ship to external monitoring (TZ
+    # section 7, personal data). Length + a short truncated preview only.
+    logger.info(
+        "webhook_message_received",
+        extra={
+            "tenant_id": str(channel.tenant_id),
+            "sender_igsid": event.sender.id,
+            "recipient_id": event.recipient.id,
+            "message_length": len(event.message.text),
+            "message_preview": preview(event.message.text),
+        },
+    )
+
+    # Recorded before any decision about answering it: a patient's words
+    # belong in the transcript whether the bot replies, an operator does,
+    # or nothing does.
+    inbound = await register_inbound_message(
+        session,
+        channel_id=channel.channel_id,
+        channel_type=channel.channel_type,
+        sender_external_id=event.sender.id,
+        text=event.message.text,
+    )
+    await session.commit()
+
+    # Before every early return below, because the conversations an operator
+    # answers by hand are exactly the ones that most need a name on them in
+    # the dashboard. Fire-and-forget: the job is cheap after the first
+    # message from a patient, and nothing about this request depends on it.
+    await pool.enqueue_job(
+        "resolve_username",
+        str(channel.tenant_id),
+        str(channel.channel_id),
+        str(inbound.user_id),
+    )
+
+    # A rule the clinic's admin is setting by direct message. Only the cheap
+    # half of the decision happens here -- does the text start with the
+    # keyword -- because knowing *who* wrote it can need a call to Meta, and
+    # a webhook that waits on Meta is a webhook Meta retries. The job checks
+    # the sender and drops the message if they are not a nominated admin.
+    #
+    # Instead of the ordinary reply, not alongside it: a command is not a
+    # question, and answering "Aiadm1in: har doim shanba qabulini eslat" as
+    # though a patient had asked something would put a second message under
+    # every rule the admin sets. The cost is that somebody who is not an
+    # admin and typed the keyword exactly gets no reply -- the cheaper of the
+    # two mistakes, and it takes typing a keyword they have no reason to know.
+    if parse_rule(event.message.text, get_settings().admin_command_keyword) is not None:
+        await pool.enqueue_job(
+            "apply_admin_rule",
+            str(channel.tenant_id),
+            str(channel.channel_id),
+            str(inbound.user_id),
+            event.sender.id,
+            event.message.text,
+        )
+        return
+
+    if not inbound.is_bot_enabled:
+        # An operator has taken this conversation over. The bot must not
+        # answer on top of a human — the message is already recorded, which
+        # is the whole of what is wanted here.
+        logger.info(
+            "webhook_bot_disabled_for_conversation",
+            extra={
+                "conversation_id": str(inbound.conversation_id),
+                "sender_igsid": event.sender.id,
+            },
+        )
+        return
+
+    if not await bot_replies_enabled(session, channel.tenant_id):
+        # The clinic has switched the assistant off from the dashboard.
+        # Checked here rather than in the worker so that nothing is queued
+        # while it is off: a switch that let jobs accumulate would answer
+        # every one of them the moment it was switched back on, which is a
+        # burst of late replies to patients who have long since given up.
+        logger.info(
+            "webhook_bot_disabled_for_tenant",
+            extra={
+                "tenant_id": str(channel.tenant_id),
+                "conversation_id": str(inbound.conversation_id),
+            },
+        )
+        return
+
+    await handle_inbound_message(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_id=channel.channel_id,
+        conversation_id=inbound.conversation_id,
+        sender_external_id=event.sender.id,
+        message_text=event.message.text,
+    )
+
+
+async def _handle_payload(session: AsyncSession, pool: ArqRedis, payload: WebhookPayload) -> None:
+    for entry in payload.entry:
+        # entry.id is the IG account (page) id that received the message —
+        # one tenant's channel per entry, so resolution happens once per
+        # entry rather than once per messaging event. The channel id it
+        # returns is carried all the way to delivery, so the reply goes out
+        # over the account the patient actually wrote to.
+        channel = await resolve_instagram_channel(session, entry.id)
+        if channel is None:
+            logger.warning("webhook_unknown_ig_account", extra={"ig_account_id": entry.id})
+            continue
+
+        token = set_current_tenant(channel.tenant_id)
+        try:
+            for event in entry.messaging:
+                await _handle_event(session, pool, channel, event, entry.id)
+        finally:
+            reset_current_tenant(token)
+
+
+@router.get("/webhook")
+async def verify_webhook(
+    hub_mode: str | None = Query(default=None, alias="hub.mode"),
+    hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
+    hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    if hub_mode == "subscribe" and hub_verify_token == settings.webhook_verify_token:
+        return Response(content=hub_challenge or "", media_type="text/plain")
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Webhook verification failed")
+
+
+@router.post("/webhook")
+async def receive_webhook(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_db_session),
+    pool: ArqRedis = Depends(get_arq_pool),
+) -> Response:
+    raw_body = await request.body()
+    signature_header = request.headers.get("x-hub-signature-256")
+
+    if _verify_signature(raw_body, signature_header, settings.meta_app_secret):
+        # Logged on the way past, not only on failure: while a deployment is
+        # being diagnosed, "the signature matched" is the result being waited
+        # for, and a check that speaks up only when it fails cannot tell a
+        # fixed secret apart from traffic that stopped arriving. The
+        # fingerprint identifies which secret matched without disclosing it.
+        logger.info(
+            "webhook_signature_ok secret_fingerprint=%s",
+            hashlib.sha256(settings.meta_app_secret.encode("utf-8")).hexdigest()[:8],
+        )
+    else:
+        detail = _signature_failure_detail(raw_body, signature_header, settings.meta_app_secret)
+        if settings.webhook_signature_enforced:
+            logger.warning("webhook_signature_invalid %s", detail)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid signature")
+        # Not enforcing: this payload is processed despite failing the check.
+        # A distinct message from the enforced case, so a log search can
+        # prove whether anything was ever let through unverified.
+        logger.warning("webhook_signature_invalid_allowed %s", detail)
+
+    try:
+        payload = WebhookPayload.model_validate_json(raw_body)
+    except ValueError:
+        logger.warning("webhook_payload_invalid")
+        return Response(status_code=status.HTTP_200_OK)
+
+    await _handle_payload(session, pool, payload)
+
+    return Response(status_code=status.HTTP_200_OK)

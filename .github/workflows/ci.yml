@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, second]
+  pull_request:
+    branches: [main, second]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dental_ig_assistant
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/dental_ig_assistant
+      REDIS_URL: redis://localhost:6379/0
+            OPENAI_API_KEY: sk-test-placeholder
+      WEBHOOK_VERIFY_TOKEN: ci-test-verify-token
+      META_APP_SECRET: ci-test-app-secret
+      SESSION_SECRET_KEY: ci-test-session-secret-key-not-for-real-use
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Generated per run rather than written into this file. A Fernet key
+      # committed to the repository is a real key in public history even
+      # when it only ever encrypted test rows -- and one sitting in a CI
+      # config is the kind of value that gets copied into a deployment
+      # because it was the one that worked. A Fernet key is 32 random bytes
+      # in url-safe base64, which openssl and tr produce without needing
+      # the Python dependencies installed yet.
+      - name: Generate a throwaway encryption key
+        run: |
+          echo "ENCRYPTION_KEY=$(openssl rand -base64 32 | tr '+/' '-_')" >> "$GITHUB_ENV"
+
+      - name: Install project with dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Black check
+        run: black --check .
+
+      - name: Mypy
+        run: mypy app
+
+      - name: Apply database migrations
+        run: alembic upgrade head
+
+      - name: Pytest with coverage gate
+        # TODO: 80 is the current floor (tenant-isolation suite lands at 99%);
+        # raise further as more service/API/worker code lands with tests.
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80

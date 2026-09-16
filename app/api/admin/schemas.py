@@ -1,0 +1,244 @@
+"""Request and response shapes for the admin API.
+
+Explicit models rather than returning ORM rows: what a dashboard needs to
+show is not the same as what a table stores, and a route that serialises the
+model directly leaks every column it later gains — including ones nobody
+meant to publish, like a channel's credentials.
+"""
+
+import uuid
+from datetime import date, datetime
+
+from pydantic import BaseModel, Field, field_validator
+
+from app.core.roles import Permission
+from app.models.appointment import AppointmentStatus
+from app.models.lead import LeadStatus
+
+
+def _not_blank(value: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("must not be blank")
+    return stripped
+
+
+# --- session ---------------------------------------------------------------
+
+
+class SessionInfo(BaseModel):
+    operator_id: uuid.UUID
+    name: str
+    role: str
+    tenant_id: uuid.UUID
+    tenant_name: str
+    # What this account may do, resolved from its role by app.core.roles.
+    # Sent so the dashboard can hide a control it would only be refused for,
+    # and sent as permissions rather than as a role so the mapping lives in
+    # one place: a UI that re-derives "operators may edit the FAQ" from the
+    # role string is a second copy of the rules, and the copy that drifts is
+    # always the one that is not enforcing anything.
+    permissions: list[Permission]
+    # The token every mutating request must echo back in X-CSRF-Token.
+    csrf_token: str
+
+
+# --- conversations ---------------------------------------------------------
+
+
+class ConversationSummary(BaseModel):
+    id: uuid.UUID
+    status: str
+    is_bot_enabled: bool
+    patient_name: str | None
+    # The handle the dashboard labels this conversation with. None until the
+    # lookup lands (app.services.profile), which is why patient_external_id
+    # is still sent: it is the fallback, not the label.
+    patient_username: str | None
+    patient_external_id: str
+    channel: str
+    last_message_at: datetime | None
+    last_message_preview: str | None
+    updated_at: datetime
+
+
+class MessageOut(BaseModel):
+    id: uuid.UUID
+    sender: str
+    content: str
+    channel: str
+    created_at: datetime
+
+
+class ConversationDetail(BaseModel):
+    conversation: ConversationSummary
+    messages: list[MessageOut]
+
+
+class BotToggle(BaseModel):
+    is_bot_enabled: bool
+
+
+class OperatorReply(BaseModel):
+    text: str
+
+    _check = field_validator("text")(_not_blank)
+
+
+# --- appointments ----------------------------------------------------------
+
+
+class AppointmentOut(BaseModel):
+    id: uuid.UUID
+    scheduled_at: datetime
+    doctor_id: uuid.UUID | None
+    doctor_name: str
+    patient_name: str | None
+    patient_phone: str | None
+    notes: str | None
+    status: str
+    source: str
+
+
+class AppointmentCreate(BaseModel):
+    scheduled_at: datetime
+    patient_name: str
+    patient_phone: str | None = None
+    doctor_id: uuid.UUID | None = None
+    notes: str | None = None
+
+    _check = field_validator("patient_name")(_not_blank)
+
+
+# --- doctors ---------------------------------------------------------------
+
+
+class DoctorOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    specialty: str
+    phone: str | None
+    working_hours: str
+    is_active: bool
+
+
+class DoctorCreate(BaseModel):
+    name: str
+    specialty: str = "Urolog"
+    phone: str | None = None
+    working_hours: str = "09:00 - 18:00"
+
+    _check = field_validator("name")(_not_blank)
+
+
+class DoctorUpdate(BaseModel):
+    name: str | None = None
+    specialty: str | None = None
+    phone: str | None = None
+    working_hours: str | None = None
+    is_active: bool | None = None
+
+
+# --- leads -----------------------------------------------------------------
+
+
+class LeadOut(BaseModel):
+    id: uuid.UUID
+    patient_name: str | None
+    phone: str | None
+    topic: str | None
+    convenient_time: str | None
+    status: str
+    notes: str | None
+    created_at: datetime
+
+
+class LeadCreate(BaseModel):
+    patient_name: str | None = None
+    phone: str | None = None
+    topic: str | None = None
+    convenient_time: str | None = None
+    notes: str | None = None
+
+
+class LeadUpdate(BaseModel):
+    status: LeadStatus | None = None
+    patient_name: str | None = None
+    phone: str | None = None
+    topic: str | None = None
+    convenient_time: str | None = None
+    notes: str | None = None
+
+
+# --- knowledge base --------------------------------------------------------
+
+
+class FaqOut(BaseModel):
+    id: uuid.UUID
+    question: str
+    answer: str
+    category: str | None
+    is_active: bool
+
+
+class FaqCreate(BaseModel):
+    question: str
+    answer: str
+    category: str | None = None
+
+    _check_q = field_validator("question")(_not_blank)
+    _check_a = field_validator("answer")(_not_blank)
+
+
+# --- settings --------------------------------------------------------------
+
+
+class TenantSettings(BaseModel):
+    """The per-clinic settings the dashboard can edit.
+
+    Stored in tenants.settings (JSONB) rather than as columns, which is the
+    pattern the Telegram side established and the one that lets a clinic tune
+    its own wording without a migration. Unset fields are left as they were,
+    so a form that only changes the address does not blank the phone numbers.
+    """
+
+    # The clinic's own on/off switch for the assistant, flipped from the
+    # conversations screen. False and every inbound message is still received,
+    # still stored and still listed there -- no reply is written and no job is
+    # queued for one, so nothing piles up to be answered late. It lives here,
+    # in the clinic's settings, because the alternative was reaching into the
+    # host's dashboard and stopping the worker, which takes minutes, loses the
+    # answer to anything already queued, and is not something a front desk can
+    # be asked to do at eleven at night.
+    bot_replies_enabled: bool | None = None
+    debounce_seconds: int | None = Field(default=None, ge=0, le=300)
+    clinic_address: str | None = None
+    clinic_landmark: str | None = None
+    clinic_phone_numbers: str | None = None
+    clinic_work_hours: str | None = None
+    clinic_latitude: float | None = Field(default=None, ge=-90, le=90)
+    clinic_longitude: float | None = Field(default=None, ge=-180, le=180)
+    strict_rules: list[str] | None = None
+
+
+# --- analytics -------------------------------------------------------------
+
+
+class DayCount(BaseModel):
+    day: date
+    count: int
+
+
+class AnalyticsSummary(BaseModel):
+    conversations_total: int
+    conversations_open: int
+    conversations_with_operator: int
+    appointments_total: int
+    appointments_active: int
+    leads_total: int
+    leads_new: int
+    faqs_active: int
+    appointments_by_day: list[DayCount]
+
+
+ACTIVE_APPOINTMENT_STATUSES = {AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED}

@@ -1,0 +1,1248 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Klinika boshqaruvi</title>
+<style>
+  /* No CDN: the dashboard is served from the same origin as the API and has
+     to keep working on a clinic's patchy connection, so the chart is drawn
+     with plain elements rather than a charting library fetched at load. */
+  :root {
+    --bg: #f4f5f3;
+    --panel: #ffffff;
+    --panel-2: #ebeeea;
+    --ink: #16181a;
+    --ink-2: #4a524e;
+    --ink-3: #7c8681;
+    --rule: #d9ddd7;
+    --accent: #1f6f5c;
+    --accent-soft: #e2efea;
+    --danger: #a83a2b;
+    --danger-soft: #f6e4e0;
+    --warn: #96682a;
+    --ig: #b4426e;
+    --tg: #2c6e9b;
+    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131614; --panel: #1a1e1b; --panel-2: #232825;
+      --ink: #e9ebe8; --ink-2: #a3ada7; --ink-3: #7a847e; --rule: #2e3531;
+      --accent: #58bca2; --accent-soft: #14302a;
+      --danger: #e5897a; --danger-soft: #331f1b; --warn: #dcae64;
+      --ig: #e288ac; --tg: #7fb2d6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .who { margin-left: auto; font-size: 13px; color: var(--ink-3); display: flex; align-items: center; gap: 12px; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; padding: 10px 20px 0; }
+  nav button { font: inherit; font-size: 14px; padding: 8px 14px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; background: none; color: var(--ink-2); cursor: pointer; }
+  nav button[aria-selected="true"] { background: var(--panel); border-color: var(--rule); color: var(--ink); font-weight: 600; }
+  main { padding: 0 20px 60px; }
+  section[hidden] { display: none; }
+  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 0 4px 4px 4px; padding: 18px; margin-bottom: 18px; }
+  h2 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 8px 10px; border-bottom: 1px solid var(--rule); font-weight: 600; }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .scroll { overflow-x: auto; }
+  button.act { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--rule); border-radius: 3px; background: var(--panel-2); color: var(--ink); cursor: pointer; }
+  button.act:hover { border-color: var(--accent); color: var(--accent); }
+  button.act.danger:hover { border-color: var(--danger); color: var(--danger); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  input, select, textarea { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 3px; background: var(--bg); color: var(--ink); width: 100%; }
+  label { display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 4px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 2px; background: var(--panel-2); color: var(--ink-2); white-space: nowrap; }
+  .pill.ok { background: var(--accent-soft); color: var(--accent); }
+  .pill.bad { background: var(--danger-soft); color: var(--danger); }
+  .pill.instagram { background: var(--accent-soft); color: var(--ig); }
+  .pill.telegram { background: var(--accent-soft); color: var(--tg); }
+  .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .stat { background: var(--panel-2); border-radius: 3px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--ink-3); }
+  .chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; margin-top: 14px; }
+  .chart div { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 2px; position: relative; }
+  .chart div span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--ink-3); }
+  .muted { color: var(--ink-3); font-size: 13px; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 4px; font-size: 14px; z-index: 50; }
+  #toast[hidden] { display: none; }
+  #toast.bad { background: var(--danger); color: #fff; }
+  /* The conversations screen is two columns: the list, and the thread beside
+     it. The thread used to sit under the table, so opening one meant
+     scrolling past every other conversation to read it and scrolling back to
+     pick the next -- on the screen the clinic keeps open all day. */
+  .chat-workspace { display: grid; gap: 18px; align-items: start; }
+  /* One screenful tall, and each column scrolls inside itself. That is what
+     holds the thread still: with nothing left for the page to scroll,
+     running down the patient list cannot move the conversation being read.
+     Sticky was not enough -- sticky still drifts until it reaches its offset.
+     122px is the sticky header plus the tab strip above this. */
+  .chat-workspace.open { grid-template-columns: minmax(0, 1fr) minmax(0, 480px); height: calc(100vh - 122px); }
+  .chat-workspace.open > .panel { height: 100%; min-height: 0; margin-bottom: 0; display: flex; flex-direction: column; }
+  /* Only the table scrolls; the heading, the search box and the saved views
+     stay where the operator left them. */
+  .chat-workspace.open > .panel > .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  /* The column heads stay put inside the scrolling list -- a table scrolled
+     a hundred rows down with no header is a table of unlabelled columns. */
+  .chat-workspace.open > .panel > .scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+  /* main's 60px bottom padding is 60px the page can still scroll, and the
+     thread would ride up all 60 of them. Trimmed only while a conversation
+     is open, which is the only time it is in the way. */
+  body.chat-open main { padding-bottom: 14px; }
+  .chat-workspace.open #threadPanel { position: static; max-height: none; }
+  .chat-workspace.open #threadPanel .thread { flex: 1 1 auto; min-height: 0; max-height: none; }
+  /* A three-message conversation fills the column the same as a hundred-
+     message one, with the messages resting at the bottom the way every
+     messenger puts them -- rather than a short chat floating in the top
+     corner of a tall empty panel. */
+  .chat-workspace.open #threadPanel .thread > :first-child { margin-top: auto; }
+  /* Under 1000px two columns do not fit, so it stacks and goes back to
+     ordinary page scrolling -- and openThread scrolls the panel into view,
+     which is the only answer a narrow screen has. */
+  @media (max-width: 1000px) {
+    .chat-workspace.open { grid-template-columns: minmax(0, 1fr); height: auto; }
+    .chat-workspace.open > .panel { height: auto; margin-bottom: 18px; }
+    .chat-workspace.open > .panel > .scroll { overflow-y: auto; }
+    .chat-workspace.open #threadPanel .thread { max-height: 60vh; }
+    .chat-workspace.open #threadPanel .thread > :first-child { margin-top: 0; }
+  }
+  /* Which row is being read. Without it, two clicks in a row look identical. */
+  tr.sel td { background: var(--accent-soft); }
+  tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  /* A row that moved because a patient just wrote. Fades out on its own, so
+     it draws the eye once and then gets out of the way. */
+  @keyframes fresh-row { from { background: var(--accent-soft); } to { background: transparent; } }
+  tr.fresh:not(.sel) td { animation: fresh-row 2.5s ease-out; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover td { background: var(--panel-2); }
+  .thread { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+  .msg { max-width: 78%; padding: 8px 11px; border-radius: 8px; font-size: 14px; white-space: pre-wrap; }
+  .msg.patient { background: var(--panel-2); align-self: flex-start; }
+  .msg.bot, .msg.operator { background: var(--accent-soft); align-self: flex-end; }
+  .msg small { display: block; font-size: 10px; color: var(--ink-3); margin-top: 3px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Klinika boshqaruvi</h1>
+  <div class="who">
+    <span id="whoami">…</span>
+    <button class="act" id="logout">Chiqish</button>
+  </div>
+</header>
+
+<nav id="tabs">
+  <button data-tab="today" aria-selected="true">Bugun</button>
+  <button data-tab="chats" aria-selected="false">Suhbatlar</button>
+  <button data-tab="leads" aria-selected="false">Lidlar</button>
+  <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
+  <button data-tab="faq" aria-selected="false">Bilim bazasi</button>
+  <button data-tab="settings" aria-selected="false">Sozlamalar</button>
+  <button data-tab="staff" aria-selected="false" hidden>Xodimlar</button>
+</nav>
+
+<main>
+
+  <section id="tab-today">
+    <div class="panel">
+      <h2>Ko'rsatkichlar</h2>
+      <div class="stats" id="stats"></div>
+      <div class="chart" id="chart"></div>
+      <p class="muted" style="margin-top:26px">So'nggi 2 haftadagi qabullar</p>
+    </div>
+
+    <div class="panel">
+      <h2>Qabullar</h2>
+      <div class="row" id="views-appointments" style="margin-bottom:10px;gap:6px;flex-wrap:wrap"></div>
+      <div class="row" style="margin-bottom:14px">
+        <input type="date" id="apptDate" style="width:auto">
+        <select id="apptDays" style="width:auto">
+          <option value="1">Shu kun</option>
+          <option value="7">7 kun</option>
+          <option value="30">30 kun</option>
+        </select>
+        <select id="apptSource" style="width:auto">
+          <option value="">Barcha manbalar</option>
+          <option value="telegram">Telegram</option>
+          <option value="instagram">Instagram</option>
+          <option value="operator">Operator</option>
+        </select>
+        <select id="apptStatus" style="width:auto">
+          <option value="">Barcha holatlar</option>
+          <option value="scheduled">Rejalashtirilgan</option>
+          <option value="confirmed">Tasdiqlangan</option>
+          <option value="cancelled">Bekor qilingan</option>
+        </select>
+        <button class="act" id="apptReload">Ko'rsatish</button>
+        <a class="act" id="apptExport" style="text-decoration:none;padding:6px 10px">CSV yuklab olish</a>
+      </div>
+      <div class="scroll"><table>
+        <thead><tr><th>Vaqt</th><th>Bemor</th><th>Telefon</th><th>Shifokor</th><th>Holat</th><th>Manba</th><th></th></tr></thead>
+        <tbody id="apptRows"></tbody>
+      </table></div>
+      <h2 style="margin-top:22px">Yangi qabul</h2>
+      <form id="apptForm" class="grid">
+        <div><label for="nDate">Sana</label><input type="date" id="nDate" required></div>
+        <div><label for="nTime">Vaqt</label><input type="time" id="nTime" step="1800" required></div>
+        <div><label for="nName">Bemor</label><input id="nName" required></div>
+        <div><label for="nPhone">Telefon</label><input id="nPhone" placeholder="+998 90 123 45 67"></div>
+        <div><label for="nDoctor">Shifokor</label><select id="nDoctor"></select></div>
+        <div><button class="act primary" type="submit">Qo'shish</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="tab-chats" hidden>
+    <div class="chat-workspace" id="chatWorkspace">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Suhbatlar</h2>
+        <div class="row" style="gap:8px;align-items:center">
+          <span id="chatLiveHint" class="muted"></span>
+          <span id="botStatePill" class="pill">—</span>
+          <button id="botToggle" class="act" hidden></button>
+        </div>
+      </div>
+      <div class="row" style="margin:10px 0;gap:6px;align-items:center">
+        <input id="chatSearch" type="search" placeholder="Username bo'yicha qidirish — masalan asomov"
+               autocomplete="off" style="flex:1;min-width:200px">
+        <button id="chatSearchClear" class="act" hidden>Tozalash</button>
+        <span id="chatSearchHint" class="muted"></span>
+      </div>
+      <div class="row" id="views-conversations" style="margin-bottom:10px;gap:6px;flex-wrap:wrap"></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Bemor</th><th>Kanal</th><th>Oxirgi xabar</th><th>Bot</th><th></th></tr></thead>
+        <tbody id="chatRows"></tbody>
+      </table></div>
+    </div>
+    <div class="panel" id="threadPanel" hidden>
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
+        <h2 id="threadTitle" style="margin:0">Suhbat</h2>
+        <button id="threadClose" class="act" title="Yopish (Esc)" aria-label="Yopish">✕</button>
+      </div>
+      <div class="thread" id="thread" style="margin-top:12px"></div>
+      <form id="replyForm" class="row" style="margin-top:14px">
+        <input id="replyText" placeholder="Javob yozing…" required style="flex:1">
+        <button class="act primary" type="submit">Yuborish</button>
+      </form>
+      <p class="muted" id="replyHint"></p>
+    </div>
+    </div>
+  </section>
+
+  <section id="tab-leads" hidden>
+    <div class="panel">
+      <h2>Lidlar</h2>
+      <div class="row" id="views-leads" style="margin-bottom:10px;gap:6px;flex-wrap:wrap"></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Bemor</th><th>Telefon</th><th>Mavzu</th><th>Qulay vaqt</th><th>Holat</th><th></th></tr></thead>
+        <tbody id="leadRows"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <section id="tab-doctors" hidden>
+    <div class="panel">
+      <h2>Shifokorlar</h2>
+      <div class="scroll"><table>
+        <thead><tr><th>Ism</th><th>Mutaxassislik</th><th>Telefon</th><th>Ish vaqti</th><th>Holat</th><th></th></tr></thead>
+        <tbody id="doctorRows"></tbody>
+      </table></div>
+      <h2 style="margin-top:22px">Yangi shifokor</h2>
+      <form id="doctorForm" class="grid">
+        <div><label for="dName">Ism</label><input id="dName" required></div>
+        <div><label for="dSpec">Mutaxassislik</label><input id="dSpec" value="Urolog"></div>
+        <div><label for="dPhone">Telefon</label><input id="dPhone"></div>
+        <div><label for="dHours">Ish vaqti</label><input id="dHours" value="09:00 - 18:00"></div>
+        <div><button class="act primary" type="submit">Qo'shish</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="tab-faq" hidden>
+    <div class="panel">
+      <h2>Bilim bazasi</h2>
+      <p class="muted">Bot faqat shu yerdagi ma'lumotdan javob beradi. Yangi savol qo'shilganda u avtomatik indekslanadi.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Savol</th><th>Javob</th><th>Holat</th><th></th></tr></thead>
+        <tbody id="faqRows"></tbody>
+      </table></div>
+      <h2 style="margin-top:22px">Yangi savol-javob</h2>
+      <form id="faqForm" class="grid">
+        <div style="grid-column:1/-1"><label for="fQ">Savol</label><input id="fQ" required></div>
+        <div style="grid-column:1/-1"><label for="fA">Javob</label><textarea id="fA" rows="3" required></textarea></div>
+        <div><button class="act primary" type="submit">Saqlash</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="tab-staff" hidden>
+    <div class="panel">
+      <h2>Xodimlar</h2>
+      <p class="muted">Kim tizimga kira oladi va qanday huquq bilan.
+        <b>Administrator</b> — hammasi: bilim bazasi, sozlamalar, xodimlar.
+        <b>Operator</b> — bemorlar bilan ishlash: suhbatlar, qabullar, lidlar.
+        <b>Shifokor</b> — faqat ko'rish.</p>
+      <div class="scroll"><table>
+        <thead><tr><th>Ism</th><th>Login</th><th>Rol</th><th></th></tr></thead>
+        <tbody id="staffRows"></tbody>
+      </table></div>
+      <h2 style="margin-top:22px">Yangi xodim</h2>
+      <form id="staffForm" class="grid">
+        <div><label for="sName">Ism</label><input id="sName" required></div>
+        <div><label for="sUser">Login</label><input id="sUser" required pattern="[a-zA-Z0-9._-]{3,}"></div>
+        <div><label for="sPass">Parol</label><input id="sPass" type="password" required minlength="10"></div>
+        <div><label for="sRole">Rol</label><select id="sRole">
+          <option value="operator">Operator</option>
+          <option value="doctor">Shifokor</option>
+          <option value="admin">Administrator</option>
+        </select></div>
+        <div><button class="act primary" type="submit">Qo'shish</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="tab-settings" hidden>
+    <div class="panel">
+      <h2>Klinika sozlamalari</h2>
+      <form id="settingsForm" class="grid">
+        <div><label for="sAddr">Manzil</label><input id="sAddr"></div>
+        <div><label for="sLand">Mo'ljal</label><input id="sLand"></div>
+        <div><label for="sPhone">Telefon raqamlari</label><input id="sPhone"></div>
+        <div><label for="sHours">Ish vaqti</label><input id="sHours"></div>
+        <div><label for="sDeb">Kutish oynasi (soniya)</label><input type="number" id="sDeb" min="0" max="300"></div>
+        <div style="grid-column:1/-1"><label for="sRules">Qat'iy qoidalar (har qatorda bittadan)</label><textarea id="sRules" rows="4"></textarea></div>
+        <div><button class="act primary" type="submit">Saqlash</button></div>
+      </form>
+    </div>
+    <div class="panel">
+      <h2>Parolni o'zgartirish</h2>
+      <form id="passwordForm" class="grid">
+        <div><label for="pOld">Joriy parol</label><input type="password" id="pOld" required></div>
+        <div><label for="pNew">Yangi parol (kamida 10 belgi)</label><input type="password" id="pNew" minlength="10" required></div>
+        <div><button class="act primary" type="submit">O'zgartirish</button></div>
+      </form>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast" hidden></div>
+
+<script>
+"use strict";
+
+const API = "/api/admin";
+let CSRF = "";
+let ROLE = "";
+let PERMISSIONS = new Set();
+let CURRENT_CHAT = null;
+
+// --- plumbing ------------------------------------------------------------
+
+function toast(message, bad) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.classList.toggle("bad", !!bad);
+  el.hidden = false;
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.hidden = true; }, 3500);
+}
+
+async function api(path, options) {
+  const opts = Object.assign({ headers: {} }, options || {});
+  if (opts.body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    // Every write echoes the session's CSRF token back. The token is bound
+    // into the signed session cookie, which a cross-site page cannot read.
+    opts.headers["X-CSRF-Token"] = CSRF;
+    opts.body = JSON.stringify(opts.body);
+  }
+  const response = await fetch(API + path, opts);
+
+  // The API redirects an unauthenticated call to the login page rather than
+  // answering it, so a 200 from /login is what an expired session looks like
+  // from here.
+  if (response.redirected && response.url.includes("/login")) {
+    window.location.href = "/login";
+    throw new Error("session expired");
+  }
+  if (response.status === 204) return null;
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((body && body.detail) || ("Xatolik: " + response.status));
+  }
+  return body;
+}
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (key === "class") node.className = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
+    else if (value !== null && value !== undefined) node.setAttribute(key, value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child.nodeType ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function fill(id, rows) {
+  const body = document.getElementById(id);
+  body.replaceChildren(...rows);
+}
+
+function localTime(iso) {
+  return new Date(iso).toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit" });
+}
+function localDateTime(iso) {
+  return new Date(iso).toLocaleString("uz-UZ", { dateStyle: "short", timeStyle: "short" });
+}
+function today() {
+  return new Date().toISOString().slice(0, 10);
+}
+// The server sends this account's permissions with the session (see
+// app.api.admin.session), so the rules live in one place. Deriving them here
+// from the role string would be a second copy, and the copy that drifts is
+// always the one that is not enforcing anything.
+function can(permission) {
+  return PERMISSIONS.has(permission);
+}
+// Hiding a control the server would refuse is a courtesy, not the check:
+// every one of these calls is enforced again on the request itself.
+function canManage() {
+  return can("handle_patients");
+}
+function canManageClinic() {
+  return can("manage_clinic");
+}
+
+// --- today ---------------------------------------------------------------
+
+async function loadStats() {
+  const s = await api("/analytics");
+  const cards = [
+    ["Suhbatlar", s.conversations_total],
+    ["Ochiq", s.conversations_open],
+    ["Operatorda", s.conversations_with_operator],
+    ["Qabullar", s.appointments_active],
+    ["Lidlar", s.leads_new],
+    ["FAQ", s.faqs_active],
+  ].map(([label, value]) => el("div", { class: "stat" }, el("b", {}, value), el("span", {}, label)));
+  fill("stats", cards);
+
+  const max = Math.max(1, ...s.appointments_by_day.map((d) => d.count));
+  document.getElementById("chart").replaceChildren(
+    ...s.appointments_by_day.map((d) =>
+      el("div", { style: `height:${Math.round((d.count / max) * 100)}%`, title: `${d.day}: ${d.count}` },
+         el("span", {}, d.day.slice(5)))
+    )
+  );
+}
+
+// The controls a list is showing right now, in the shape the API takes —
+// which is also exactly what gets saved. A saved view and a person clicking
+// the controls therefore produce the same request; there is no second path.
+function currentParams(resource) {
+  if (resource === "appointments") {
+    return dropEmpty({
+      date: document.getElementById("apptDate").value || today(),
+      days: document.getElementById("apptDays").value,
+      source: document.getElementById("apptSource").value,
+      status: document.getElementById("apptStatus").value,
+    });
+  }
+  return {};
+}
+
+function dropEmpty(params) {
+  return Object.fromEntries(Object.entries(params).filter(([, v]) => v !== "" && v != null));
+}
+
+function applyParams(resource, params) {
+  if (resource !== "appointments") return;
+  // A saved view that predates a control leaves it alone rather than
+  // blanking it, so an old view never silently widens what is shown.
+  for (const [id, key] of [["apptDate", "date"], ["apptDays", "days"],
+                           ["apptSource", "source"], ["apptStatus", "status"]]) {
+    if (key in params) document.getElementById(id).value = params[key];
+  }
+}
+
+async function loadAppointments() {
+  const params = currentParams("appointments");
+  const query = new URLSearchParams(params).toString();
+  document.getElementById("apptExport").href = `${API}/export/appointments.csv?date=${params.date}`;
+  const rows = await api(`/appointments?${query}`);
+  fill("apptRows", rows.map((a) =>
+    el("tr", {},
+      el("td", {}, localTime(a.scheduled_at)),
+      el("td", {}, a.patient_name || "—"),
+      el("td", {}, a.patient_phone || "—"),
+      el("td", {}, a.doctor_name),
+      el("td", {}, el("span", { class: "pill " + (a.status === "cancelled" ? "bad" : "ok") }, a.status)),
+      el("td", {}, el("span", { class: "pill" }, a.source)),
+      el("td", {}, canManage() && a.status !== "cancelled"
+        ? el("span", { class: "row" },
+            a.status === "scheduled"
+              ? el("button", { class: "act", onclick: () => act(`/appointments/${a.id}/confirm`, "Tasdiqlandi") }, "Tasdiqlash")
+              : null,
+            el("button", { class: "act danger", onclick: () => act(`/appointments/${a.id}/cancel`, "Bekor qilindi") }, "Bekor qilish"))
+        : null)
+    )
+  ));
+  if (!rows.length) fill("apptRows", [el("tr", {}, el("td", { colspan: "7", class: "muted" }, "Bu kunga qabul yo'q"))]);
+}
+
+async function act(path, message) {
+  try {
+    await api(path, { method: "POST", body: {} });
+    toast(message);
+    await Promise.all([loadAppointments(), loadStats()]);
+  } catch (err) { toast(err.message, true); }
+}
+
+// --- conversations -------------------------------------------------------
+
+// The clinic's own switch for the whole assistant, not one conversation.
+// Read from the same settings the dashboard already edits, and rendered next
+// to the conversations because that is the screen somebody is looking at when
+// they decide the bot should stop.
+let BOT_REPLIES_ENABLED = true;
+
+function renderBotSwitch() {
+  const pill = document.getElementById("botStatePill");
+  const button = document.getElementById("botToggle");
+  pill.textContent = BOT_REPLIES_ENABLED ? "Bot yoqilgan" : "Bot o'chirilgan";
+  pill.className = "pill " + (BOT_REPLIES_ENABLED ? "ok" : "bad");
+  button.hidden = !canManageClinic();
+  button.textContent = BOT_REPLIES_ENABLED ? "Botni o'chirish" : "Botni yoqish";
+}
+
+async function loadBotSwitch() {
+  const settings = await api("/settings");
+  BOT_REPLIES_ENABLED = settings.bot_replies_enabled !== false;
+  renderBotSwitch();
+}
+
+document.getElementById("chatSearch").addEventListener("input", (e) => onChatSearch(e.target.value));
+document.getElementById("chatSearchClear").addEventListener("click", () => {
+  const box = document.getElementById("chatSearch");
+  box.value = "";
+  onChatSearch("");
+  box.focus();
+});
+
+document.getElementById("botToggle").addEventListener("click", async () => {
+  const turningOff = BOT_REPLIES_ENABLED;
+  // Asked before turning it off, never before turning it back on: leaving
+  // patients unanswered is the direction that needs a second thought.
+  if (turningOff && !confirm("Bot javob berishni to'xtatadimi? Xabarlar kelaveradi va shu yerda ko'rinadi.")) return;
+  try {
+    await api("/settings", { method: "PATCH", body: { bot_replies_enabled: !BOT_REPLIES_ENABLED } });
+    BOT_REPLIES_ENABLED = !BOT_REPLIES_ENABLED;
+    renderBotSwitch();
+    toast(BOT_REPLIES_ENABLED ? "Bot yoqildi" : "Bot o'chirildi");
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+// What to call a patient, in the order an operator recognises them by. The
+// platform id is last and is a fallback, not a label: "17841467434701445" is
+// what this column used to show for everybody, and it identified nobody.
+function patientLabel(c) {
+  if (c.patient_username) return "@" + c.patient_username;
+  if (c.patient_name) return c.patient_name;
+  return c.patient_external_id || "—";
+}
+
+// The search runs on the server (see the `q` parameter), because the list is
+// capped: filtering the rows already on screen would search the newest fifty
+// conversations and miss the patient who wrote last week -- the one somebody
+// is actually looking for.
+let CHAT_SEARCH = "";
+let CHAT_SEARCH_TIMER = null;
+
+function onChatSearch(value) {
+  CHAT_SEARCH = value.trim();
+  document.getElementById("chatSearchClear").hidden = !CHAT_SEARCH;
+  // Typed, not submitted: waiting a beat turns "asomov" into one request
+  // instead of six.
+  clearTimeout(CHAT_SEARCH_TIMER);
+  CHAT_SEARCH_TIMER = setTimeout(loadChats, 250);
+}
+
+// Every list request is numbered, and only the newest one may draw. The poll
+// and the search box both call loadChats, so without this a poll that left
+// before the operator typed "asomov" can land after the search and put the
+// unfiltered list back on screen.
+let CHATS_SEQ = 0;
+// What was last drawn, so a poll that brings back the same rows draws
+// nothing. Redrawing identical rows every five seconds is what makes a live
+// list flicker, lose the button under the cursor, and drop a text selection.
+let CHATS_SIGNATURE = "";
+// When each conversation last heard anything, as of the previous draw, so a
+// row that moves because a patient just wrote can be marked as new.
+let CHATS_LAST_SEEN = new Map();
+
+async function loadChats(options = {}) {
+  const seq = ++CHATS_SEQ;
+  await loadBotSwitch();
+  const params = new URLSearchParams(LIST_PARAMS.conversations);
+  if (CHAT_SEARCH) params.set("q", CHAT_SEARCH);
+  const rows = await api("/conversations?" + params);
+  if (seq !== CHATS_SEQ) return;
+  document.getElementById("chatSearchHint").textContent =
+    CHAT_SEARCH ? `"${CHAT_SEARCH}" bo'yicha ${rows.length} ta suhbat` : "";
+
+  const signature = JSON.stringify([rows, CURRENT_CHAT, CHAT_SEARCH]);
+  if (options.quiet && signature === CHATS_SIGNATURE) return;
+  const previouslySeen = CHATS_LAST_SEEN;
+  CHATS_SIGNATURE = signature;
+  CHATS_LAST_SEEN = new Map(rows.map((c) => [c.id, c.last_message_at]));
+  // Only a poll marks rows as new. On the first draw, or after a search,
+  // everything is "new" to the screen and highlighting all of it says nothing.
+  const isFresh = (c) =>
+    options.quiet && c.last_message_at && previouslySeen.get(c.id) !== c.last_message_at;
+
+  fill("chatRows", rows.map((c) =>
+    // The whole row opens the conversation, not only the button: the button
+    // is a 60px target in a row an operator is already pointing at. Clicks
+    // that land on a control are left to that control.
+    el("tr", {
+      "data-id": c.id,
+      class: "clickable" + (CURRENT_CHAT === c.id ? " sel" : "") + (isFresh(c) ? " fresh" : ""),
+      onclick: (e) => { if (!e.target.closest("button, select, a, input")) openThread(c.id); },
+    },
+      el("td", {}, patientLabel(c), c.patient_name && c.patient_username
+        ? el("small", { class: "muted" }, el("br"), c.patient_name)
+        : null),
+      el("td", {}, el("span", { class: "pill " + c.channel }, c.channel || "—")),
+      el("td", {}, c.last_message_preview || "—", el("br"), el("small", { class: "muted" }, c.last_message_at ? localDateTime(c.last_message_at) : "")),
+      el("td", {}, el("span", { class: "pill " + (c.is_bot_enabled ? "ok" : "bad") }, c.is_bot_enabled ? "yoqilgan" : "operatorda")),
+      el("td", {}, el("span", { class: "row" },
+        el("button", { class: "act", onclick: () => openThread(c.id) }, "Ochish"),
+        canManage()
+          ? el("button", { class: "act", onclick: () => toggleBot(c.id, !c.is_bot_enabled) }, c.is_bot_enabled ? "O'zim javob beraman" : "Botga qaytarish")
+          : null))
+    )
+  ));
+  if (!rows.length) {
+    fill("chatRows", [el("tr", {}, el("td", { colspan: "5", class: "muted" },
+      CHAT_SEARCH ? `"${CHAT_SEARCH}" bo'yicha hech nima topilmadi` : "Hali suhbat yo'q"))]);
+  }
+}
+
+async function toggleBot(id, enabled) {
+  try {
+    await api(`/conversations/${id}/bot`, { method: "POST", body: { is_bot_enabled: enabled } });
+    toast(enabled ? "Bot yoqildi" : "Suhbat sizga o'tdi");
+    await loadChats();
+    if (CURRENT_CHAT === id) await openThread(id);
+  } catch (err) { toast(err.message, true); }
+}
+
+// Marks the row being read, so that two clicks in a row are told apart and
+// an operator coming back to the screen can see where they were.
+function markSelectedRow() {
+  for (const tr of document.querySelectorAll("#chatRows tr")) {
+    tr.classList.toggle("sel", CURRENT_CHAT !== null && tr.dataset.id === CURRENT_CHAT);
+  }
+}
+
+function closeThread() {
+  CURRENT_CHAT = null;
+  document.getElementById("threadPanel").hidden = true;
+  document.getElementById("chatWorkspace").classList.remove("open");
+  document.body.classList.remove("chat-open");
+  markSelectedRow();
+  if (!document.getElementById("tab-chats").hidden) writeLocation("chats", null);
+}
+
+function renderThread(detail) {
+  document.getElementById("threadTitle").textContent =
+    patientLabel(detail.conversation) + " — " + detail.conversation.channel;
+  document.getElementById("thread").replaceChildren(
+    ...detail.messages.map((m) =>
+      el("div", { class: "msg " + m.sender }, m.content, el("small", {}, m.sender + " · " + localDateTime(m.created_at)))
+    )
+  );
+  document.getElementById("replyHint").textContent = detail.conversation.is_bot_enabled
+    ? "Bot hali yoqilgan — javob yozsangiz ham bot javob berishda davom etadi."
+    : "";
+}
+
+// --- the conversations tab keeps itself current --------------------------
+//
+// Every five seconds while the tab is open and the browser tab is in front,
+// the list and the open conversation are fetched again; nothing is redrawn
+// unless something changed. It is a chained timeout rather than setInterval,
+// so a slow response delays the next request instead of stacking a second
+// one behind it -- and it stops outright when nobody can see it: a dashboard
+// left open in a background tab overnight should not be asking the server
+// for the inbox 17,000 times.
+const CHAT_POLL_MS = 5000;
+const CHAT_POLL_MAX_MS = 60000;
+let CHAT_POLL_TIMER = null;
+let CHAT_POLL_BUSY = false;
+let CHAT_POLL_FAILURES = 0;
+
+function chatPollingWanted() {
+  return !document.getElementById("tab-chats").hidden && document.visibilityState === "visible";
+}
+
+function stopChatPolling() {
+  clearTimeout(CHAT_POLL_TIMER);
+  CHAT_POLL_TIMER = null;
+}
+
+function scheduleChatPoll(delay = CHAT_POLL_MS) {
+  stopChatPolling();
+  if (chatPollingWanted()) CHAT_POLL_TIMER = setTimeout(pollChats, delay);
+}
+
+async function pollChats() {
+  if (!chatPollingWanted()) return stopChatPolling();
+  if (CHAT_POLL_BUSY) return scheduleChatPoll();
+  CHAT_POLL_BUSY = true;
+  const hint = document.getElementById("chatLiveHint");
+  try {
+    await loadChats({ quiet: true });
+    if (CURRENT_CHAT !== null) await openThread(CURRENT_CHAT, { quiet: true });
+    CHAT_POLL_FAILURES = 0;
+    // Nothing to show while it works -- the list simply stays current. The
+    // hint only speaks when the refresh has stopped getting through.
+    hint.textContent = "";
+    hint.style.color = "";
+  } catch (err) {
+    // Quietly, and slower. A dropped connection is not worth a red toast
+    // every five seconds, and hammering a server that is already struggling
+    // helps nobody: 10s, 20s, 40s, then once a minute until it answers.
+    CHAT_POLL_FAILURES += 1;
+    hint.textContent = "aloqa uzildi — qayta urinilmoqda";
+    hint.style.color = "var(--danger)";
+  } finally {
+    CHAT_POLL_BUSY = false;
+    scheduleChatPoll(Math.min(CHAT_POLL_MS * 2 ** CHAT_POLL_FAILURES, CHAT_POLL_MAX_MS));
+  }
+}
+
+// Back in front after being hidden: catch up now rather than five seconds
+// from now, since that is exactly when something is likely to have arrived.
+document.addEventListener("visibilitychange", () => {
+  if (chatPollingWanted()) pollChats();
+  else stopChatPolling();
+});
+
+let THREAD_SEQ = 0;
+let THREAD_SIGNATURE = "";
+
+async function openThread(id, options = {}) {
+  const seq = ++THREAD_SEQ;
+  if (!options.quiet) {
+    CURRENT_CHAT = id;
+    THREAD_SIGNATURE = "";
+  }
+  const detail = await api(`/conversations/${id}`);
+  // The operator may have opened another conversation, or closed this one,
+  // while the request was out. A late answer for the old one must not paint
+  // over what they are now looking at.
+  if (seq !== THREAD_SEQ || CURRENT_CHAT !== id) return;
+
+  const thread = document.getElementById("thread");
+  if (options.quiet) {
+    const signature = JSON.stringify([detail.messages.map((m) => m.id), detail.conversation.is_bot_enabled]);
+    if (signature === THREAD_SIGNATURE) return;
+    THREAD_SIGNATURE = signature;
+    // Follow the conversation only if the operator was already at the end of
+    // it. Somebody scrolled up reading an earlier message must not be yanked
+    // back down every time the patient types.
+    const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40;
+    const keepTop = thread.scrollTop;
+    renderThread(detail);
+    thread.scrollTop = atBottom ? thread.scrollHeight : keepTop;
+    return;
+  }
+
+  THREAD_SIGNATURE = JSON.stringify([detail.messages.map((m) => m.id), detail.conversation.is_bot_enabled]);
+  writeLocation("chats", id);
+  document.getElementById("threadPanel").hidden = false;
+  // The class is what turns the workspace into two columns. Set here rather
+  // than in the stylesheet on #threadPanel:not([hidden]), so that a browser
+  // without :has() still collapses the list back to full width on close.
+  document.getElementById("chatWorkspace").classList.add("open");
+  document.body.classList.add("chat-open");
+  markSelectedRow();
+  renderThread(detail);
+  thread.scrollTop = thread.scrollHeight;
+  // Only where the two columns did not fit and the panel is genuinely below
+  // the list. On a wide screen it is already beside the row, and scrolling
+  // would move the page for no reason.
+  if (window.matchMedia("(max-width: 1000px)").matches) {
+    document.getElementById("threadPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+document.getElementById("threadClose").addEventListener("click", closeThread);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && CURRENT_CHAT !== null && !document.getElementById("tab-chats").hidden) {
+    closeThread();
+  }
+});
+
+// --- leads, doctors, faq, settings ---------------------------------------
+
+const LEAD_STATUSES = { new: "yangi", contacted: "bog'lanildi", booked: "qabulga yozildi", cancelled: "bekor qilindi" };
+
+async function loadLeads() {
+  const rows = await api("/leads?" + new URLSearchParams(LIST_PARAMS.leads));
+  fill("leadRows", rows.map((l) =>
+    el("tr", {},
+      el("td", {}, l.patient_name || "—"),
+      el("td", {}, l.phone || "—"),
+      el("td", {}, l.topic || "—"),
+      el("td", {}, l.convenient_time || "—"),
+      el("td", {}, el("span", { class: "pill " + (l.status === "new" ? "bad" : "ok") }, LEAD_STATUSES[l.status] || l.status)),
+      el("td", {}, canManage()
+        ? el("select", { onchange: (e) => updateLead(l.id, e.target.value) },
+            ...Object.entries(LEAD_STATUSES).map(([value, label]) =>
+              el("option", { value, selected: value === l.status ? "selected" : null }, label)))
+        : null)
+    )
+  ));
+  if (!rows.length) fill("leadRows", [el("tr", {}, el("td", { colspan: "6", class: "muted" }, "Hali lid yo'q"))]);
+}
+
+async function updateLead(id, status) {
+  try {
+    await api(`/leads/${id}`, { method: "PATCH", body: { status } });
+    toast("Saqlandi");
+    await loadLeads();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function loadDoctors() {
+  const rows = await api("/doctors?include_inactive=true");
+  fill("doctorRows", rows.map((d) =>
+    el("tr", {},
+      el("td", {}, d.name),
+      el("td", {}, d.specialty),
+      el("td", {}, d.phone || "—"),
+      el("td", {}, d.working_hours),
+      el("td", {}, el("span", { class: "pill " + (d.is_active ? "ok" : "bad") }, d.is_active ? "faol" : "faol emas")),
+      el("td", {}, canManageClinic()
+        ? el("button", { class: "act", onclick: () => setDoctorActive(d.id, !d.is_active) }, d.is_active ? "O'chirish" : "Yoqish")
+        : null)
+    )
+  ));
+  const picker = document.getElementById("nDoctor");
+  picker.replaceChildren(
+    el("option", { value: "" }, "Tayinlanmagan"),
+    ...rows.filter((d) => d.is_active).map((d) => el("option", { value: d.id }, d.name))
+  );
+}
+
+async function setDoctorActive(id, active) {
+  try {
+    await api(`/doctors/${id}`, { method: "PATCH", body: { is_active: active } });
+    toast("Saqlandi");
+    await loadDoctors();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function loadFaqs() {
+  const rows = await api("/knowledge-base");
+  fill("faqRows", rows.map((f) =>
+    el("tr", {},
+      el("td", {}, f.question),
+      el("td", {}, f.answer),
+      el("td", {}, el("span", { class: "pill " + (f.is_active ? "ok" : "bad") }, f.is_active ? "faol" : "o'chirilgan")),
+      el("td", {}, canManageClinic() && f.is_active
+        ? el("button", { class: "act danger", onclick: () => removeFaq(f.id) }, "O'chirish")
+        : null)
+    )
+  ));
+  if (!rows.length) fill("faqRows", [el("tr", {}, el("td", { colspan: "4", class: "muted" }, "Bilim bazasi bo'sh — bot faqat umumiy javob beradi"))]);
+}
+
+async function removeFaq(id) {
+  try {
+    await api(`/knowledge-base/${id}`, { method: "DELETE", headers: { "X-CSRF-Token": CSRF } });
+    toast("O'chirildi");
+    await loadFaqs();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function loadSettings() {
+  const s = await api("/settings");
+  document.getElementById("sAddr").value = s.clinic_address || "";
+  document.getElementById("sLand").value = s.clinic_landmark || "";
+  document.getElementById("sPhone").value = s.clinic_phone_numbers || "";
+  document.getElementById("sHours").value = s.clinic_work_hours || "";
+  document.getElementById("sDeb").value = s.debounce_seconds ?? "";
+  document.getElementById("sRules").value = (s.strict_rules || []).join("\n");
+}
+
+// --- forms ---------------------------------------------------------------
+
+document.getElementById("apptForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const date = document.getElementById("nDate").value;
+  const time = document.getElementById("nTime").value;
+  try {
+    await api("/appointments", { method: "POST", body: {
+      // Sent as a local wall-clock time with the browser's offset, which is
+      // the clinic's own timezone on a clinic's own machine.
+      scheduled_at: new Date(`${date}T${time}`).toISOString(),
+      patient_name: document.getElementById("nName").value,
+      patient_phone: document.getElementById("nPhone").value || null,
+      doctor_id: document.getElementById("nDoctor").value || null,
+    } });
+    toast("Qabul qo'shildi");
+    e.target.reset();
+    document.getElementById("apptDate").value = date;
+    await Promise.all([loadAppointments(), loadStats()]);
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("doctorForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/doctors", { method: "POST", body: {
+      name: document.getElementById("dName").value,
+      specialty: document.getElementById("dSpec").value,
+      phone: document.getElementById("dPhone").value || null,
+      working_hours: document.getElementById("dHours").value,
+    } });
+    toast("Shifokor qo'shildi");
+    e.target.reset();
+    await loadDoctors();
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("faqForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/knowledge-base", { method: "POST", body: {
+      question: document.getElementById("fQ").value,
+      answer: document.getElementById("fA").value,
+    } });
+    toast("Saqlandi va indekslandi");
+    e.target.reset();
+    await loadFaqs();
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("settingsForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const rules = document.getElementById("sRules").value.split("\n").map((r) => r.trim()).filter(Boolean);
+  const debounce = document.getElementById("sDeb").value;
+  try {
+    await api("/settings", { method: "PATCH", body: {
+      clinic_address: document.getElementById("sAddr").value || null,
+      clinic_landmark: document.getElementById("sLand").value || null,
+      clinic_phone_numbers: document.getElementById("sPhone").value || null,
+      clinic_work_hours: document.getElementById("sHours").value || null,
+      debounce_seconds: debounce === "" ? null : Number(debounce),
+      strict_rules: rules,
+    } });
+    toast("Sozlamalar saqlandi");
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("passwordForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/password", { method: "POST", body: {
+      current_password: document.getElementById("pOld").value,
+      new_password: document.getElementById("pNew").value,
+    } });
+    toast("Parol o'zgartirildi");
+    e.target.reset();
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("replyForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("replyText");
+  try {
+    await api(`/conversations/${CURRENT_CHAT}/reply`, { method: "POST", body: { text: input.value } });
+    input.value = "";
+    toast("Yuborildi");
+    await openThread(CURRENT_CHAT);
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("apptReload").addEventListener("click", () => loadAppointments().catch((e) => toast(e.message, true)));
+document.getElementById("logout").addEventListener("click", async () => {
+  const form = el("form", { method: "POST", action: "/logout" });
+  document.body.append(form);
+  form.submit();
+});
+
+// --- tabs and boot -------------------------------------------------------
+
+// --- staff ---------------------------------------------------------------
+
+const ROLE_LABELS = { admin: "Administrator", operator: "Operator", doctor: "Shifokor" };
+
+async function loadStaff() {
+  const rows = await api("/operators");
+  fill("staffRows", rows.map((m) =>
+    el("tr", {},
+      el("td", {}, m.name),
+      el("td", {}, m.username),
+      el("td", {}, el("select", {
+        onchange: (e) => setStaffRole(m.id, e.target.value),
+      }, ...Object.entries(ROLE_LABELS).map(([value, label]) =>
+        el("option", value === m.role ? { value, selected: "selected" } : { value }, label)
+      ))),
+      el("td", {},
+        el("button", { class: "act", onclick: () => resetStaffPassword(m.id, m.name) }, "Parol"),
+        " ",
+        el("button", { class: "act danger", onclick: () => removeStaff(m.id, m.name) }, "O'chirish"))
+    )
+  ));
+}
+
+async function setStaffRole(id, role) {
+  try {
+    await api("/operators/" + id, { method: "PATCH", body: { role } });
+    toast("Rol o'zgartirildi");
+  } catch (err) {
+    toast(err.message, true);
+  }
+  // Reloaded either way: on failure the <select> is showing a role the
+  // server refused, and leaving it there would misreport who can do what.
+  await loadStaff();
+}
+
+async function resetStaffPassword(id, name) {
+  const password = prompt(`${name} uchun yangi parol (kamida 10 belgi):`);
+  if (!password) return;
+  try {
+    await api("/operators/" + id, { method: "PATCH", body: { password } });
+    toast("Parol yangilandi");
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function removeStaff(id, name) {
+  if (!confirm(`${name} o'chirilsinmi? Bu hisob bilan endi tizimga kirib bo'lmaydi.`)) return;
+  try {
+    await api("/operators/" + id, { method: "DELETE" });
+    toast("Xodim o'chirildi");
+    await loadStaff();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+// Controls the server would refuse are hidden rather than shown and then
+// rejected. This is presentation only — app.api.admin.deps checks every one
+// of these again on the request itself.
+function applyPermissions() {
+  document.querySelector('#tabs button[data-tab="staff"]').hidden = !can("manage_staff");
+  for (const id of ["doctorForm", "faqForm", "settingsForm"]) {
+    const form = document.getElementById(id);
+    if (form) form.hidden = !canManageClinic();
+  }
+}
+
+// --- saved views ---------------------------------------------------------
+// A clinic's own named questions about its data: "Bugungi Telegram
+// qabullari", "Javobsiz lidlar". Stored server-side as query parameters for
+// a list that already exists, so clicking one is the same request the
+// controls make.
+
+let SAVED_VIEWS = [];
+// Lists whose controls do not live in the page yet still carry parameters —
+// a saved view sets these, the loaders send them.
+const LIST_PARAMS = { conversations: {}, leads: {} };
+
+async function loadViews() {
+  SAVED_VIEWS = await api("/filters");
+  renderViews();
+}
+
+function renderViews() {
+  for (const resource of ["appointments", "conversations", "leads"]) {
+    const holder = document.getElementById("views-" + resource);
+    if (!holder) continue;
+    const mine = SAVED_VIEWS.filter((v) => v.resource === resource);
+    const chips = mine.map((view) =>
+      el("span", { class: "row", style: "gap:2px" },
+        el("button", { class: "act", onclick: () => applyView(view) }, view.name),
+        canManageClinic()
+          ? el("button", {
+              class: "act danger",
+              title: "Ko'rinishni o'chirish",
+              onclick: () => removeView(view),
+            }, "×")
+          : null)
+    );
+    if (canManageClinic()) {
+      chips.push(el("button", { class: "act primary", onclick: () => saveView(resource) }, "+ Saqlash"));
+    }
+    if (!chips.length) {
+      chips.push(el("span", { class: "muted" }, "Saqlangan ko'rinish yo'q"));
+    }
+    holder.replaceChildren(...chips);
+  }
+}
+
+async function applyView(view) {
+  if (view.resource === "appointments") {
+    applyParams("appointments", view.params);
+    await loadAppointments();
+  } else {
+    LIST_PARAMS[view.resource] = view.params;
+    await (view.resource === "leads" ? loadLeads() : loadChats());
+  }
+  toast(`"${view.name}" qo'llandi`);
+}
+
+async function saveView(resource) {
+  const name = prompt("Bu ko'rinishga nom bering:");
+  if (!name) return;
+  const params = resource === "appointments" ? currentParams(resource) : LIST_PARAMS[resource];
+  try {
+    await api("/filters", { method: "POST", body: { resource, name, params } });
+    toast("Ko'rinish saqlandi");
+    await loadViews();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function removeView(view) {
+  if (!confirm(`"${view.name}" o'chirilsinmi?`)) return;
+  try {
+    await api("/filters/" + view.id, { method: "DELETE" });
+    await loadViews();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+const LOADERS = {
+  today: () => Promise.all([loadStats(), loadAppointments(), loadDoctors(), loadViews()]),
+  chats: loadChats,
+  leads: loadLeads,
+  doctors: loadDoctors,
+  faq: loadFaqs,
+  settings: loadSettings,
+  staff: loadStaff,
+};
+
+// --- where the operator is, kept in the address bar -----------------------
+//
+// "#chats", or "#chats/<conversation id>" with a conversation open. Reloading
+// the page used to drop the operator back on "Bugun" every time, and on the
+// conversations screen -- which the clinic reloads more than any other -- that
+// meant finding the tab and the patient again after every refresh. Kept in the
+// hash rather than in storage so it also survives being bookmarked or pasted
+// to a colleague, and so two tabs can sit on two different screens.
+//
+// replaceState, not a new history entry per click: the back button should
+// leave the dashboard, not walk back through every tab visited.
+function writeLocation(tab, chatId) {
+  const hash = "#" + tab + (chatId ? "/" + chatId : "");
+  if (window.location.hash !== hash) history.replaceState(null, "", hash);
+}
+
+function readLocation() {
+  const [tab, chatId] = window.location.hash.replace(/^#/, "").split("/");
+  return { tab: tab || null, chatId: chatId || null };
+}
+
+// A tab the operator can actually open: it exists, and their role has not hidden it.
+function tabButton(tab) {
+  const button = tab && document.querySelector(`#tabs button[data-tab="${CSS.escape(tab)}"]`);
+  return button && !button.hidden && LOADERS[tab] ? button : null;
+}
+
+function showTab(tab) {
+  const button = tabButton(tab) || tabButton("today");
+  const name = button.dataset.tab;
+  for (const b of document.querySelectorAll("#tabs button")) {
+    b.setAttribute("aria-selected", String(b === button));
+  }
+  for (const s of document.querySelectorAll("main section")) {
+    s.hidden = s.id !== "tab-" + name;
+  }
+  // The one-screenful layout belongs to the conversations tab; every other
+  // tab is an ordinary scrolling page and wants its bottom padding back.
+  document.body.classList.toggle("chat-open", name === "chats" && CURRENT_CHAT !== null);
+  writeLocation(name, name === "chats" ? CURRENT_CHAT : null);
+  // Live refresh belongs to the conversations tab alone.
+  if (name === "chats") scheduleChatPoll();
+  else stopChatPolling();
+  return LOADERS[name]();
+}
+
+document.getElementById("tabs").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-tab]");
+  if (!button) return;
+  showTab(button.dataset.tab).catch((err) => toast(err.message, true));
+});
+
+document.getElementById("staffForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/operators", { method: "POST", body: {
+      name: document.getElementById("sName").value.trim(),
+      username: document.getElementById("sUser").value.trim(),
+      password: document.getElementById("sPass").value,
+      role: document.getElementById("sRole").value,
+    }});
+    e.target.reset();
+    toast("Xodim qo'shildi");
+    await loadStaff();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+(async function boot() {
+  document.getElementById("apptDate").value = today();
+  document.getElementById("nDate").value = today();
+  try {
+    const me = await api("/session");
+    CSRF = me.csrf_token;
+    ROLE = me.role;
+    PERMISSIONS = new Set(me.permissions || []);
+    applyPermissions();
+    await loadViews();
+    document.getElementById("whoami").textContent = `${me.name} · ${me.role} · ${me.tenant_name}`;
+    // Back where the operator was before the reload. Permissions are applied
+    // first, so a link to a tab this role cannot open lands on "Bugun" rather
+    // than on a screen it would only be refused.
+    const where = readLocation();
+    await showTab(where.tab);
+    if (where.tab === "chats" && where.chatId) {
+      // The conversation may be gone, or belong to another clinic's link. Not
+      // worth an error: the list is on screen, so the operator simply picks.
+      await openThread(where.chatId).catch(() => closeThread());
+    }
+  } catch (err) {
+    toast(err.message, true);
+  }
+})();
+</script>
+</body>
+</html>
