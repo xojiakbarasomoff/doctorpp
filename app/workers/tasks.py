@@ -23,8 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # separate process from the web app, so it must do this itself.
 from app import channels  # noqa: F401  - importing it registers the adapters
 from app.channels.base import ChannelAdapter
+from app.channels.instagram.client import InstagramClient, get_instagram_client
 from app.core.config import get_settings
 from app.core.db import db_session
+from app.core.encryption import decrypt
 from app.core.logging import configure_logging
 from app.core.redaction import preview
 from app.core.tenant_context import reset_current_tenant, set_current_tenant
@@ -34,6 +36,7 @@ from app.models.conversation import Conversation
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
 from app.repositories.appointment import AppointmentRepository
+from app.repositories.channel import ChannelRepository
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
 from app.services.booking import settle as settle_booking
@@ -526,6 +529,60 @@ async def apply_admin_rule(
         reset_current_tenant(token)
 
 
+async def apply_owner_rule(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    message_text: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    client: InstagramClient | None = None,
+) -> None:
+    """ARQ job: store a rule the account's own owner typed from that account.
+
+    The doctor's inbox is the doctor's own Instagram, and nobody can message
+    themselves -- so the rule arrives as an echo of a message the owner sent
+    into some other conversation. Anybody logged in as the account could have
+    sent it, which is why the account's handle must still be a nominated
+    admin: the switch for this stays ADMIN_INSTAGRAM_USERNAMES, as it is for
+    rules sent by direct message.
+
+    No confirmation is sent. The conversation the rule was typed into belongs
+    to whoever is on the other end of it, and they must not be told the
+    assistant's instructions changed.
+    """
+    settings = get_settings()
+    tenant_uuid = uuid.UUID(tenant_id)
+    rule = parse_rule(message_text, settings.admin_command_keyword)
+    if rule is None:
+        return
+
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with session_factory() as session:
+            channel = await ChannelRepository(session).get(uuid.UUID(channel_id))
+            if channel is None:
+                return
+            username = await (client or get_instagram_client()).fetch_username(
+                access_token=decrypt(channel.credentials), igsid="me"
+            )
+            if not is_admin(username, settings.admin_usernames):
+                logger.warning(
+                    "owner_rule_refused", extra={"tenant_id": tenant_id, "username": username}
+                )
+                return
+
+            rules = await add_rule(session, tenant_id=tenant_uuid, rule=rule)
+            await record_rule_in_knowledge_base(session, rule=rule, position=len(rules))
+            await session.commit()
+            logger.info(
+                "owner_rule_applied",
+                extra={"tenant_id": tenant_id, "username": username, "rule_count": len(rules)},
+            )
+    finally:
+        reset_current_tenant(token)
+
+
 async def resolve_username(
     ctx: dict[str, Any],
     tenant_id: str,
@@ -572,6 +629,7 @@ class WorkerSettings:
         fire_debounce_window,
         resolve_username,
         apply_admin_rule,
+        apply_owner_rule,
     ]
     # Named here as well as in _MAX_ATTEMPTS so the retry ladder in
     # fire_debounce_window and arq's own limit cannot drift apart.

@@ -135,6 +135,22 @@ async def _handle_event(
         return
 
     if _is_echo(event, page_id):
+        # The one echo worth reading: the account's owner typing a rule from
+        # the account itself. A doctor cannot direct-message their own inbox,
+        # so this is the only way a rule can come from the handle that owns
+        # it. Whether that handle is a nominated admin is the job's to check.
+        text = event.message.text
+        if text is not None and parse_rule(text, get_settings().admin_command_keyword):
+            if event.message.mid is None or await claim_event(
+                pool,
+                tenant_id=channel.tenant_id,
+                channel_type=channel.channel_type,
+                event_id=event.message.mid,
+            ):
+                await pool.enqueue_job(
+                    "apply_owner_rule", str(channel.tenant_id), str(channel.channel_id), text
+                )
+            return
         logger.info(
             "webhook_echo_skipped",
             extra={"sender_id": event.sender.id, "recipient_id": event.recipient.id},
