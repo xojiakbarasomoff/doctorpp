@@ -131,6 +131,11 @@ class BotAPI:
             timeout=POLL_TIMEOUT_SECONDS,
             allowed_updates=["message", "callback_query"],
         )
+        if result is None:
+            # A refused poll returns at once rather than after the long-poll
+            # timeout; without a pause a wrong token turns into a tight loop
+            # against Telegram.
+            await asyncio.sleep(10)
         return result or []
 
     async def send(
