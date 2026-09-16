@@ -1,30 +1,36 @@
-"""The doctor's own Telegram bot: their appointments, and a day off in one line.
+"""The doctor's own Telegram bot: their appointments, and cancelling them.
 
 Not a patient channel. Patients write to the doctor on Instagram; this bot
-has exactly one audience, the doctor (and whoever else is named in
-DOCTOR_TELEGRAM_USERNAMES), and does three things:
+has one audience, the doctor and whoever else is named in
+DOCTOR_TELEGRAM_USERNAMES. Four buttons under the chat:
 
-* tells them the moment a new appointment is booked, from any source --
-  the dashboard, the web app, the assistant;
-* lists the appointments for today or tomorrow on request;
-* when they write "bugun ishga bora olmayman", asks once to confirm, then
-  cancels that day's appointments and tells every patient it can reach on
-  Instagram. The ones it cannot reach -- booked by phone, or outside
-  Instagram's 24-hour reply window -- are listed back with their numbers, so
-  somebody rings them. A patient who travels across Tashkent to a closed
-  door because a message silently failed is the failure this is built
-  around.
+* 📋 Qabullar -- today's or tomorrow's list.
+* 🚫 Kunni bekor qilish -- the doctor is not coming: close the day to new
+  bookings, cancel everything on it, tell each patient.
+* 👤 Bemorni bekor qilish -- the doctor is leaving early: tick the patients
+  who cannot be seen, cancel just those, tell just them.
+* 🔓 Yopilgan kunlar -- reopen a day closed by mistake.
 
-Runs by long polling from the worker rather than by webhook: the deployment
-this was written for sits behind a tunnel whose address changes, and a
-webhook pointed at yesterday's address is a bot that has gone quiet without
-saying so.
+New appointments, from any source, are announced as they are made.
+
+Everything that cancels asks once more before it acts, and reports back who
+was told on Instagram and who could not be -- booked by phone, or outside
+Instagram's 24-hour window -- with their numbers, so somebody rings them. A
+patient who crosses Tashkent to a closed door because a message silently
+failed is the failure this is built around.
+
+Menus live in one message that is edited in place, so the chat reads as an
+app rather than a scroll of stale keyboards. Runs by long polling from the
+worker: the deployment sits behind a tunnel whose address changes, and a
+webhook pointed at yesterday's address is a bot gone quiet without saying so.
 """
 
 import asyncio
+import html
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
@@ -52,33 +58,64 @@ POLL_TIMEOUT_SECONDS = 25
 CHATS_KEY = "doctor_telegram_chats"
 OFFSET_KEY = "doctor_telegram_offset"
 NOTIFIED_UNTIL_KEY = "doctor_telegram_notified_until"
+# Per chat: the day being picked from and the appointment ids ticked so far.
+# Kept here rather than in the button data, because a button that says "the
+# third patient" names somebody else the moment a booking lands before them.
+PICKS_KEY = "doctor_telegram_picks"
 
-BTN_TODAY = "📅 Bugungi qabullar"
-BTN_TOMORROW = "📅 Ertangi qabullar"
-BTN_OFF_TODAY = "🚫 Bugun kela olmayman"
-BTN_OFF_TOMORROW = "🚫 Ertaga kela olmayman"
+BTN_LIST = "📋 Qabullar"
+BTN_DAY_OFF = "🚫 Kunni bekor qilish"
+BTN_PICK = "👤 Bemorni bekor qilish"
+BTN_CLOSED = "🔓 Yopilgan kunlar"
 
-KEYBOARD = {
+MAIN_KEYBOARD = {
     "keyboard": [
-        [{"text": BTN_TODAY}, {"text": BTN_TOMORROW}],
-        [{"text": BTN_OFF_TODAY}, {"text": BTN_OFF_TOMORROW}],
+        [{"text": BTN_LIST}, {"text": BTN_DAY_OFF}],
+        [{"text": BTN_PICK}, {"text": BTN_CLOSED}],
     ],
     "resize_keyboard": True,
+    "is_persistent": True,
+    "input_field_placeholder": "Menyudan tanlang",
 }
 
-# "bugun ishga bora olmayman", "ertaga kelolmayman", "сегодня не смогу" --
-# the ways a doctor actually types it on a phone. Matched loosely on purpose,
-# because nothing happens on a match except a question with two buttons.
+_WEEKDAYS = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
+_MONTHS = [
+    "yanvar", "fevral", "mart", "aprel", "may", "iyun",
+    "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr",
+]  # fmt: skip
+
+# Typed rather than tapped: "bugun ishga bora olmayman", "ertaga kelolmayman".
+# Matched loosely, because a match only opens the same confirmation the
+# button does.
 _ABSENT = re.compile(
     r"(bora?\s*olma|borolma|kela?\s*olma|kelolma|chiqa?\s*olma|chiqolma|ishlamayman|"
     r"kelmayman|bormayman|не\s*смогу|не\s*приду|не\s*выйду|не\s*буду)",
     re.IGNORECASE,
 )
 _TOMORROW = re.compile(r"(ertaga|завтра)", re.IGNORECASE)
-# "ertaga ishga boraman", "bugun kelaman" -- reopening a day closed by mistake.
-_BACK = re.compile(
-    r"(boraman|kelaman|ishlayman|chiqaman|смогу|приду|выйду|буду\s*работать)", re.IGNORECASE
-)
+
+
+# --- presentation ---------------------------------------------------------------
+
+
+def _b(text: str) -> str:
+    return f"<b>{html.escape(text)}</b>"
+
+
+def _long_date(day: date) -> str:
+    return f"{_WEEKDAYS[day.weekday()]}, {day.day}-{_MONTHS[day.month - 1]}"
+
+
+def _day_word(day: date, today: date) -> str:
+    if day == today:
+        return "Bugun"
+    if day == today + timedelta(days=1):
+        return "Ertaga"
+    return f"{day:%d.%m.%Y}"
+
+
+def _btn(text: str, data: str) -> dict[str, str]:
+    return {"text": text, "callback_data": data}
 
 
 @dataclass(frozen=True)
@@ -95,20 +132,42 @@ class Booking:
                 return self.patient.name
             if self.patient.username:
                 return f"@{self.patient.username}"
-        return "Ismi yo'q"
+        return "Ismi ko'rsatilmagan"
 
     @property
     def phone(self) -> str | None:
         return self.appointment.patient_phone or (self.patient.phone if self.patient else None)
 
-    def line(self) -> str:
-        local = self.appointment.scheduled_at.astimezone(CLINIC_TIMEZONE)
+    @property
+    def local(self) -> datetime:
+        return self.appointment.scheduled_at.astimezone(CLINIC_TIMEZONE)
+
+    @property
+    def short_id(self) -> str:
+        return self.appointment.id.hex[:12]
+
+    def card(self) -> str:
+        """Two lines: time and name, then how to reach them."""
+        confirmed = self.appointment.status == AppointmentStatus.CONFIRMED
+        mark = "✅" if confirmed else "🕐"
+        first = f"{mark} <b>{self.local:%H:%M}</b> — {html.escape(self.name)}"
+        details = []
+        if self.phone:
+            details.append(f"📞 <code>{html.escape(self.phone)}</code>")
+        if self.patient is not None and self.patient.username:
+            details.append(f"📷 @{html.escape(self.patient.username)}")
+        return first + (f"\n      {'  ·  '.join(details)}" if details else "")
+
+    def plain(self) -> str:
         phone = f" · {self.phone}" if self.phone else ""
-        return f"🕐 {local:%H:%M} — {self.name}{phone}"
+        return f"{self.local:%H:%M} — {self.name}{phone}"
+
+
+# --- transport ------------------------------------------------------------------
 
 
 class BotAPI:
-    """The four Bot API calls this needs, and nothing else."""
+    """The handful of Bot API calls this needs, and nothing else."""
 
     def __init__(self, token: str, http: httpx.AsyncClient | None = None) -> None:
         self._base = f"{API}/bot{token}"
@@ -121,10 +180,13 @@ class BotAPI:
         response = await self._http.post(f"{self._base}/{method}", json=payload)
         body = response.json()
         if not body.get("ok"):
-            logger.warning(
-                "doctor_telegram_call_failed",
-                extra={"method": method, "description": body.get("description")},
-            )
+            description = body.get("description")
+            # Pressing the same button twice asks for an identical edit.
+            if "message is not modified" not in str(description):
+                logger.warning(
+                    "doctor_telegram_call_failed",
+                    extra={"method": method, "description": description},
+                )
             return None
         return body.get("result")
 
@@ -137,25 +199,54 @@ class BotAPI:
         )
         if result is None:
             # A refused poll returns at once rather than after the long-poll
-            # timeout; without a pause a wrong token turns into a tight loop
-            # against Telegram.
+            # timeout; without a pause a wrong token is a tight loop.
             await asyncio.sleep(10)
         return result or []
 
     async def send(
         self, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None
     ) -> None:
-        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": {"is_disabled": True},
+        }
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         await self._call("sendMessage", **payload)
 
-    async def answer_callback(self, callback_id: str) -> None:
-        await self._call("answerCallbackQuery", callback_query_id=callback_id)
+    async def edit(
+        self, chat_id: int, message_id: int, text: str, reply_markup: dict[str, Any] | None = None
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": {"is_disabled": True},
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        await self._call("editMessageText", **payload)
+
+    async def answer_callback(self, callback_id: str, text: str | None = None) -> None:
+        payload: dict[str, Any] = {"callback_query_id": callback_id}
+        if text:
+            payload["text"] = text
+        await self._call("answerCallbackQuery", **payload)
 
     async def delete_webhook(self) -> None:
         # getUpdates refuses to run while a webhook is set.
         await self._call("deleteWebhook")
+
+    async def set_commands(self) -> None:
+        await self._call(
+            "setMyCommands", commands=[{"command": "start", "description": "Bosh menyu"}]
+        )
+
+
+# --- data -----------------------------------------------------------------------
 
 
 def _allowed(username: str | None, settings: Settings) -> bool:
@@ -198,26 +289,51 @@ async def bookings_on(session: AsyncSession, tenant_id: uuid.UUID, day: date) ->
     return [Booking(appointment, patient) for appointment, patient in rows]
 
 
-def _day_word(day: date, today: date) -> str:
-    if day == today:
-        return "Bugun"
-    if day == today + timedelta(days=1):
-        return "Ertaga"
-    return f"{day:%d.%m.%Y}"
+async def _set_day_off(session: AsyncSession, tenant: Tenant, day: date, *, off: bool) -> None:
+    """Close or reopen a day for booking. Past days are dropped as it goes."""
+    today = datetime.now(CLINIC_TIMEZONE).date()
+    days = {d for d in days_off_from(tenant.settings) if d >= today}
+    if off:
+        days.add(day)
+    else:
+        days.discard(day)
+    tenant.settings = {**tenant.settings, DAYS_OFF_KEY: sorted(d.isoformat() for d in days)}
+    await session.commit()
+    logger.info("doctor_day_off_set", extra={"day": day.isoformat(), "off": off})
 
 
-def _schedule_text(day: date, today: date, bookings: list[Booking], closed: bool = False) -> str:
-    head = f"{_day_word(day, today)} ({day:%d.%m.%Y})"
-    if closed:
-        head += " — 🚫 kun yopilgan, qabulga yozib bo'lmaydi"
-    if not bookings:
-        return f"{head}: qabulga yozilganlar yo'q."
-    lines = "\n".join(booking.line() for booking in bookings)
-    return f"{head} — {len(bookings)} ta qabul:\n\n{lines}"
+async def _remember_chat(session: AsyncSession, tenant: Tenant, chat_id: int) -> None:
+    chats = [c for c in tenant.settings.get(CHATS_KEY, []) if isinstance(c, int)]
+    if chat_id not in chats:
+        tenant.settings = {**tenant.settings, CHATS_KEY: [*chats, chat_id]}
+        await session.commit()
 
 
-def _patient_notice(settings: Settings, booking: Booking) -> str:
-    local = booking.appointment.scheduled_at.astimezone(CLINIC_TIMEZONE)
+def _picks(tenant: Tenant, chat_id: int) -> tuple[date | None, list[str]]:
+    entry = (tenant.settings.get(PICKS_KEY) or {}).get(str(chat_id)) or {}
+    try:
+        day = date.fromisoformat(entry["day"])
+    except (KeyError, TypeError, ValueError):
+        return None, []
+    return day, [i for i in entry.get("ids", []) if isinstance(i, str)]
+
+
+async def _save_picks(
+    session: AsyncSession, tenant: Tenant, chat_id: int, day: date | None, ids: Sequence[str]
+) -> None:
+    picks = dict(tenant.settings.get(PICKS_KEY) or {})
+    if day is None:
+        picks.pop(str(chat_id), None)
+    else:
+        picks[str(chat_id)] = {"day": day.isoformat(), "ids": list(ids)}
+    tenant.settings = {**tenant.settings, PICKS_KEY: picks}
+    await session.commit()
+
+
+# --- cancelling -----------------------------------------------------------------
+
+
+def _patient_notice(settings: Settings, booking: Booking, *, whole_day: bool) -> str:
     doctor = settings.doctor_name or "Doktor"
     phone = settings.clinic_phone_numbers
     rebook = (
@@ -225,30 +341,34 @@ def _patient_notice(settings: Settings, booking: Booking) -> str:
         if phone
         else " Boshqa vaqtga yozilish uchun biz bilan bog'laning."
     )
+    reason = (
+        f"doktor {doctor} {booking.local:%d.%m.%Y} kuni qabul qila olmaydi"
+        if whole_day
+        else f"doktor {doctor} {booking.local:%d.%m.%Y} kuni soat {booking.local:%H:%M} da "
+        "qabul qila olmaydi"
+    )
     return (
-        f"Assalomu alaykum! Afsuski, doktor {doctor} {local:%d.%m.%Y} kuni qabul qila "
-        f"olmaydi, shuning uchun soat {local:%H:%M} dagi qabulingiz bekor qilindi."
-        f"{rebook} Noqulaylik uchun uzr so'raymiz."
+        f"Assalomu alaykum! Afsuski, {reason}, shuning uchun soat {booking.local:%H:%M} dagi "
+        f"qabulingiz bekor qilindi.{rebook} Noqulaylik uchun uzr so'raymiz."
     )
 
 
-async def cancel_day(
-    session: AsyncSession, tenant_id: uuid.UUID, day: date, settings: Settings
+async def cancel_bookings(
+    session: AsyncSession, bookings: Sequence[Booking], settings: Settings, *, whole_day: bool
 ) -> tuple[list[Booking], list[Booking]]:
-    """Cancel the day and tell each patient. Returns (told, not told).
+    """Cancel each booking and tell its patient. Returns (told, not told).
 
-    Each appointment is cancelled whether or not its patient could be told:
-    the doctor is not coming either way, and a booking left active would
-    keep the slot looking taken in the dashboard. The ones not told are the
-    list somebody has to ring.
+    Cancelled whether or not the patient could be told: the doctor is not
+    seeing them either way, and a booking left active keeps the slot looking
+    taken. The ones not told are the list somebody has to ring.
     """
     told: list[Booking] = []
     untold: list[Booking] = []
-    for booking in await bookings_on(session, tenant_id, day):
+    for booking in bookings:
         appointment, patient = booking.appointment, booking.patient
         delivered = None
         if patient is not None:
-            text = _patient_notice(settings, booking)
+            text = _patient_notice(settings, booking, whole_day=whole_day)
             conversation_id = appointment.conversation_id
             last_seen = await last_inbound_at(session, conversation_id) if conversation_id else None
             try:
@@ -266,7 +386,7 @@ async def cancel_day(
                 )
             except Exception:  # noqa: BLE001 - one patient must not stop the rest
                 logger.warning(
-                    "doctor_day_off_notice_failed",
+                    "doctor_cancel_notice_failed",
                     extra={"appointment_id": str(appointment.id)},
                     exc_info=True,
                 )
@@ -280,79 +400,324 @@ async def cancel_day(
                 )
 
         appointment.status = AppointmentStatus.CANCELLED
-        note = "Doktor bu kuni qabul qila olmadi."
+        note = (
+            "Doktor bu kuni qabul qila olmadi."
+            if whole_day
+            else "Doktor bu vaqtda qabul qila olmadi."
+        )
         appointment.notes = f"{appointment.notes}\n{note}" if appointment.notes else note
         await session.commit()
         (told if delivered is not None else untold).append(booking)
     return told, untold
 
 
-def _day_off_report(day: date, today: date, told: list[Booking], untold: list[Booking]) -> str:
-    word = _day_word(day, today).lower()
-    if not told and not untold:
-        return (
-            f"{_day_word(day, today)} qabulga yozilganlar yo'q edi, hech kimga xabar yuborilmadi."
-        )
-    parts = [f"✅ {word} kungi {len(told) + len(untold)} ta qabul bekor qilindi."]
+async def cancel_day(
+    session: AsyncSession, tenant_id: uuid.UUID, day: date, settings: Settings
+) -> tuple[list[Booking], list[Booking]]:
+    return await cancel_bookings(
+        session, await bookings_on(session, tenant_id, day), settings, whole_day=True
+    )
+
+
+def _report(title: str, told: list[Booking], untold: list[Booking]) -> str:
+    parts = [f"✅ {_b(title)}"]
     if told:
         parts.append(
-            f"\nInstagram orqali xabar yuborildi ({len(told)}):\n"
-            + "\n".join(booking.line() for booking in told)
+            f"\n📨 <b>Instagram orqali xabar yuborildi</b> ({len(told)}):\n"
+            + "\n".join(booking.card() for booking in told)
         )
     if untold:
         parts.append(
-            f"\n⚠️ Xabar yetkazib bo'lmadi — ularga qo'ng'iroq qilish kerak ({len(untold)}):\n"
-            + "\n".join(booking.line() for booking in untold)
+            f"\n⚠️ <b>Xabar yetib bormadi — qo'ng'iroq qiling</b> ({len(untold)}):\n"
+            + "\n".join(booking.card() for booking in untold)
         )
     return "\n".join(parts)
 
 
-async def _remember_chat(session: AsyncSession, tenant: Tenant, chat_id: int) -> None:
-    chats = [c for c in tenant.settings.get(CHATS_KEY, []) if isinstance(c, int)]
-    if chat_id not in chats:
-        tenant.settings = {**tenant.settings, CHATS_KEY: [*chats, chat_id]}
-        await session.commit()
+# --- screens --------------------------------------------------------------------
+
+Screen = tuple[str, dict[str, Any] | None]
+
+_HOME = (
+    "👨‍⚕️ <b>Doktor paneli</b>\n\n"
+    "📋 <b>Qabullar</b> — bugungi va ertangi bemorlar\n"
+    "🚫 <b>Kunni bekor qilish</b> — kun bo'yi kela olmasangiz\n"
+    "👤 <b>Bemorni bekor qilish</b> — faqat ayrim bemorlarni\n"
+    "🔓 <b>Yopilgan kunlar</b> — yopilgan kunni qayta ochish\n\n"
+    "🆕 Yangi qabullar shu yerga o'zi keladi."
+)
 
 
-async def _set_day_off(session: AsyncSession, tenant: Tenant, day: date, *, off: bool) -> None:
-    """Close or reopen a day for booking. Past days are dropped as it goes."""
-    today = datetime.now(CLINIC_TIMEZONE).date()
-    days = {d for d in days_off_from(tenant.settings) if d >= today}
-    if off:
-        days.add(day)
-    else:
-        days.discard(day)
-    tenant.settings = {**tenant.settings, DAYS_OFF_KEY: sorted(d.isoformat() for d in days)}
-    await session.commit()
-    logger.info("doctor_day_off_set", extra={"day": day.isoformat(), "off": off})
-
-
-async def _ask_day_off(api: BotAPI, chat_id: int, day: date, today: date, count: int) -> None:
-    word = _day_word(day, today)
-    if count == 0:
-        question = (
-            f"{word} ({day:%d.%m.%Y}) qabulga hech kim yozilmagan. Kunni yopaymi? "
-            "Shundan keyin bu kunga qabulga yozib bo'lmaydi."
-        )
-        yes = "✅ Ha, kunni yop"
-    else:
-        question = (
-            f"{word} ({day:%d.%m.%Y}) {count} ta bemor yozilgan. Kunni yopib, qabullarni bekor "
-            "qilib, bemorlarga Instagram orqali doktor kela olmasligini yozaymi?"
-        )
-        yes = "✅ Ha, xabar yubor"
-    await api.send(
-        chat_id,
-        question,
+def _choose_day(title: str, prefix: str, today: date) -> Screen:
+    tomorrow = today + timedelta(days=1)
+    return (
+        f"{title}\n\nQaysi kun?",
         {
             "inline_keyboard": [
                 [
-                    {"text": yes, "callback_data": f"off:{day.isoformat()}"},
-                    {"text": "❌ Yo'q", "callback_data": "cancel"},
-                ]
+                    _btn(f"Bugun · {today:%d.%m}", f"{prefix}:{today.isoformat()}"),
+                    _btn(f"Ertaga · {tomorrow:%d.%m}", f"{prefix}:{tomorrow.isoformat()}"),
+                ],
+                [_btn("✖️ Yopish", "x")],
             ]
         },
     )
+
+
+def _list_screen(day: date, today: date, bookings: list[Booking], closed: bool) -> Screen:
+    head = f"📋 <b>{_day_word(day, today)}gi qabullar</b>\n<i>{_long_date(day)}</i>"
+    if closed:
+        head += "\n🚫 <i>Kun yopilgan — yangi qabul qabul qilinmaydi</i>"
+    if bookings:
+        body = "\n\n".join(booking.card() for booking in bookings)
+        confirmed = sum(1 for b in bookings if b.appointment.status == AppointmentStatus.CONFIRMED)
+        footer = f"<b>Jami:</b> {len(bookings)} ta"
+        if confirmed:
+            footer += f"  ·  ✅ tasdiqlangan: {confirmed}"
+        text = f"{head}\n\n{body}\n\n{footer}"
+    else:
+        text = f"{head}\n\n<i>Hozircha hech kim yozilmagan.</i>"
+    other = today + timedelta(days=1) if day == today else today
+    return (
+        text,
+        {
+            "inline_keyboard": [
+                [
+                    _btn("🔄 Yangilash", f"l:{day.isoformat()}"),
+                    _btn(f"➡️ {_day_word(other, today)}", f"l:{other.isoformat()}"),
+                ],
+                [_btn("✖️ Yopish", "x")],
+            ]
+        },
+    )
+
+
+def _day_off_confirm(day: date, today: date, bookings: list[Booking]) -> Screen:
+    word = _day_word(day, today).lower()
+    if bookings:
+        body = (
+            f"🚫 <b>{_day_word(day, today)}gi qabullarni bekor qilish</b>\n"
+            f"<i>{_long_date(day)}</i>\n\n"
+            f"Shu kuni <b>{len(bookings)} ta</b> bemor yozilgan:\n\n"
+            + "\n".join(booking.card() for booking in bookings)
+            + "\n\nHammasi bekor qilinadi, bemorlarga Instagram orqali xabar boradi va "
+            f"{word} kuni yopiladi — yangi qabul qabul qilinmaydi."
+        )
+        yes = f"✅ Ha, {len(bookings)} ta qabulni bekor qil"
+    else:
+        body = (
+            f"🚫 <b>{_day_word(day, today)}ni yopish</b>\n<i>{_long_date(day)}</i>\n\n"
+            "Bu kunga hech kim yozilmagan. Kun yopilsa, unga qabul qabul qilinmaydi."
+        )
+        yes = "✅ Ha, kunni yop"
+    return body, {
+        "inline_keyboard": [[_btn(yes, f"O:{day.isoformat()}")], [_btn("⬅️ Orqaga", "m:off")]]
+    }
+
+
+def _pick_screen(day: date, today: date, bookings: list[Booking], ticked: set[str]) -> Screen:
+    head = f"👤 <b>Bemorni bekor qilish</b>\n<i>{_long_date(day)}</i>"
+    if not bookings:
+        return (
+            f"{head}\n\n<i>{_day_word(day, today)} hech kim yozilmagan.</i>",
+            {"inline_keyboard": [[_btn("⬅️ Orqaga", "m:pick")]]},
+        )
+    rows = [
+        [
+            _btn(
+                f"{'☑️' if b.short_id in ticked else '⬜️'}  {b.local:%H:%M} — {b.name}"[:60],
+                f"t:{b.short_id}",
+            )
+        ]
+        for b in bookings
+    ]
+    count = sum(1 for b in bookings if b.short_id in ticked)
+    footer = [_btn("⬅️ Orqaga", "m:pick")]
+    if count:
+        footer.insert(0, _btn(f"🚫 Bekor qilish ({count})", "c:ask"))
+    return (
+        f"{head}\n\nQabul qila olmaydigan bemorlarni belgilang:",
+        {"inline_keyboard": [*rows, footer]},
+    )
+
+
+def _pick_confirm(chosen: list[Booking]) -> Screen:
+    return (
+        f"👤 <b>{len(chosen)} ta qabulni bekor qilish</b>\n\n"
+        + "\n".join(booking.card() for booking in chosen)
+        + "\n\nUlarga Instagram orqali xabar boradi. Kun ochiq qoladi.",
+        {
+            "inline_keyboard": [
+                [_btn("✅ Ha, bekor qil", "c:do")],
+                [_btn("⬅️ Orqaga", "c:back")],
+            ]
+        },
+    )
+
+
+def _closed_screen(tenant: Tenant, today: date) -> Screen:
+    days = sorted(d for d in days_off_from(tenant.settings) if d >= today)
+    if not days:
+        return (
+            "🔓 <b>Yopilgan kunlar</b>\n\n"
+            "<i>Yopilgan kun yo'q — hamma kunlarga yozilish ochiq.</i>",
+            {"inline_keyboard": [[_btn("✖️ Yopish", "x")]]},
+        )
+    return (
+        "🔓 <b>Yopilgan kunlar</b>\n\nOchmoqchi bo'lgan kunni tanlang. Bekor qilingan qabullar "
+        "o'z-o'zidan tiklanmaydi.",
+        {
+            "inline_keyboard": [
+                *[[_btn(f"🔓 {_long_date(d)} · ochish", f"r:{d.isoformat()}")] for d in days],
+                [_btn("✖️ Yopish", "x")],
+            ]
+        },
+    )
+
+
+# --- handling -------------------------------------------------------------------
+
+
+async def _in_tenant(tenant: Tenant, coro: Any) -> Any:
+    token = set_current_tenant(tenant.id)
+    try:
+        return await coro
+    finally:
+        reset_current_tenant(token)
+
+
+async def _on_callback(
+    api: BotAPI, session: AsyncSession, tenant: Tenant, callback: dict[str, Any]
+) -> None:
+    settings = get_settings()
+    today = datetime.now(CLINIC_TIMEZONE).date()
+    message = callback.get("message") or {}
+    chat_id = (message.get("chat") or {}).get("id")
+    message_id = message.get("message_id")
+    if chat_id is None or message_id is None:
+        await api.answer_callback(callback["id"])
+        return
+    if not _allowed((callback.get("from") or {}).get("username"), settings):
+        await api.answer_callback(callback["id"], "Bu bot faqat doktor uchun")
+        return
+
+    data = callback.get("data", "")
+    kind, _, arg = data.partition(":")
+
+    async def show(screen: Screen) -> None:
+        await api.edit(chat_id, message_id, screen[0], screen[1])
+
+    def parse_day() -> date | None:
+        try:
+            day = date.fromisoformat(arg)
+        except ValueError:
+            return None
+        return day if day >= today else None
+
+    if data == "x":
+        await api.answer_callback(callback["id"])
+        await api.edit(chat_id, message_id, "✔️ <i>Yopildi</i>")
+        return
+    if data == "m:list":
+        await api.answer_callback(callback["id"])
+        await show(_choose_day("📋 <b>Qabullar</b>", "l", today))
+        return
+    if data == "m:off":
+        await api.answer_callback(callback["id"])
+        await show(_choose_day("🚫 <b>Kunni bekor qilish</b>", "o", today))
+        return
+    if data == "m:pick":
+        await api.answer_callback(callback["id"])
+        await _save_picks(session, tenant, chat_id, None, [])
+        await show(_choose_day("👤 <b>Bemorni bekor qilish</b>", "p", today))
+        return
+
+    if kind in {"l", "o", "O", "p", "r"}:
+        day = parse_day()
+        if day is None:
+            await api.answer_callback(callback["id"], "Bu kun o'tib ketgan")
+            return
+        if kind == "l":
+            await api.answer_callback(callback["id"])
+            bookings = await _in_tenant(tenant, bookings_on(session, tenant.id, day))
+            await show(_list_screen(day, today, bookings, day in days_off_from(tenant.settings)))
+        elif kind == "o":
+            await api.answer_callback(callback["id"])
+            bookings = await _in_tenant(tenant, bookings_on(session, tenant.id, day))
+            await show(_day_off_confirm(day, today, bookings))
+        elif kind == "O":
+            await api.answer_callback(callback["id"], "Bajarilyapti…")
+            await api.edit(
+                chat_id, message_id, "⏳ <i>Bekor qilinyapti, bemorlarga xabar yuborilyapti…</i>"
+            )
+            # Closed before the cancellations, so nobody books into the day
+            # in the minute it takes to message its patients.
+            await _set_day_off(session, tenant, day, off=True)
+            told, untold = await _in_tenant(tenant, cancel_day(session, tenant.id, day, settings))
+            logger.info(
+                "doctor_day_off_applied",
+                extra={"day": day.isoformat(), "told": len(told), "untold": len(untold)},
+            )
+            title = (
+                f"{_day_word(day, today)} ({_long_date(day)}) yopildi"
+                if not (told or untold)
+                else f"{_long_date(day)}: {len(told) + len(untold)} ta qabul bekor qilindi, "
+                "kun yopildi"
+            )
+            await api.edit(chat_id, message_id, _report(title, told, untold))
+        elif kind == "p":
+            await api.answer_callback(callback["id"])
+            await _save_picks(session, tenant, chat_id, day, [])
+            bookings = await _in_tenant(tenant, bookings_on(session, tenant.id, day))
+            await show(_pick_screen(day, today, bookings, set()))
+        elif kind == "r":
+            await _set_day_off(session, tenant, day, off=False)
+            await api.answer_callback(callback["id"], "Kun ochildi")
+            await show(_closed_screen(tenant, today))
+        return
+
+    if kind == "t" or data in {"c:ask", "c:do", "c:back"}:
+        day, ids = _picks(tenant, chat_id)
+        if day is None or day < today:
+            await api.answer_callback(callback["id"], "Qaytadan tanlang")
+            await show(_choose_day("👤 <b>Bemorni bekor qilish</b>", "p", today))
+            return
+        bookings = await _in_tenant(tenant, bookings_on(session, tenant.id, day))
+        present = {b.short_id for b in bookings}
+        ticked = [i for i in ids if i in present]
+        if kind == "t":
+            if arg in present:
+                ticked = [i for i in ticked if i != arg] if arg in ticked else [*ticked, arg]
+            await _save_picks(session, tenant, chat_id, day, ticked)
+            await api.answer_callback(callback["id"])
+            await show(_pick_screen(day, today, bookings, set(ticked)))
+            return
+        chosen = [b for b in bookings if b.short_id in ticked]
+        if data == "c:back" or not chosen:
+            await api.answer_callback(callback["id"])
+            await show(_pick_screen(day, today, bookings, set(ticked)))
+            return
+        if data == "c:ask":
+            await api.answer_callback(callback["id"])
+            await show(_pick_confirm(chosen))
+            return
+        await api.answer_callback(callback["id"], "Bajarilyapti…")
+        await api.edit(
+            chat_id, message_id, "⏳ <i>Bekor qilinyapti, bemorlarga xabar yuborilyapti…</i>"
+        )
+        told, untold = await _in_tenant(
+            tenant, cancel_bookings(session, chosen, settings, whole_day=False)
+        )
+        await _save_picks(session, tenant, chat_id, None, [])
+        logger.info("doctor_patients_cancelled", extra={"told": len(told), "untold": len(untold)})
+        await api.edit(
+            chat_id,
+            message_id,
+            _report(f"{_long_date(day)}: {len(chosen)} ta qabul bekor qilindi", told, untold),
+        )
+        return
+
+    await api.answer_callback(callback["id"])
 
 
 async def handle_update(
@@ -363,107 +728,48 @@ async def handle_update(
 
     callback = update.get("callback_query")
     if callback:
-        await api.answer_callback(callback["id"])
-        sender = callback.get("from", {})
-        chat_id = callback.get("message", {}).get("chat", {}).get("id")
-        if chat_id is None or not _allowed(sender.get("username"), settings):
-            return
-        data = callback.get("data", "")
-        if data.startswith("off:"):
-            day = date.fromisoformat(data.removeprefix("off:"))
-            if day < today:
-                await api.send(chat_id, "Bu kun o'tib ketgan.", KEYBOARD)
-                return
-            await api.send(chat_id, "Bekor qilinyapti, bemorlarga xabar yuborilyapti…")
-            # Closed before the cancellations, so nobody can book into the
-            # day in the minute it takes to message its patients.
-            await _set_day_off(session, tenant, day, off=True)
-            token = set_current_tenant(tenant.id)
-            try:
-                told, untold = await cancel_day(session, tenant.id, day, settings)
-            finally:
-                reset_current_tenant(token)
-            logger.info(
-                "doctor_day_off_applied",
-                extra={"day": day.isoformat(), "told": len(told), "untold": len(untold)},
-            )
-            await api.send(chat_id, _day_off_report(day, today, told, untold), KEYBOARD)
-        elif data == "cancel":
-            await api.send(chat_id, "Yaxshi, hech narsa o'zgarmadi.", KEYBOARD)
+        await _on_callback(api, session, tenant, callback)
         return
 
     message = update.get("message")
     if not message:
         return
     chat_id = message["chat"]["id"]
-    username = message.get("from", {}).get("username")
+    username = (message.get("from") or {}).get("username")
     if not _allowed(username, settings):
         logger.warning("doctor_telegram_refused", extra={"username": username, "chat_id": chat_id})
-        await api.send(chat_id, "Kechirasiz, bu bot faqat doktor uchun.")
+        await api.send(chat_id, "🔒 Kechirasiz, bu bot faqat doktor uchun.")
         return
 
     await _remember_chat(session, tenant, chat_id)
     text = (message.get("text") or "").strip()
 
-    if text in {BTN_TODAY, BTN_TOMORROW, "/bugun", "/ertaga"}:
-        day = today + timedelta(days=1) if text in {BTN_TOMORROW, "/ertaga"} else today
-        token = set_current_tenant(tenant.id)
-        try:
-            bookings = await bookings_on(session, tenant.id, day)
-        finally:
-            reset_current_tenant(token)
-        await api.send(
-            chat_id,
-            _schedule_text(day, today, bookings, day in days_off_from(tenant.settings)),
-            KEYBOARD,
-        )
-        return
-
-    if _BACK.search(text) and not _ABSENT.search(text):
+    if text == BTN_LIST:
+        screen = _choose_day("📋 <b>Qabullar</b>", "l", today)
+    elif text == BTN_DAY_OFF:
+        screen = _choose_day("🚫 <b>Kunni bekor qilish</b>", "o", today)
+    elif text == BTN_PICK:
+        await _save_picks(session, tenant, chat_id, None, [])
+        screen = _choose_day("👤 <b>Bemorni bekor qilish</b>", "p", today)
+    elif text == BTN_CLOSED:
+        screen = _closed_screen(tenant, today)
+    elif _ABSENT.search(text):
         day = today + timedelta(days=1) if _TOMORROW.search(text) else today
-        if day not in days_off_from(tenant.settings):
-            await api.send(
-                chat_id, f"{_day_word(day, today)} yopilmagan, qabulga yozish ochiq.", KEYBOARD
-            )
-            return
-        await _set_day_off(session, tenant, day, off=False)
-        await api.send(
-            chat_id,
-            f"✅ {_day_word(day, today)} ({day:%d.%m.%Y}) qayta ochildi — qabulga yozish mumkin. "
-            "Oldin bekor qilingan qabullar o'z-o'zidan tiklanmaydi.",
-            KEYBOARD,
-        )
+        bookings = await _in_tenant(tenant, bookings_on(session, tenant.id, day))
+        screen = _day_off_confirm(day, today, bookings)
+    else:
+        await api.send(chat_id, _HOME, MAIN_KEYBOARD)
         return
-
-    if text in {BTN_OFF_TODAY, BTN_OFF_TOMORROW} or _ABSENT.search(text):
-        tomorrow = text == BTN_OFF_TOMORROW or (text != BTN_OFF_TODAY and _TOMORROW.search(text))
-        day = today + timedelta(days=1) if tomorrow else today
-        token = set_current_tenant(tenant.id)
-        try:
-            count = len(await bookings_on(session, tenant.id, day))
-        finally:
-            reset_current_tenant(token)
-        await _ask_day_off(api, chat_id, day, today, count)
-        return
-
-    await api.send(
-        chat_id,
-        "Assalomu alaykum, doktor! Yangi qabullar shu yerga keladi.\n\n"
-        "Pastdagi tugmalar bilan qabullarni ko'rishingiz mumkin. Ishga chiqa olmasangiz, "
-        "masalan «bugun ishga bora olmayman» deb yozing — kunni yopaman va bemorlarga "
-        "o'zim xabar beraman. Fikringiz o'zgarsa, «bugun ishga boraman» deb yozing.",
-        KEYBOARD,
-    )
+    await api.send(chat_id, screen[0], screen[1])
 
 
 async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tenant) -> None:
     """Tell the doctor about every appointment created since the last look."""
     chats = [c for c in tenant.settings.get(CHATS_KEY, []) if isinstance(c, int)]
     raw = tenant.settings.get(NOTIFIED_UNTIL_KEY)
-    now = datetime.now(UTC)
     if not raw:
         # First run: start from now rather than announcing the whole history.
-        tenant.settings = {**tenant.settings, NOTIFIED_UNTIL_KEY: now.isoformat()}
+        tenant.settings = {**tenant.settings, NOTIFIED_UNTIL_KEY: datetime.now(UTC).isoformat()}
         await session.commit()
         return
     since = datetime.fromisoformat(raw)
@@ -481,17 +787,29 @@ async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tena
     ).all()
     if not rows:
         return
-    if chats:
-        for appointment, patient in rows:
-            booking = Booking(appointment, patient)
-            local = appointment.scheduled_at.astimezone(CLINIC_TIMEZONE)
-            text = f"🆕 Yangi qabul\n📅 {local:%d.%m.%Y} 🕐 {local:%H:%M}\n👤 {booking.name}"
-            if booking.phone:
-                text += f"\n📞 {booking.phone}"
-            if appointment.notes:
-                text += f"\n📝 {appointment.notes}"
-            for chat_id in chats:
-                await api.send(chat_id, text)
+    today = datetime.now(CLINIC_TIMEZONE).date()
+    for appointment, patient in rows:
+        booking = Booking(appointment, patient)
+        day = booking.local.date()
+        text = (
+            f"🆕 <b>Yangi qabul</b>\n\n"
+            f"📅 {_day_word(day, today)} · <i>{_long_date(day)}</i>\n"
+            f"🕐 <b>{booking.local:%H:%M}</b>\n"
+            f"👤 {html.escape(booking.name)}"
+        )
+        if booking.phone:
+            text += f"\n📞 <code>{html.escape(booking.phone)}</code>"
+        if patient is not None and patient.username:
+            text += f"\n📷 @{html.escape(patient.username)}"
+        if appointment.notes:
+            text += f"\n📝 <i>{html.escape(appointment.notes)}</i>"
+        markup = {
+            "inline_keyboard": [
+                [_btn(f"📋 {_day_word(day, today)}gi qabullar", f"l:{day.isoformat()}")]
+            ]
+        }
+        for chat_id in chats:
+            await api.send(chat_id, text, markup)
     latest = max(appointment.created_at for appointment, _ in rows)
     tenant.settings = {**tenant.settings, NOTIFIED_UNTIL_KEY: latest.isoformat()}
     await session.commit()
@@ -505,6 +823,7 @@ async def run_forever(stop: asyncio.Event) -> None:
         return
     api = BotAPI(token)
     await api.delete_webhook()
+    await api.set_commands()
     logger.info("doctor_telegram_started")
     while not stop.is_set():
         try:
