@@ -86,8 +86,7 @@ async def _ensure_tenant(session: AsyncSession, name: str) -> Tenant:
     existing = (
         (
             await session.execute(
-                select(Tenant)
-                .where(Tenant.name == name)
+                select(Tenant).where(Tenant.name == name)
                 # created_at then id: rows inserted in one transaction share
                 # a now(), and id breaks that tie so the result cannot vary
                 # between boots.

@@ -91,7 +91,11 @@ async def add_rule(session: AsyncSession, *, tenant_id: uuid.UUID, rule: str) ->
     if tenant is None:
         return []
     existing = tenant.settings.get("strict_rules")
-    rules = [r for r in existing if isinstance(r, str) and r.strip()] if isinstance(existing, list) else []
+    rules = (
+        [r for r in existing if isinstance(r, str) and r.strip()]
+        if isinstance(existing, list)
+        else []
+    )
     if rule not in rules:
         rules.append(rule)
     tenant.settings = {**tenant.settings, "strict_rules": rules}

@@ -534,9 +534,11 @@ async def apply_owner_rule(
     tenant_id: str,
     channel_id: str,
     message_text: str,
+    recipient_external_id: str,
     *,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
     client: InstagramClient | None = None,
+    adapter: ChannelAdapter | None = None,
 ) -> None:
     """ARQ job: store a rule the account's own owner typed from that account.
 
@@ -547,9 +549,11 @@ async def apply_owner_rule(
     admin: the switch for this stays ADMIN_INSTAGRAM_USERNAMES, as it is for
     rules sent by direct message.
 
-    No confirmation is sent. The conversation the rule was typed into belongs
-    to whoever is on the other end of it, and they must not be told the
-    assistant's instructions changed.
+    Only when typed into the conversation with one of OWNER_RULE_RECIPIENTS.
+    The owner's every message reaches this app, including the ones to
+    patients; a rule accepted from any conversation would be a rule the
+    patient in it also read. The confirmation goes back into that same
+    conversation, which is the owner's own chosen one.
     """
     settings = get_settings()
     tenant_uuid = uuid.UUID(tenant_id)
@@ -563,18 +567,36 @@ async def apply_owner_rule(
             channel = await ChannelRepository(session).get(uuid.UUID(channel_id))
             if channel is None:
                 return
-            username = await (client or get_instagram_client()).fetch_username(
-                access_token=decrypt(channel.credentials), igsid="me"
+            instagram = client or get_instagram_client()
+            access_token = decrypt(channel.credentials)
+            username = await instagram.fetch_username(access_token=access_token, igsid="me")
+            recipient = await instagram.fetch_username(
+                access_token=access_token, igsid=recipient_external_id
             )
-            if not is_admin(username, settings.admin_usernames):
+            if not is_admin(username, settings.admin_usernames) or not is_admin(
+                recipient, settings.owner_rule_recipient_usernames
+            ):
                 logger.warning(
-                    "owner_rule_refused", extra={"tenant_id": tenant_id, "username": username}
+                    "owner_rule_refused",
+                    extra={"tenant_id": tenant_id, "username": username, "recipient": recipient},
                 )
                 return
 
             rules = await add_rule(session, tenant_id=tenant_uuid, rule=rule)
             await record_rule_in_knowledge_base(session, rule=rule, position=len(rules))
             await session.commit()
+            await send_reply(
+                session,
+                channel_id=channel.id,
+                recipient_external_id=recipient_external_id,
+                text=(
+                    f"Qabul qilindi. Endi shu qoidaga amal qilaman:\n«{rule}»\n\n"
+                    f"Jami {len(rules)} ta qoida. Ularni dashboard → Sozlamalar "
+                    f"bo'limida ko'rish, tahrirlash yoki o'chirish mumkin."
+                ),
+                last_user_message_at=datetime.now(UTC),
+                adapter=adapter,
+            )
             logger.info(
                 "owner_rule_applied",
                 extra={"tenant_id": tenant_id, "username": username, "rule_count": len(rules)},

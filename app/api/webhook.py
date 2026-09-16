@@ -148,7 +148,11 @@ async def _handle_event(
                 event_id=event.message.mid,
             ):
                 await pool.enqueue_job(
-                    "apply_owner_rule", str(channel.tenant_id), str(channel.channel_id), text
+                    "apply_owner_rule",
+                    str(channel.tenant_id),
+                    str(channel.channel_id),
+                    text,
+                    event.recipient.id,
                 )
             return
         logger.info(

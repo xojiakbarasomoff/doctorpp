@@ -126,6 +126,18 @@ class Settings(BaseSettings):
     # file's default is public. The handle list above is the actual gate.
     admin_command_keyword: str = Field(default="Aiadm1in:", alias="ADMIN_COMMAND_KEYWORD")
 
+    # Where the account's owner may type a rule from their own account (see
+    # app.workers.tasks.apply_owner_rule). Every message the owner sends
+    # reaches this app, so without a narrow place to send rules to, a keyword
+    # typed into a patient's chat would both set a rule and show it to that
+    # patient. Comma-separated handles, "@" optional. Empty means nowhere:
+    # owner rules are off.
+    owner_rule_recipients: str = Field(default="", alias="OWNER_RULE_RECIPIENTS")
+
+    @property
+    def owner_rule_recipient_usernames(self) -> list[str]:
+        return [name.strip() for name in self.owner_rule_recipients.split(",") if name.strip()]
+
     @property
     def admin_usernames(self) -> list[str]:
         return [name.strip() for name in self.admin_instagram_usernames.split(",") if name.strip()]
@@ -266,6 +278,7 @@ class Settings(BaseSettings):
         "doctor_specialty",
         "admin_instagram_usernames",
         "admin_command_keyword",
+        "owner_rule_recipients",
         "seed_faqs_from",
         "seed_doctors_from",
         "public_base_url",
