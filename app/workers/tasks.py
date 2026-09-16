@@ -34,10 +34,13 @@ from app.core.tenant_context import reset_current_tenant, set_current_tenant
 from app.models.appointment import Appointment
 from app.models.channel import Channel
 from app.models.conversation import Conversation
+from app.models.user import User
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
+from app.services import doctor_telegram, patient_media
+from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
 from app.services.booking import settle as settle_booking
@@ -52,9 +55,7 @@ from app.services.debounce import (
     pop_batch_if_current_generation,
     restore_batch,
 )
-from app.services import doctor_telegram
 from app.services.delivery import send_reply
-from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.knowledge_base import record_rule_in_knowledge_base
 from app.services.profile import ensure_instagram_username
 from app.services.reminders import send_due_reminders
@@ -665,6 +666,59 @@ async def _stop_doctor_telegram(ctx: dict[str, Any]) -> None:
             await task
 
 
+async def handle_patient_media(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    user_id: str,
+    conversation_id: str,
+    sender_external_id: str,
+    external_id: str | None,
+    urls: list[str],
+) -> None:
+    """ARQ job: a patient sent photos. Store them, acknowledge, tell the doctor.
+
+    Each step is guarded on its own (see app.services.patient_media): a photo
+    that could not be downloaded is still recorded by its link, and a patient
+    who could not be answered still has their photo reach the doctor.
+    """
+    tenant_uuid = uuid.UUID(tenant_id)
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with db_session() as session:
+            media = await patient_media.store(
+                session,
+                tenant_id=tenant_uuid,
+                user_id=uuid.UUID(user_id),
+                conversation_id=uuid.UUID(conversation_id),
+                external_id=external_id,
+                urls=urls,
+            )
+            try:
+                await patient_media.acknowledge(
+                    session,
+                    ctx["redis"],
+                    channel_id=uuid.UUID(channel_id),
+                    conversation_id=uuid.UUID(conversation_id),
+                    recipient_external_id=sender_external_id,
+                )
+            except Exception:  # noqa: BLE001 - the doctor must still be told
+                await session.rollback()
+                logger.exception("patient_media_ack_failed")
+            try:
+                patient = await session.get(User, uuid.UUID(user_id))
+                await doctor_telegram.notify_patient_media(
+                    session, tenant_uuid, media, patient_media.caption(patient, len(media))
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("patient_media_notify_failed")
+            logger.info(
+                "patient_media_handled", extra={"tenant_id": tenant_id, "count": len(media)}
+            )
+    finally:
+        reset_current_tenant(token)
+
+
 class WorkerSettings:
     on_startup = _start_doctor_telegram
     on_shutdown = _stop_doctor_telegram
@@ -674,6 +728,7 @@ class WorkerSettings:
         resolve_username,
         apply_admin_rule,
         apply_owner_rule,
+        handle_patient_media,
     ]
     # Named here as well as in _MAX_ATTEMPTS so the retry ladder in
     # fire_debounce_window and arq's own limit cannot drift apart.

@@ -21,9 +21,9 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.channels.base import ChannelType
 from app.channels.instagram.client import InstagramClient, get_instagram_client
 from app.core.encryption import DecryptionError, decrypt
-from app.channels.base import ChannelType
 from app.repositories.channel import ChannelRepository
 from app.repositories.user import UserRepository
 

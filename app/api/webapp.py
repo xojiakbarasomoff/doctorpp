@@ -36,8 +36,8 @@ from app.repositories.doctor import DoctorRepository
 from app.repositories.user import UserRepository
 from app.services.appointment import (
     UNASSIGNED_DOCTOR_NAME,
-    MissingPatientIdentityError,
     DoctorDayOffError,
+    MissingPatientIdentityError,
     OutsideWorkingHoursError,
     SlotAlreadyBookedError,
     create_appointment,

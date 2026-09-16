@@ -7,6 +7,7 @@ from app.models.knowledge_base import KnowledgeBase
 from app.models.lead import Lead, LeadStatus
 from app.models.message import Message, MessageSender
 from app.models.operator import Operator
+from app.models.patient_media import PatientMedia, PatientMediaStatus
 from app.models.saved_filter import SavedFilter
 from app.models.tenant import Tenant
 from app.models.user import User
@@ -25,6 +26,8 @@ __all__ = [
     "Message",
     "MessageSender",
     "Operator",
+    "PatientMedia",
+    "PatientMediaStatus",
     "SavedFilter",
     "Tenant",
     "User",

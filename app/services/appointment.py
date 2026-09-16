@@ -17,9 +17,13 @@ from app.repositories.appointment import AppointmentRepository
 # tenant sharing these — same pattern as
 # core.config.Settings.debounce_window_seconds.
 CLINIC_TIMEZONE = ZoneInfo("Asia/Tashkent")
-SLOT_MINUTES = 30
+# Dr. Temur's week: Monday to Saturday, 09:00-17:00, a strict 20 minutes a
+# patient -- 09:00, 09:20, ... 16:40. Sunday is a day off.
+SLOT_MINUTES = 20
 WORK_START = time(9, 0)
-WORK_END = time(19, 0)
+WORK_END = time(17, 0)
+# date.weekday() numbers: Monday is 0, Sunday is 6.
+WORK_DAYS = frozenset({0, 1, 2, 3, 4, 5})
 # Used when a booking names no doctor at all. The clinic's real clinicians
 # now live in the doctors table (app.models.doctor), so this is no longer a
 # stand-in for "multi-doctor support does not exist" — it is the fallback for
@@ -114,6 +118,8 @@ def is_within_working_hours(scheduled_at: datetime) -> bool:
     wrong.
     """
     local = _to_local(scheduled_at)
+    if local.weekday() not in WORK_DAYS:
+        return False
     if not (WORK_START <= local.time() < WORK_END):
         return False
     if local.second or local.microsecond:
@@ -132,6 +138,8 @@ def day_slots(local_date: date) -> Iterator[datetime]:
     times a patient is offered cannot drift from the times that can be
     booked.
     """
+    if local_date.weekday() not in WORK_DAYS:
+        return
     current = datetime.combine(local_date, WORK_START, tzinfo=CLINIC_TIMEZONE)
     end = datetime.combine(local_date, WORK_END, tzinfo=CLINIC_TIMEZONE)
     step = timedelta(minutes=SLOT_MINUTES)
@@ -147,7 +155,13 @@ def _first_slot_on_or_after(local_dt: datetime) -> datetime:
     for slot in day_slots(local_dt.date()):
         if slot >= local_dt:
             return slot
-    return next(iter(day_slots(local_dt.date() + timedelta(days=1))))
+    # The next working day's opening slot -- not simply tomorrow's, which on
+    # a Saturday evening is a Sunday with no slots at all.
+    for offset in range(1, 8):
+        opening = next(iter(day_slots(local_dt.date() + timedelta(days=offset))), None)
+        if opening is not None:
+            return opening
+    raise ValueError("no working day in the coming week")
 
 
 def slot_capacity(doctor_count: int) -> int:

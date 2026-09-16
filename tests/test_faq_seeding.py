@@ -242,9 +242,9 @@ def test_load_doctors_reads_the_shipped_roster() -> None:
 
     doctors = load_doctors(Path("data/doctors.json"))
 
-    assert len(doctors) == 6
+    assert len(doctors) == 1
     assert all(doctor.name and doctor.specialty for doctor in doctors)
-    assert {doctor.working_hours for doctor in doctors} == {"09:00 - 18:00"}
+    assert {doctor.working_hours for doctor in doctors} == {"09:00 - 17:00"}
 
 
 def test_load_doctors_rejects_a_blank_name(tmp_path: Path) -> None:

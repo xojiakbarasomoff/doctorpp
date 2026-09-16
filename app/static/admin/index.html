@@ -129,6 +129,45 @@
   .msg.bot, .msg.operator { background: var(--accent-soft); align-self: flex-end; }
   .msg small { display: block; font-size: 10px; color: var(--ink-3); margin-top: 3px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  /* Rasm yuborganlar */
+  .tab-badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; vertical-align: 1px; }
+  .media-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .media-toolbar input[type=search] { max-width: 320px; }
+  .media-toolbar label.check { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+  .media-toolbar label.check input { width: auto; }
+  .media-summary { margin-left: auto; font-size: 13px; color: var(--ink-3); }
+  .media-list { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); }
+  .media-card { border: 1px solid var(--rule); border-radius: 8px; background: var(--panel); overflow: hidden; display: flex; flex-direction: column; transition: box-shadow .15s, border-color .15s; }
+  .media-card:hover { box-shadow: 0 4px 18px rgba(0,0,0,.07); }
+  .media-card.unseen { border-color: var(--danger); box-shadow: inset 3px 0 0 var(--danger); }
+  .media-head { display: flex; gap: 12px; align-items: center; padding: 14px 16px 10px; }
+  .avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; flex-shrink: 0; }
+  .media-who { min-width: 0; flex: 1; }
+  .media-who b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .media-who span { font-size: 12px; color: var(--ink-3); }
+  .media-thumbs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 0 16px; }
+  .media-thumb { position: relative; aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: var(--panel-2); border: 0; padding: 0; cursor: zoom-in; }
+  .media-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .media-thumb .new-dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 2px var(--panel); }
+  .media-thumb.missing { display: grid; place-items: center; font-size: 11px; color: var(--ink-3); cursor: default; }
+  .media-more { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; font-size: 18px; color: #fff; background: rgba(0,0,0,.45); }
+  .media-foot { display: flex; gap: 8px; align-items: center; padding: 12px 16px 14px; margin-top: 10px; border-top: 1px solid var(--rule); flex-wrap: wrap; }
+  .media-foot .muted { margin-right: auto; }
+  .media-empty { grid-column: 1 / -1; text-align: center; padding: 48px 16px; color: var(--ink-3); }
+  .media-empty b { display: block; font-size: 32px; margin-bottom: 6px; }
+  .lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(10,12,11,.92); display: grid; grid-template-rows: auto 1fr auto; color: #fff; }
+  .lightbox[hidden] { display: none; }
+  .lightbox .lb-head { display: flex; align-items: center; gap: 12px; padding: calc(12px + env(safe-area-inset-top, 0px)) 18px 12px; }
+  .lightbox .lb-head b { font-size: 16px; }
+  .lightbox .lb-head span { color: #cfd5d2; font-size: 13px; margin-left: auto; }
+  .lightbox .stage { display: grid; place-items: center; padding: 0 60px; min-height: 0; }
+  .lightbox .stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; }
+  .lightbox .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,.12); border: 0; color: #fff; width: 44px; height: 44px; border-radius: 50%; font-size: 22px; cursor: pointer; }
+  .lightbox .nav.prev { left: 12px; }
+  .lightbox .nav.next { right: 12px; }
+  .lightbox .lb-foot { display: flex; gap: 10px; justify-content: center; padding: 12px 18px calc(16px + env(safe-area-inset-bottom, 0px)); }
+  .lightbox .act { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.25); text-decoration: none; }
+  @media (max-width: 600px) { .lightbox .stage { padding: 0 8px; } .media-summary { margin-left: 0; } }
 </style>
 </head>
 <body>
@@ -144,6 +183,7 @@
 <nav id="tabs">
   <button data-tab="today" aria-selected="true">Bugun</button>
   <button data-tab="chats" aria-selected="false">Suhbatlar</button>
+  <button data-tab="media" aria-selected="false">📷 Rasm yuborganlar<span class="tab-badge" id="mediaBadge" hidden></span></button>
   <button data-tab="leads" aria-selected="false">Lidlar</button>
   <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
   <button data-tab="faq" aria-selected="false">Bilim bazasi</button>
@@ -193,7 +233,7 @@
       <h2 style="margin-top:22px">Yangi qabul</h2>
       <form id="apptForm" class="grid">
         <div><label for="nDate">Sana</label><input type="date" id="nDate" required></div>
-        <div><label for="nTime">Vaqt</label><input type="time" id="nTime" step="1800" required></div>
+        <div><label for="nTime">Vaqt</label><input type="time" id="nTime" step="1200" min="09:00" max="16:40" required></div>
         <div><label for="nName">Bemor</label><input id="nName" required></div>
         <div><label for="nPhone">Telefon</label><input id="nPhone" placeholder="+998 90 123 45 67"></div>
         <div><label for="nDoctor">Shifokor</label><select id="nDoctor"></select></div>
@@ -240,6 +280,26 @@
     </div>
   </section>
 
+  <section id="tab-media" hidden>
+    <div class="panel">
+      <h2>📷 Rasm yuborganlar</h2>
+      <div class="media-toolbar">
+        <input type="search" id="mediaSearch" placeholder="Ism, @username yoki telefon bo'yicha qidirish" aria-label="Qidirish">
+        <label class="check"><input type="checkbox" id="mediaUnseen"> Faqat ko'rilmaganlar</label>
+        <span class="media-summary" id="mediaSummary"></span>
+      </div>
+      <div class="media-list" id="mediaList"></div>
+    </div>
+  </section>
+
+  <div class="lightbox" id="lightbox" hidden role="dialog" aria-modal="true" aria-label="Rasm">
+    <div class="lb-head"><b id="lbTitle"></b><span id="lbMeta"></span><button class="act" id="lbClose">✕ Yopish</button></div>
+    <div class="stage"><img id="lbImg" alt=""></div>
+    <button class="nav prev" id="lbPrev" aria-label="Oldingi">‹</button>
+    <button class="nav next" id="lbNext" aria-label="Keyingi">›</button>
+    <div class="lb-foot"><a class="act" id="lbOpen" target="_blank" rel="noopener">↗ Asl o'lchamda</a><button class="act" id="lbSeen">✓ Ko'rildi</button></div>
+  </div>
+
   <section id="tab-leads" hidden>
     <div class="panel">
       <h2>Lidlar</h2>
@@ -263,7 +323,7 @@
         <div><label for="dName">Ism</label><input id="dName" required></div>
         <div><label for="dSpec">Mutaxassislik</label><input id="dSpec" value="Urolog"></div>
         <div><label for="dPhone">Telefon</label><input id="dPhone"></div>
-        <div><label for="dHours">Ish vaqti</label><input id="dHours" value="09:00 - 18:00"></div>
+        <div><label for="dHours">Ish vaqti</label><input id="dHours" value="09:00 - 17:00"></div>
         <div><button class="act primary" type="submit">Qo'shish</button></div>
       </form>
     </div>
@@ -1139,9 +1199,190 @@ async function removeView(view) {
   }
 }
 
+// --- rasm yuborganlar -------------------------------------------------------
+//
+// Patients who sent a photo, one card each, unseen first. The photos are
+// served by the API from the database -- Instagram's own links expire -- and
+// the badge on the tab keeps counting unseen ones from any screen.
+
+let MEDIA = [];
+let LIGHTBOX = null; // { patient, index }
+
+function initials(p) {
+  const source = (p.name || p.username || "?").replace(/^@/, "").trim();
+  return source.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+}
+
+function patientTitle(p) {
+  return p.name || (p.username ? "@" + p.username : "Ismi ko'rsatilmagan");
+}
+
+function mediaUrl(item) {
+  return `${API}/media/${item.id}/file`;
+}
+
+function relativeWhen(iso) {
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return "hozirgina";
+  if (minutes < 60) return `${minutes} daqiqa oldin`;
+  if (minutes < 60 * 24) return `${Math.round(minutes / 60)} soat oldin`;
+  return localDateTime(iso);
+}
+
+function updateMediaBadge(unseen) {
+  const badge = document.getElementById("mediaBadge");
+  badge.textContent = unseen > 99 ? "99+" : String(unseen);
+  badge.hidden = !unseen;
+}
+
+async function refreshMediaBadge() {
+  try {
+    const rows = await api("/media?only_unseen=true");
+    updateMediaBadge(rows.reduce((n, p) => n + p.unseen, 0));
+  } catch (_) {
+    // A badge is not worth an error toast.
+  }
+}
+
+async function loadMedia() {
+  const params = new URLSearchParams();
+  const q = document.getElementById("mediaSearch").value.trim();
+  if (q) params.set("q", q);
+  if (document.getElementById("mediaUnseen").checked) params.set("only_unseen", "true");
+  const query = params.toString();
+  MEDIA = await api("/media" + (query ? "?" + query : ""));
+  renderMedia();
+  refreshMediaBadge();
+}
+
+function mediaThumb(patient, item, index, extra) {
+  if (!item.available) {
+    return el("div", { class: "media-thumb missing", title: "Rasmni yuklab bo'lmadi" }, "yuklanmadi");
+  }
+  return el("button", { class: "media-thumb", onclick: () => openLightbox(patient, index), "aria-label": "Rasmni ochish" },
+    el("img", { src: mediaUrl(item), loading: "lazy", alt: "" }),
+    item.status === "new" ? el("span", { class: "new-dot", title: "Ko'rilmagan" }) : null,
+    extra ? el("span", { class: "media-more" }, `+${extra}`) : null);
+}
+
+function renderMedia() {
+  const list = document.getElementById("mediaList");
+  const photos = MEDIA.reduce((n, p) => n + p.total, 0);
+  const unseen = MEDIA.reduce((n, p) => n + p.unseen, 0);
+  document.getElementById("mediaSummary").textContent =
+    MEDIA.length ? `${MEDIA.length} bemor · ${photos} rasm · ${unseen} ta ko'rilmagan` : "";
+  if (!MEDIA.length) {
+    list.replaceChildren(el("div", { class: "media-empty" }, el("b", {}, "📭"), "Hozircha rasm yuborgan bemor yo'q"));
+    return;
+  }
+  list.replaceChildren(...MEDIA.map((p) => {
+    const shown = p.items.slice(0, 6);
+    const hidden = p.items.length - shown.length;
+    const sub = [p.username ? "@" + p.username : null, p.phone].filter(Boolean).join(" · ");
+    return el("article", { class: "media-card" + (p.unseen ? " unseen" : "") },
+      el("div", { class: "media-head" },
+        el("div", { class: "avatar" }, initials(p)),
+        el("div", { class: "media-who" }, el("b", {}, patientTitle(p)), el("span", {}, sub || "Instagram bemori")),
+        p.unseen ? el("span", { class: "pill bad" }, `${p.unseen} yangi`) : el("span", { class: "pill ok" }, "✓ ko'rilgan")),
+      el("div", { class: "media-thumbs" },
+        shown.map((item, index) => mediaThumb(p, item, index, index === shown.length - 1 && hidden > 0 ? hidden : 0))),
+      el("div", { class: "media-foot" },
+        el("span", { class: "muted" }, `${p.total} ta rasm · ${relativeWhen(p.last_at)}`),
+        p.conversation_id ? el("button", { class: "act", onclick: () => openPatientChat(p.conversation_id) }, "💬 Suhbat") : null,
+        p.unseen ? el("button", { class: "act primary", onclick: () => markPatientSeen(p) }, "✓ Ko'rildi") : null));
+  }));
+}
+
+async function markPatientSeen(p) {
+  try {
+    await api(`/media/patients/${p.user_id}/seen`, { method: "POST", body: {} });
+    toast(`${patientTitle(p)} — ko'rildi deb belgilandi`);
+    await loadMedia();
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+function openPatientChat(conversationId) {
+  CURRENT_CHAT = conversationId;
+  showTab("chats").then(() => openThread(conversationId)).catch((err) => toast(err.message, true));
+}
+
+function openLightbox(patient, index) {
+  LIGHTBOX = { patient, index };
+  paintLightbox();
+  document.getElementById("lightbox").hidden = false;
+}
+
+function paintLightbox() {
+  const { patient, index } = LIGHTBOX;
+  const available = patient.items.filter((i) => i.available);
+  const item = patient.items[index];
+  document.getElementById("lbImg").src = mediaUrl(item);
+  document.getElementById("lbOpen").href = mediaUrl(item);
+  document.getElementById("lbTitle").textContent = patientTitle(patient);
+  document.getElementById("lbMeta").textContent =
+    `${available.indexOf(item) + 1} / ${available.length} · ${localDateTime(item.created_at)}`;
+  document.getElementById("lbSeen").hidden = item.status !== "new";
+}
+
+function stepLightbox(delta) {
+  if (!LIGHTBOX) return;
+  const items = LIGHTBOX.patient.items;
+  let index = LIGHTBOX.index;
+  for (let n = 0; n < items.length; n++) {
+    index = (index + delta + items.length) % items.length;
+    if (items[index].available) break;
+  }
+  LIGHTBOX.index = index;
+  paintLightbox();
+}
+
+function closeLightbox() {
+  document.getElementById("lightbox").hidden = true;
+  document.getElementById("lbImg").removeAttribute("src");
+  LIGHTBOX = null;
+}
+
+document.getElementById("lbClose").addEventListener("click", closeLightbox);
+document.getElementById("lbPrev").addEventListener("click", () => stepLightbox(-1));
+document.getElementById("lbNext").addEventListener("click", () => stepLightbox(1));
+document.getElementById("lightbox").addEventListener("click", (e) => {
+  if (e.target.classList.contains("stage")) closeLightbox();
+});
+document.getElementById("lbSeen").addEventListener("click", async () => {
+  const item = LIGHTBOX.patient.items[LIGHTBOX.index];
+  try {
+    await api(`/media/${item.id}/status`, { method: "POST", body: { status: "reviewed" } });
+    item.status = "reviewed";
+    paintLightbox();
+    await loadMedia();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (!LIGHTBOX) return;
+  if (e.key === "Escape") closeLightbox();
+  if (e.key === "ArrowLeft") stepLightbox(-1);
+  if (e.key === "ArrowRight") stepLightbox(1);
+});
+
+let MEDIA_SEARCH_TIMER = null;
+document.getElementById("mediaSearch").addEventListener("input", () => {
+  clearTimeout(MEDIA_SEARCH_TIMER);
+  MEDIA_SEARCH_TIMER = setTimeout(() => loadMedia().catch((err) => toast(err.message, true)), 250);
+});
+document.getElementById("mediaUnseen").addEventListener("change", () => {
+  loadMedia().catch((err) => toast(err.message, true));
+});
+refreshMediaBadge();
+setInterval(refreshMediaBadge, 30000);
+
 const LOADERS = {
   today: () => Promise.all([loadStats(), loadAppointments(), loadDoctors(), loadViews()]),
   chats: loadChats,
+  media: loadMedia,
   leads: loadLeads,
   doctors: loadDoctors,
   faq: loadFaqs,

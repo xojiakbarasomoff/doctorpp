@@ -396,6 +396,54 @@ async def test_receive_webhook_attachment_only_message_is_skipped_and_not_enqueu
     assert await _queued_jobs(redis_pool) == []
 
 
+async def test_a_photo_is_recorded_and_handed_to_the_media_job(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """A patient's photo is kept, not skipped: it goes into the transcript,
+    and the job that stores it, acknowledges it and tells the doctor is
+    queued -- the model is never asked about it."""
+    page_id = seed.a.channel.external_id
+    payload = {
+        "object": "instagram",
+        "entry": [
+            {
+                "id": page_id,
+                "time": 1,
+                "messaging": [
+                    {
+                        "sender": {"id": "photo-patient"},
+                        "recipient": {"id": page_id},
+                        "timestamp": 1,
+                        "message": {
+                            "mid": "mid-photo-1",
+                            "attachments": [
+                                {"type": "image", "payload": {"url": "https://cdn.example/a.jpg"}}
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    body = json.dumps(payload).encode()
+
+    response = await _post(client, body)
+
+    assert response.status_code == 200
+    functions = [(await job.info()).function for job in await _queued_jobs(redis_pool)]
+    assert "handle_patient_media" in functions
+    assert FIRE_DEBOUNCE_WINDOW_JOB not in functions
+    with as_tenant(seed.tenant_a.id):
+        user = await UserRepository(db_session).get_by_external_id(
+            channel_id=seed.a.channel.id, external_id="photo-patient"
+        )
+        assert user is not None
+
+
 # --- inbound messages are recorded, deduplicated, and respect operator takeover ---
 
 

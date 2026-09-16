@@ -240,6 +240,21 @@ class BotAPI:
         # getUpdates refuses to run while a webhook is set.
         await self._call("deleteWebhook")
 
+    async def send_photo(self, chat_id: int, photo: bytes, content_type: str, caption: str) -> None:
+        # Multipart, so the stored bytes are sent rather than Instagram's
+        # signed link, which Telegram's servers may not be allowed to fetch.
+        response = await self._http.post(
+            f"{self._base}/sendPhoto",
+            data={"chat_id": str(chat_id), "caption": caption[:1024]},
+            files={"photo": ("photo", photo, content_type)},
+        )
+        if not response.json().get("ok"):
+            logger.warning(
+                "doctor_telegram_call_failed",
+                extra={"method": "sendPhoto", "description": response.json().get("description")},
+            )
+            await self.send(chat_id, html.escape(caption))
+
     async def set_commands(self) -> None:
         await self._call(
             "setMyCommands", commands=[{"command": "start", "description": "Bosh menyu"}]
@@ -761,6 +776,34 @@ async def handle_update(
         await api.send(chat_id, _HOME, MAIN_KEYBOARD)
         return
     await api.send(chat_id, screen[0], screen[1])
+
+
+async def notify_patient_media(
+    session: AsyncSession, tenant_id: uuid.UUID, media: Sequence[Any], caption: str
+) -> None:
+    """Send a patient's photos to everyone on the doctor's bot."""
+    settings = get_settings()
+    if not settings.doctor_telegram_bot_token:
+        return
+    tenant = await session.get(Tenant, tenant_id)
+    chats = [
+        c for c in (tenant.settings if tenant else {}).get(CHATS_KEY, []) if isinstance(c, int)
+    ]
+    if not chats:
+        return
+    api = BotAPI(settings.doctor_telegram_bot_token)
+    for chat_id in chats:
+        images = [m for m in media if m.content]
+        if not images:
+            await api.send(chat_id, html.escape(caption))
+            continue
+        for index, item in enumerate(images):
+            await api.send_photo(
+                chat_id,
+                item.content,
+                item.content_type or "image/jpeg",
+                caption if index == 0 else "",
+            )
 
 
 async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tenant) -> None:

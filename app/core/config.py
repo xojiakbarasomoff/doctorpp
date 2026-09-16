@@ -111,6 +111,23 @@ class Settings(BaseSettings):
     doctor_name: str | None = Field(default=None, alias="DOCTOR_NAME")
     doctor_specialty: str | None = Field(default=None, alias="DOCTOR_SPECIALTY")
 
+    # The doctor's experience and training, told to a patient only when they
+    # ask (see app.services.answer._DOCTOR_BACKGROUND). One line per fact,
+    # separated by " | " because an environment variable is one line.
+    doctor_background: str | None = Field(default=None, alias="DOCTOR_BACKGROUND")
+
+    # Whether the assistant books appointments itself -- asking the patient
+    # for their name, number and complaint, offering free slots, and writing
+    # the booking -- instead of sending every patient to the telephone.
+    booking_enabled: bool = Field(default=False, alias="BOOKING_ENABLED")
+
+    @property
+    def doctor_background_text(self) -> str | None:
+        if not self.doctor_background:
+            return None
+        lines = [line.strip() for line in self.doctor_background.split("|") if line.strip()]
+        return "\n".join(f"- {line}" for line in lines) or None
+
     # Instagram handles allowed to set the clinic's standing rules by direct
     # message (see app.services.admin_commands). Comma-separated, "@" optional.
     #
@@ -284,6 +301,7 @@ class Settings(BaseSettings):
         "clinic_work_hours",
         "doctor_name",
         "doctor_specialty",
+        "doctor_background",
         "admin_instagram_usernames",
         "admin_command_keyword",
         "owner_rule_recipients",

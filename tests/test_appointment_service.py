@@ -77,7 +77,7 @@ async def test_check_availability_true_for_free_slot(
 async def test_check_availability_false_for_taken_slot(
     db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
 ) -> None:
-    slot = _tashkent(BASE_DATE, 9, 30)
+    slot = _tashkent(BASE_DATE, 9, 20)
     with as_tenant(seed.tenant_a.id):
         repo = AppointmentRepository(db_session)
         await create_appointment(repo, user_id=seed.a.user.id, scheduled_at=slot, source="bot")
@@ -171,7 +171,7 @@ async def test_find_next_free_slot_skips_taken_slot(
     db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
 ) -> None:
     first = _tashkent(BASE_DATE, 9, 0)
-    second = _tashkent(BASE_DATE, 9, 30)
+    second = _tashkent(BASE_DATE, 9, 20)
     with as_tenant(seed.tenant_a.id):
         repo = AppointmentRepository(db_session)
         await create_appointment(repo, user_id=seed.a.user.id, scheduled_at=first, source="bot")

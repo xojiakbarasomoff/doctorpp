@@ -50,11 +50,13 @@ from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.services.appointment import (
     CLINIC_TIMEZONE,
+    SLOT_MINUTES,
     SlotAlreadyBookedError,
     assign_doctor,
     create_appointment,
     day_slots,
     days_off,
+    is_within_working_hours,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,20 +64,24 @@ logger = logging.getLogger(__name__)
 # A booking still worth honouring: anything not cancelled or completed.
 ACTIVE_STATUSES = (AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED)
 
-# Today plus the next two working days. Far enough that "ertaga" and "u kun"
-# are always answerable, short enough that the list stays something a person
-# would read out rather than a wall of times.
-HORIZON_DAYS = 2
+# Today plus the next three days. With Sunday closed, that always reaches at
+# least two working days, so "ertaga" and "indinga" are answerable on a
+# Saturday too.
+HORIZON_DAYS = 3
 
-# The most slots to write into the prompt. A clinic open 09:00-19:00 on a
-# 30-minute grid has twenty slots a day, so three empty days would be sixty
-# lines of nothing but times -- enough to crowd out the FAQ context that
-# answers what the patient actually asked.
-MAX_SLOTS = 24
+# The most slots to write into the prompt. The doctor's day is 09:00-17:00 on
+# a 20-minute grid -- 24 slots -- so this holds about three empty days, each
+# written as one line of times.
+MAX_SLOTS = 72
 
+# [[BOOK:2026-09-18T09:20|full name|telephone|reason]]. Everything after the
+# time is optional, so a marker written before the name, number or complaint
+# arrived still books the time rather than losing it.
 BOOKING_MARKER = re.compile(
     r"\[\[\s*BOOK\s*:\s*(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})"
-    r"(?:\s*\|\s*(?P<name>[^\]|]{1,80}?))?\s*\]\]"
+    r"(?:\s*\|\s*(?P<name>[^\]|]{1,80}?))?"
+    r"(?:\s*\|\s*(?P<phone>[^\]|]{3,40}?))?"
+    r"(?:\s*\|\s*(?P<reason>[^\]|]{1,300}?))?\s*\]\]"
 )
 
 # Anything that was trying to be a marker and failed -- "[[BOOK:tomorrow at
@@ -222,7 +228,7 @@ def render(slots: Sequence[datetime], now: datetime) -> str:
 
     lines = [f"- {day}: {', '.join(times)}" for day, times in by_day.items()]
     return (
-        f"{header}\n- These slots are free, and only these. Each lasts 30 minutes.\n"
+        f"{header}\n- These slots are free, and only these. Each lasts {SLOT_MINUTES} minutes.\n"
         + "\n".join(lines)
         + '\n- Say the day the way a person would — "bugun", "ertaga", '
         '"1-sentabr". Never read a date out in 2026-09-01 form: a patient '
@@ -263,6 +269,29 @@ def extract(reply: str) -> tuple[str, datetime | None, str | None]:
     if candidate in PLACEHOLDER_NAMES:
         name = ""
     return cleaned, naive.replace(tzinfo=CLINIC_TIMEZONE), name or None
+
+
+def marker_details(reply: str) -> tuple[str | None, str | None]:
+    """The telephone number and complaint from a booking marker, if given."""
+    match = BOOKING_MARKER.search(reply)
+    if match is None:
+        return None, None
+    phone = (match.group("phone") or "").strip() or None
+    reason = (match.group("reason") or "").strip() or None
+    # Same trap as the name: a model copying the marker's shape writes the
+    # placeholder words themselves.
+    if phone is not None and not any(ch.isdigit() for ch in phone):
+        phone = None
+    if reason is not None and reason.lower() in {"reason", "sabab", "shikoyat", "причина"}:
+        reason = None
+    return phone, reason
+
+
+def _record_details(appointment: Appointment, phone: str | None, reason: str | None) -> None:
+    if phone:
+        appointment.patient_phone = phone
+    if reason:
+        appointment.notes = reason
 
 
 async def _active_for_conversation(
@@ -347,6 +376,16 @@ async def settle(
     text, slot, marked_name = extract(reply)
     if slot is None:
         return text, None
+    phone, reason = marker_details(reply)
+
+    # Re-checked here because the model can write any time into a marker, and
+    # a booking moved (below) skips create_appointment's own checks. A closed
+    # day, a Sunday or a time off the 20-minute grid is
+    # answered as a lost slot -- the patient is asked again rather than told
+    # they are booked.
+    if not is_within_working_hours(slot) or slot.date() in await days_off(session_repo):
+        logger.warning("booking_slot_refused conversation_id=%s slot=%s", conversation_id, slot)
+        return text + SLOT_LOST_NOTICE, None
 
     # One live appointment per conversation, always.
     #
@@ -362,6 +401,7 @@ async def settle(
     # same thing is the only outcome where the patient and the clinic agree.
     existing = await _active_for_conversation(session_repo, conversation_id)
     if existing is not None:
+        _record_details(existing, phone, reason)
         return text, await _move(session_repo, existing, slot, marked_name)
 
     # Chosen before the insert so the row carries a real name: every booking
@@ -379,6 +419,8 @@ async def settle(
             user_id=user_id,
             conversation_id=conversation_id,
             patient_name=marked_name or patient_name,
+            patient_phone=phone,
+            notes=reason,
         )
     except SlotAlreadyBookedError:
         # Whose booking is it? The assistant re-confirming a time it already

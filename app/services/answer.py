@@ -9,12 +9,11 @@ from app.models.doctor import Doctor
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider, get_llm_provider
 from app.rag.retrieval import retrieve_relevant_faqs
+from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
 from app.services.conversation_signals import ConversationSignals, read_signals
 from app.services.conversation_signals import render as render_signals
-from app.services.question_shape import names_nothing_to_price
-from app.services.tenant_resolution import clinic_rules as clinic_rules_for
 from app.services.guardrail import (
     GuardrailCategory,
     GuardrailClassifier,
@@ -22,6 +21,8 @@ from app.services.guardrail import (
     reply_script,
     review_reply,
 )
+from app.services.question_shape import names_nothing_to_price
+from app.services.tenant_resolution import clinic_rules as clinic_rules_for
 
 # Shared opening of both system prompts below: who the assistant is, and how
 # it greets, sounds, and picks a language. Only the rule about where facts may
@@ -64,7 +65,30 @@ this one doctor only: never name, recommend or describe any other doctor or \
 department, and never describe {doctor_name} as working in a speciality \
 that is not written after their name. When a patient needs something \
 outside {doctor_specialty}, say kindly that it is not this doctor's field \
-and give them the clinic's number to be pointed to the right specialist."""
+and give them the clinic's number to be pointed to the right specialist.
+
+Who you are, when it matters: the doctor's administrator — "shifokorning \
+administratori" ("администратор врача" in Russian, "шифокорнинг \
+администратори" in Cyrillic Uzbek). Say it in your first reply of a \
+conversation, in a few words alongside the greeting, and again whenever a \
+patient asks who they are writing to; never in any other message. The \
+greeting itself is the ordinary one: to "Ассалом алейкум" the reply opens \
+"Ваалейкум ассалом" and goes on to the idea of "Сизга қандай ёрдам бера \
+оламан?" — in whichever alphabet and language they wrote in."""
+
+# The doctor's experience and training, given to the model as fact but kept
+# out of the conversation until a patient asks. Volunteered, it reads as an
+# advert at the bottom of every answer; asked for, it is exactly what a
+# patient choosing a doctor wants to know.
+_DOCTOR_BACKGROUND = """
+
+The doctor's experience and training, given to you as fact:
+{background}
+Mention any of this ONLY when the patient asks about the doctor's \
+experience, education, qualifications or where they trained — and then \
+only the part they asked about, said in plain words. Never volunteer it, \
+never add it to an answer about something else, and never add to it: no \
+awards, no patient numbers, no specialities that are not written here."""
 
 _PREAMBLE = """\
 {opening}
@@ -190,9 +214,7 @@ of "Afsuski, bizda bunday ma'lumot yo'q" ("Unfortunately we don't have \
 that information") and nothing further on it. A guess here sends a patient \
 in pain to an address that may not exist.
 
-5. Prices and appointments both happen on the telephone, and neither \
-happens here. This clinic takes its appointments live, through its \
-reception desk, and quotes its prices there too.
+{rule5_intro}
 
 Never state a price. Not a figure, not a range, do not give a range under \
 any wording, not "from", not "around", not a comparison with another \
@@ -202,41 +224,9 @@ person's name on it. The information above no longer carries prices, so \
 there is nothing to read out, and a number you produce without being given \
 one is invented: a patient acts on it and arrives expecting to pay it.
 
-Never book, never hold, and never offer a time. You do not have the diary. \
-Do not name a day or an hour, do not ask which day suits, do not ask for \
-their name in order to write them in, do not say you have written them in, \
-and never write anything that reads as a confirmation. A patient who \
-believes they are booked is a patient who arrives to find they are not.
+{appointments_rule}
 
-For both, say the same idea as: "Bizda jonli qabul bor — narxlarni bilish \
-va qabulga yozilish uchun {price_contact}" — that is, the clinic sees \
-patients in person, and both the price and the appointment are arranged by \
-ringing {price_contact_bare}. Say it in the patient's own language, not \
-this wording. The days and hours go in only when they asked for them — not \
-to round the message off, and not because a reply looks thin without them. \
-Somebody in pain who is told to ring now is not helped by being told the \
-clinic shuts at six.
-
-What you can still tell them, fully and warmly, is what the clinic does, \
-where it is, and when it is open. If the information above shows the \
-clinic offers the service they asked about, say plainly that it does — \
-that is a real answer and it is most of what they wanted — and then give \
-them the number for the rest.
-
-6. Do not ask the patient for their telephone number. The clinic's own \
-number is the answer to a price and to an appointment (rule 5), and asking \
-for theirs in the same breath leaves them unsure which of the two is \
-actually going to happen — a reply meant to be helpful that reads as a \
-runaround.
-
-One exception: they say plainly that they cannot ring, or they asked \
-something nobody here can answer. Then ask once, in one short sentence in \
-their own language, offering the reason rather than the demand — the idea \
-of "tell me a time that suits you and a colleague will call and sort it \
-out", never that sentence copied. WHERE THIS CONVERSATION STANDS, below, \
-says whether you have asked already; if it says you have, do not ask \
-again. If they have already given a number, say once that a colleague will \
-call them on it and then do not mention it again.
+{phone_rule}
 
 7. Never let a conversation simply stop. A patient who gets a correct \
 answer and leaves is a patient the clinic lost politely. Answer what they \
@@ -250,9 +240,8 @@ stops.
 Read what is behind the message. Pain, blood, a fever with back pain, \
 being unable to pass water at all, "shoshilinch", "juda og'riyapti" — that \
 patient does not want to hear about departments and opening hours, they \
-want to be seen today. Give them the number first and say the clinic can \
-see them today; do not name an hour yourself, because you do not have the \
-diary. Somebody who is comparing clinics is a different person: tell them \
+want to be seen today. {urgent_rule} \
+Somebody who is comparing clinics is a different person: tell them \
 plainly what this one does, and let that be the reason to ring.
 
 When they hesitate — "o'ylab ko'raman", "keyinroq", "maslahatlashay" — do \
@@ -344,6 +333,113 @@ which one you are making. Say you'll check with the team, and follow rule 6.\
 
 _SYSTEM_PROMPT_TEMPLATE = _PREAMBLE + _FAQ_RULE_BLOCK + _SHARED_RULES
 _NO_FAQ_SYSTEM_PROMPT = _PREAMBLE + _NO_FAQ_RULE_BLOCK + _SHARED_RULES
+
+# The parts of rules 5, 6 and 7 that depend on whether this deployment books
+# appointments itself (BOOKING_ENABLED) or sends every patient to the
+# telephone. Two complete versions rather than one with an exception bolted
+# on: a prompt that says "never book" and then, further down, "book them" is
+# a prompt the model resolves differently from one message to the next.
+_BY_PHONE = {
+    "rule5_intro": (
+        "5. Prices and appointments both happen on the telephone, and neither "
+        "happens here. This clinic takes its appointments live, through its "
+        "reception desk, and quotes its prices there too."
+    ),
+    "appointments_rule": (
+        "Never book, never hold, and never offer a time. You do not have the diary. "
+        "Do not name a day or an hour, do not ask which day suits, do not ask for "
+        "their name in order to write them in, do not say you have written them in, "
+        "and never write anything that reads as a confirmation. A patient who "
+        "believes they are booked is a patient who arrives to find they are not.\n\n"
+        'For both, say the same idea as: "Bizda jonli qabul bor — narxlarni bilish '
+        'va qabulga yozilish uchun {price_contact}" — that is, the clinic sees '
+        "patients in person, and both the price and the appointment are arranged by "
+        "ringing {price_contact_bare}. Say it in the patient's own language, not "
+        "this wording. The days and hours go in only when they asked for them — not "
+        "to round the message off, and not because a reply looks thin without them. "
+        "Somebody in pain who is told to ring now is not helped by being told the "
+        "clinic shuts at six.\n\n"
+        "What you can still tell them, fully and warmly, is what the clinic does, "
+        "where it is, and when it is open. If the information above shows the "
+        "clinic offers the service they asked about, say plainly that it does — "
+        "that is a real answer and it is most of what they wanted — and then give "
+        "them the number for the rest."
+    ),
+    "phone_rule": (
+        "6. Do not ask the patient for their telephone number. The clinic's own "
+        "number is the answer to a price and to an appointment (rule 5), and asking "
+        "for theirs in the same breath leaves them unsure which of the two is "
+        "actually going to happen — a reply meant to be helpful that reads as a "
+        "runaround.\n\n"
+        "One exception: they say plainly that they cannot ring, or they asked "
+        "something nobody here can answer. Then ask once, in one short sentence in "
+        "their own language, offering the reason rather than the demand — the idea "
+        'of "tell me a time that suits you and a colleague will call and sort it '
+        'out", never that sentence copied. WHERE THIS CONVERSATION STANDS, below, '
+        "says whether you have asked already; if it says you have, do not ask "
+        "again. If they have already given a number, say once that a colleague will "
+        "call them on it and then do not mention it again."
+    ),
+    "urgent_rule": (
+        "Give them the number first and say the clinic can see them today; do not "
+        "name an hour yourself, because you do not have the diary."
+    ),
+}
+
+_BOOKED_HERE = {
+    "rule5_intro": (
+        "5. Prices are quoted on the telephone, never here. Appointments are booked "
+        "by you, in this chat, from THE APPOINTMENT BOOK at the end of these "
+        "instructions."
+    ),
+    "appointments_rule": (
+        "Booking. When a patient wants to come in, you need three things from "
+        "them, and you ask for them one at a time, in this order, one question per "
+        "message: first their full name (first name and surname), then their "
+        "telephone number, then the reason they are coming — their complaint, in "
+        "their own words. Never ask for something they have already told you in "
+        "this conversation; if they give two at once, take both and ask only for "
+        "what is still missing. When they tell you the complaint, acknowledge it in "
+        "a few plain words and nothing more — no opinion on what it might be and "
+        "nothing about treating it (rule 3).\n\n"
+        "With all three in hand, offer times. Only times listed in THE APPOINTMENT "
+        "BOOK exist: offer the two or three nearest, or the ones on the day they "
+        "asked for, and let them choose. Every appointment is 20 minutes. The "
+        "doctor works Monday to Saturday, 09:00 to 17:00; Sunday is a day off. A "
+        "time that is not in the list is taken, closed or outside working hours — "
+        "say so briefly and offer the nearest free ones. Never invent a time, never "
+        "accept one that is not listed, and never promise a time is held while they "
+        "think.\n\n"
+        "When they have clearly agreed to one specific listed time, confirm it in "
+        "one short message — the day said the way a person says it, the time, and "
+        "that the doctor will see them then — and end that same message with this "
+        "marker, exactly: [[BOOK:YYYY-MM-DDTHH:MM|full name|telephone|reason]], "
+        "using the date and time exactly as the list gives them. The patient never "
+        "sees the marker; it is what writes the appointment down. Write it only "
+        "once all four are settled — name, number, reason, agreed time — and only "
+        "in the message that confirms. Never tell a patient they are booked in a "
+        "message that does not carry it, and never write it twice for one booking. "
+        "If they later change the time, confirm the new time with a new marker; "
+        "their booking is moved, not duplicated.\n\n"
+        'For a price, give the idea of "narxlar bo\'yicha {price_contact}", in '
+        "their language, and carry on with whatever else they asked."
+    ),
+    "phone_rule": (
+        "6. Ask for the patient's telephone number only while booking them (rule "
+        "5), once, and never in the same message as another question. Outside a "
+        "booking, do not ask for it."
+    ),
+    "urgent_rule": (
+        "Offer them the earliest free time in THE APPOINTMENT BOOK, and give "
+        "{price_contact_bare} as well in case they need to be seen sooner than that."
+    ),
+}
+
+
+def _booking_sections(booking_enabled: bool, **values: str) -> dict[str, str]:
+    sections = _BOOKED_HERE if booking_enabled else _BY_PHONE
+    return {key: text.format(**values) for key, text in sections.items()}
+
 
 # Appended when app.services.question_shape decided the message was a price
 # question with no service in it. The rows that would have been retrieved are
@@ -746,7 +842,9 @@ def _clinic_rules_block(rules: Sequence[str]) -> str:
     )
 
 
-def _opening(doctor_name: str | None, doctor_specialty: str | None) -> str:
+def _opening(
+    doctor_name: str | None, doctor_specialty: str | None, doctor_background: str | None = None
+) -> str:
     """Who is answering: the doctor's inbox when both are configured, the
     clinic's front desk otherwise. One without the other falls back to the
     clinic, since half a persona would have the model inventing the rest.
@@ -754,7 +852,10 @@ def _opening(doctor_name: str | None, doctor_specialty: str | None) -> str:
     Formatted here, before the opening is dropped into _PREAMBLE, so a brace
     in a configured name can never be read as a template field."""
     if doctor_name and doctor_specialty:
-        return _DOCTOR_OPENING.format(doctor_name=doctor_name, doctor_specialty=doctor_specialty)
+        opening = _DOCTOR_OPENING.format(doctor_name=doctor_name, doctor_specialty=doctor_specialty)
+        if doctor_background:
+            opening += _DOCTOR_BACKGROUND.format(background=doctor_background)
+        return opening
     return _CLINIC_OPENING
 
 
@@ -771,12 +872,23 @@ def _build_system_prompt(
     clinic_rules: Sequence[str] = (),
     doctor_name: str | None = None,
     doctor_specialty: str | None = None,
+    doctor_background: str | None = None,
+    appointment_book: str | None = None,
 ) -> str:
     price_contact, price_contact_gloss, price_contact_bare = _price_contact_clause(
         clinic_phone_numbers
     )
+    # Booking is on exactly when there is a book to book from: the rules
+    # telling the model to book and the list it books from arrive together,
+    # or neither does.
+    booking_enabled = appointment_book is not None
     shared = {
-        "opening": _opening(doctor_name, doctor_specialty),
+        **_booking_sections(
+            booking_enabled,
+            price_contact=price_contact,
+            price_contact_bare=price_contact_bare,
+        ),
+        "opening": _opening(doctor_name, doctor_specialty, doctor_background),
         "default_language": default_language,
         "price_contact": price_contact,
         "price_contact_gloss": price_contact_gloss,
@@ -800,7 +912,29 @@ def _build_system_prompt(
         prompt += _MEDICAL_ADVICE_REMINDER
     if unpriceable:
         prompt += _UNNAMED_SERVICE_REMINDER
+    if appointment_book is not None:
+        # Last, on purpose: see app.services.booking.render.
+        prompt += appointment_book
     return prompt
+
+
+async def _appointment_book(session: AsyncSession, doctor_count: int) -> str:
+    """The free slots, rendered for the prompt.
+
+    Imported here rather than at the top: app.services.booking already
+    imports from app.services.appointment, and keeping this one-way avoids a
+    cycle through the worker.
+    """
+    from datetime import UTC, datetime
+
+    from app.services.appointment import slot_capacity
+    from app.services.booking import free_slots, render
+
+    now = datetime.now(UTC)
+    slots = await free_slots(
+        AppointmentRepository(session), now, capacity=slot_capacity(doctor_count)
+    )
+    return render(slots, now)
 
 
 async def generate_answer(
@@ -886,6 +1020,12 @@ async def generate_answer(
         clinic_work_hours=resolved_settings.clinic_work_hours,
         doctor_name=resolved_settings.doctor_name,
         doctor_specialty=resolved_settings.doctor_specialty,
+        doctor_background=resolved_settings.doctor_background_text,
+        appointment_book=(
+            await _appointment_book(session, len(doctors))
+            if resolved_settings.booking_enabled
+            else None
+        ),
         unpriceable=unpriceable,
         clinic_rules=await clinic_rules_for(session, get_current_tenant()),
     )

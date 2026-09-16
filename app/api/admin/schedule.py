@@ -28,8 +28,8 @@ from app.repositories.doctor import DoctorRepository
 from app.services.appointment import (
     CLINIC_TIMEZONE,
     UNASSIGNED_DOCTOR_NAME,
-    MissingPatientIdentityError,
     DoctorDayOffError,
+    MissingPatientIdentityError,
     OutsideWorkingHoursError,
     SlotAlreadyBookedError,
     cancel_appointment,

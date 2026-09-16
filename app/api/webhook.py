@@ -47,6 +47,16 @@ class WebhookRecipient(BaseModel):
     id: str
 
 
+class AttachmentPayload(BaseModel):
+    url: str | None = None
+
+
+class WebhookAttachment(BaseModel):
+    # "image", "video", "audio", "file", "share", "story_mention", ...
+    type: str
+    payload: AttachmentPayload | None = None
+
+
 class WebhookMessage(BaseModel):
     # Meta's own id for this message. Parsed because it is the idempotency
     # key: Meta redelivers a payload whose 200 came back too slowly or not
@@ -57,6 +67,7 @@ class WebhookMessage(BaseModel):
     mid: str | None = None
     text: str | None = None
     is_echo: bool = False
+    attachments: list[WebhookAttachment] = []
 
 
 class MessagingEvent(BaseModel):
@@ -161,8 +172,17 @@ async def _handle_event(
         )
         return
 
+    image_urls = [
+        attachment.payload.url
+        for attachment in event.message.attachments
+        if attachment.type == "image" and attachment.payload and attachment.payload.url
+    ]
+    if event.message.text is None and image_urls:
+        await _handle_images(session, pool, channel, event, image_urls)
+        return
+
     if event.message.text is None:
-        # Attachment-only message (image, sticker, etc) — nothing for the
+        # Attachment-only message (video, sticker, etc) — nothing for the
         # FAQ/LLM pipeline to answer yet.
         logger.info(
             "webhook_attachment_only_skipped",
@@ -281,6 +301,58 @@ async def _handle_event(
         conversation_id=inbound.conversation_id,
         sender_external_id=event.sender.id,
         message_text=event.message.text,
+    )
+
+
+async def _handle_images(
+    session: AsyncSession,
+    pool: ArqRedis,
+    channel: ResolvedChannel,
+    event: MessagingEvent,
+    image_urls: list[str],
+) -> None:
+    """A patient sent a photo. Record it in the transcript and hand the rest
+    -- storing the image, telling the patient it will be looked at, telling
+    the doctor -- to the worker, where a slow download cannot hold up Meta's
+    delivery.
+
+    Never answered by the model: a picture is not a question it can read, and
+    a medical photo is the last thing an assistant should comment on.
+    """
+    assert event.message is not None
+    if event.message.mid is not None and not await claim_event(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_type=channel.channel_type,
+        event_id=event.message.mid,
+    ):
+        return
+    inbound = await register_inbound_message(
+        session,
+        channel_id=channel.channel_id,
+        channel_type=channel.channel_type,
+        sender_external_id=event.sender.id,
+        text=(
+            f"📷 Rasm yubordi ({len(image_urls)} ta)" if len(image_urls) > 1 else "📷 Rasm yubordi"
+        ),
+    )
+    await session.commit()
+    logger.info(
+        "webhook_images_received",
+        extra={"tenant_id": str(channel.tenant_id), "count": len(image_urls)},
+    )
+    await pool.enqueue_job(
+        "resolve_username", str(channel.tenant_id), str(channel.channel_id), str(inbound.user_id)
+    )
+    await pool.enqueue_job(
+        "handle_patient_media",
+        str(channel.tenant_id),
+        str(channel.channel_id),
+        str(inbound.user_id),
+        str(inbound.conversation_id),
+        event.sender.id,
+        event.message.mid,
+        image_urls,
     )
 
 
