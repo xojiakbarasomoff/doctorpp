@@ -54,6 +54,7 @@ from app.services.appointment import (
     assign_doctor,
     create_appointment,
     day_slots,
+    days_off,
 )
 
 logger = logging.getLogger(__name__)
@@ -147,9 +148,12 @@ async def free_slots(
         )
     )
 
+    closed = await days_off(repo)
     slots: list[datetime] = []
     for day_offset in range(horizon_days + 1):
         day = local_now.date() + timedelta(days=day_offset)
+        if day in closed:
+            continue
         for slot in day_slots(day):
             # Strictly after now: offering a slot that started ten minutes
             # ago is how a patient ends up told to come at a time that has

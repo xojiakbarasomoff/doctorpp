@@ -29,6 +29,7 @@ from app.services.appointment import (
     CLINIC_TIMEZONE,
     UNASSIGNED_DOCTOR_NAME,
     MissingPatientIdentityError,
+    DoctorDayOffError,
     OutsideWorkingHoursError,
     SlotAlreadyBookedError,
     cancel_appointment,
@@ -129,6 +130,11 @@ async def create(
     except SlotAlreadyBookedError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Bu vaqt allaqachon band"
+        ) from None
+    except DoctorDayOffError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Doktor bu kuni ishlamaydi — qabulga yozib bo'lmaydi",
         ) from None
     except OutsideWorkingHoursError:
         raise HTTPException(

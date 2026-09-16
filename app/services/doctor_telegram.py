@@ -40,7 +40,7 @@ from app.models.appointment import ACTIVE_STATUSES, Appointment, AppointmentStat
 from app.models.message import MessageSender
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.services.appointment import CLINIC_TIMEZONE
+from app.services.appointment import CLINIC_TIMEZONE, DAYS_OFF_KEY, days_off_from
 from app.services.conversation import last_inbound_at, record_outbound_message, reply_context_for
 from app.services.delivery import send_reply
 
@@ -75,6 +75,10 @@ _ABSENT = re.compile(
     re.IGNORECASE,
 )
 _TOMORROW = re.compile(r"(ertaga|завтра)", re.IGNORECASE)
+# "ertaga ishga boraman", "bugun kelaman" -- reopening a day closed by mistake.
+_BACK = re.compile(
+    r"(boraman|kelaman|ishlayman|chiqaman|смогу|приду|выйду|буду\s*работать)", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -202,8 +206,10 @@ def _day_word(day: date, today: date) -> str:
     return f"{day:%d.%m.%Y}"
 
 
-def _schedule_text(day: date, today: date, bookings: list[Booking]) -> str:
+def _schedule_text(day: date, today: date, bookings: list[Booking], closed: bool = False) -> str:
     head = f"{_day_word(day, today)} ({day:%d.%m.%Y})"
+    if closed:
+        head += " — 🚫 kun yopilgan, qabulga yozib bo'lmaydi"
     if not bookings:
         return f"{head}: qabulga yozilganlar yo'q."
     lines = "\n".join(booking.line() for booking in bookings)
@@ -308,19 +314,40 @@ async def _remember_chat(session: AsyncSession, tenant: Tenant, chat_id: int) ->
         await session.commit()
 
 
+async def _set_day_off(session: AsyncSession, tenant: Tenant, day: date, *, off: bool) -> None:
+    """Close or reopen a day for booking. Past days are dropped as it goes."""
+    today = datetime.now(CLINIC_TIMEZONE).date()
+    days = {d for d in days_off_from(tenant.settings) if d >= today}
+    if off:
+        days.add(day)
+    else:
+        days.discard(day)
+    tenant.settings = {**tenant.settings, DAYS_OFF_KEY: sorted(d.isoformat() for d in days)}
+    await session.commit()
+    logger.info("doctor_day_off_set", extra={"day": day.isoformat(), "off": off})
+
+
 async def _ask_day_off(api: BotAPI, chat_id: int, day: date, today: date, count: int) -> None:
-    word = _day_word(day, today).lower()
+    word = _day_word(day, today)
     if count == 0:
-        await api.send(chat_id, f"{_day_word(day, today)} qabulga yozilganlar yo'q.", KEYBOARD)
-        return
+        question = (
+            f"{word} ({day:%d.%m.%Y}) qabulga hech kim yozilmagan. Kunni yopaymi? "
+            "Shundan keyin bu kunga qabulga yozib bo'lmaydi."
+        )
+        yes = "✅ Ha, kunni yop"
+    else:
+        question = (
+            f"{word} ({day:%d.%m.%Y}) {count} ta bemor yozilgan. Kunni yopib, qabullarni bekor "
+            "qilib, bemorlarga Instagram orqali doktor kela olmasligini yozaymi?"
+        )
+        yes = "✅ Ha, xabar yubor"
     await api.send(
         chat_id,
-        f"{word.capitalize()} ({day:%d.%m.%Y}) {count} ta bemor yozilgan. Hammasining qabulini "
-        f"bekor qilib, ularga Instagram orqali doktor kela olmasligini yozaymi?",
+        question,
         {
             "inline_keyboard": [
                 [
-                    {"text": "✅ Ha, xabar yubor", "callback_data": f"off:{day.isoformat()}"},
+                    {"text": yes, "callback_data": f"off:{day.isoformat()}"},
                     {"text": "❌ Yo'q", "callback_data": "cancel"},
                 ]
             ]
@@ -348,6 +375,9 @@ async def handle_update(
                 await api.send(chat_id, "Bu kun o'tib ketgan.", KEYBOARD)
                 return
             await api.send(chat_id, "Bekor qilinyapti, bemorlarga xabar yuborilyapti…")
+            # Closed before the cancellations, so nobody can book into the
+            # day in the minute it takes to message its patients.
+            await _set_day_off(session, tenant, day, off=True)
             token = set_current_tenant(tenant.id)
             try:
                 told, untold = await cancel_day(session, tenant.id, day, settings)
@@ -382,7 +412,27 @@ async def handle_update(
             bookings = await bookings_on(session, tenant.id, day)
         finally:
             reset_current_tenant(token)
-        await api.send(chat_id, _schedule_text(day, today, bookings), KEYBOARD)
+        await api.send(
+            chat_id,
+            _schedule_text(day, today, bookings, day in days_off_from(tenant.settings)),
+            KEYBOARD,
+        )
+        return
+
+    if _BACK.search(text) and not _ABSENT.search(text):
+        day = today + timedelta(days=1) if _TOMORROW.search(text) else today
+        if day not in days_off_from(tenant.settings):
+            await api.send(
+                chat_id, f"{_day_word(day, today)} yopilmagan, qabulga yozish ochiq.", KEYBOARD
+            )
+            return
+        await _set_day_off(session, tenant, day, off=False)
+        await api.send(
+            chat_id,
+            f"✅ {_day_word(day, today)} ({day:%d.%m.%Y}) qayta ochildi — qabulga yozish mumkin. "
+            "Oldin bekor qilingan qabullar o'z-o'zidan tiklanmaydi.",
+            KEYBOARD,
+        )
         return
 
     if text in {BTN_OFF_TODAY, BTN_OFF_TOMORROW} or _ABSENT.search(text):
@@ -400,7 +450,8 @@ async def handle_update(
         chat_id,
         "Assalomu alaykum, doktor! Yangi qabullar shu yerga keladi.\n\n"
         "Pastdagi tugmalar bilan qabullarni ko'rishingiz mumkin. Ishga chiqa olmasangiz, "
-        "masalan «bugun ishga bora olmayman» deb yozing — bemorlarga o'zim xabar beraman.",
+        "masalan «bugun ishga bora olmayman» deb yozing — kunni yopaman va bemorlarga "
+        "o'zim xabar beraman. Fikringiz o'zgarsa, «bugun ishga boraman» deb yozing.",
         KEYBOARD,
     )
 

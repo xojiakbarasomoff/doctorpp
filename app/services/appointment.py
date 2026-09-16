@@ -6,8 +6,10 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy.exc import IntegrityError
 
+from app.core.tenant_context import get_current_tenant
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
+from app.models.tenant import Tenant
 from app.repositories.appointment import AppointmentRepository
 
 # TODO(IGB-?): move onto Tenant.settings once the admin/dashboard panel
@@ -37,6 +39,36 @@ class SlotAlreadyBookedError(Exception):
     def __init__(self, scheduled_at: datetime) -> None:
         self.scheduled_at = scheduled_at
         super().__init__(f"slot already booked: {scheduled_at.isoformat()}")
+
+
+# Where the days the doctor said they cannot work are kept, as ISO dates. Set
+# from the doctor's Telegram bot (app.services.doctor_telegram) and read on
+# every booking, so a day the doctor has called off stays closed however the
+# booking is attempted -- the dashboard, the web app or the assistant.
+DAYS_OFF_KEY = "doctor_days_off"
+
+
+class DoctorDayOffError(Exception):
+    """scheduled_at falls on a day the doctor has said they will not work."""
+
+    def __init__(self, scheduled_at: datetime) -> None:
+        self.scheduled_at = scheduled_at
+        super().__init__(f"doctor is off that day: {scheduled_at.isoformat()}")
+
+
+def days_off_from(settings: dict) -> set[date]:
+    days: set[date] = set()
+    for raw in settings.get(DAYS_OFF_KEY, []) or []:
+        try:
+            days.add(date.fromisoformat(raw))
+        except (TypeError, ValueError):
+            continue
+    return days
+
+
+async def days_off(repo: AppointmentRepository) -> set[date]:
+    tenant = await repo.session.get(Tenant, get_current_tenant())
+    return days_off_from(tenant.settings) if tenant is not None else set()
 
 
 class OutsideWorkingHoursError(Exception):
@@ -206,8 +238,11 @@ async def find_next_free_slot(
         )
     )
 
+    closed = await days_off(repo)
     for day_offset in range(horizon_days + 1):
         day = local_start.date() + timedelta(days=day_offset)
+        if day in closed:
+            continue
         for slot in day_slots(day):
             if slot < local_start:
                 continue
@@ -250,6 +285,8 @@ async def create_appointment(
         raise MissingPatientIdentityError()
     if not is_within_working_hours(scheduled_at):
         raise OutsideWorkingHoursError(scheduled_at)
+    if _to_local(scheduled_at).date() in await days_off(repo):
+        raise DoctorDayOffError(scheduled_at)
     try:
         # A dedicated SAVEPOINT for just this insert attempt: on
         # IntegrityError, SQLAlchemy rolls back to it automatically before
