@@ -130,6 +130,7 @@
   .msg small { display: block; font-size: 10px; color: var(--ink-3); margin-top: 3px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   /* Rasm yuborganlar */
+  .tab-badge[hidden] { display: none; }
   .tab-badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; vertical-align: 1px; }
   .media-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
   .media-toolbar input[type=search] { max-width: 320px; }
@@ -168,6 +169,56 @@
   .lightbox .lb-foot { display: flex; gap: 10px; justify-content: center; padding: 12px 18px calc(16px + env(safe-area-inset-bottom, 0px)); }
   .lightbox .act { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.25); text-decoration: none; }
   @media (max-width: 600px) { .lightbox .stage { padding: 0 8px; } .media-summary { margin-left: 0; } }
+  /* Hisobot. Series colours are the reference palette's first two
+     categorical slots (validated as an adjacent pair in both modes); every
+     single-series chart uses slot 1. */
+  .viz { --series-1: #2a78d6; --series-2: #eb6834; --good: #1a7f37; --bad: #b42318; --grid: var(--rule); }
+  @media (prefers-color-scheme: dark) {
+    .viz { --series-1: #3987e5; --series-2: #d95926; --good: #5fb87a; --bad: #f08a7e; }
+  }
+  .report-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+  .report-head h2 { margin: 0; }
+  .report-range { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { font: inherit; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-2); cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .report-period { font-size: 13px; color: var(--ink-3); width: 100%; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); margin-bottom: 18px; }
+  .kpi { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; }
+  .kpi span { display: block; font-size: 12px; color: var(--ink-3); }
+  .kpi b { display: block; font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; margin: 4px 0 2px; color: var(--ink); }
+  .kpi small { font-size: 12px; color: var(--ink-3); }
+  .kpi small.up { color: var(--good); }
+  .kpi small.down { color: var(--bad); }
+  .report-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); }
+  .report-grid .panel { margin: 0; border-radius: 8px; }
+  .report-grid .wide { grid-column: 1 / -1; }
+  .panel h3 { font-size: 14px; margin: 0 0 4px; font-weight: 600; }
+  .panel .sub { font-size: 12px; color: var(--ink-3); margin: 0 0 14px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 10px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .cols { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 180px; border-bottom: 1px solid var(--grid); }
+  .cols .slot { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 2px; min-width: 0; cursor: default; }
+  .cols .slot:hover { background: var(--panel-2); }
+  .cols .bar { width: 100%; max-width: 18px; border-radius: 4px 4px 0 0; min-height: 0; }
+  .cols .bar.s1 { background: var(--series-1); }
+  .cols .bar.s2 { background: var(--series-2); }
+  .cols-axis { display: flex; gap: 2px; font-size: 10px; color: var(--ink-3); margin-top: 4px; }
+  .cols-axis span { flex: 1; text-align: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .hbars { display: grid; gap: 10px; }
+  .hbar { display: grid; grid-template-columns: minmax(120px, 42%) 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+  .hbar .name { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar .track { height: 12px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+  .hbar .fill { height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; }
+  .hbar.muted-row .fill { background: var(--ink-3); }
+  .hbar .num { font-variant-numeric: tabular-nums; color: var(--ink-2); min-width: 64px; text-align: right; }
+  .report-note { font-size: 12px; color: var(--ink-3); margin-top: 12px; }
+  .viz-tip { position: fixed; z-index: 70; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12px; padding: 6px 9px; border-radius: 4px; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+  .viz-tip[hidden] { display: none; }
+  .complaint-list { display: grid; gap: 8px; }
+  .complaint { border-left: 3px solid var(--series-1); padding: 6px 10px; background: var(--panel-2); border-radius: 0 4px 4px 0; font-size: 13px; }
+  .complaint small { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+  .report-empty { color: var(--ink-3); font-size: 13px; padding: 24px 0; text-align: center; }
+  @media print { header, nav, .report-range, #toast { display: none !important; } .panel { break-inside: avoid; } }
 </style>
 </head>
 <body>
@@ -183,6 +234,7 @@
 <nav id="tabs">
   <button data-tab="today" aria-selected="true">Bugun</button>
   <button data-tab="chats" aria-selected="false">Suhbatlar</button>
+  <button data-tab="report" aria-selected="false">📊 Hisobot</button>
   <button data-tab="media" aria-selected="false">📷 Rasm yuborganlar<span class="tab-badge" id="mediaBadge" hidden></span></button>
   <button data-tab="leads" aria-selected="false">Lidlar</button>
   <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
@@ -299,6 +351,64 @@
     <button class="nav next" id="lbNext" aria-label="Keyingi">›</button>
     <div class="lb-foot"><a class="act" id="lbOpen" target="_blank" rel="noopener">↗ Asl o'lchamda</a><button class="act" id="lbSeen">✓ Ko'rildi</button></div>
   </div>
+
+  <section id="tab-report" class="viz" hidden>
+    <div class="report-head">
+      <h2>📊 Hisobot</h2>
+      <div class="report-range" role="group" aria-label="Davr">
+        <button class="chip" data-days="7" aria-pressed="false">7 kun</button>
+        <button class="chip" data-days="30" aria-pressed="true">30 kun</button>
+        <button class="chip" data-days="90" aria-pressed="false">90 kun</button>
+        <button class="chip" data-days="365" aria-pressed="false">1 yil</button>
+        <button class="chip" id="reportPrint" aria-pressed="false">🖨 Chop etish</button>
+      </div>
+      <div class="report-period" id="reportPeriod"></div>
+    </div>
+    <div class="kpis" id="reportKpis"></div>
+    <div class="report-grid">
+      <div class="panel wide">
+        <h3>Kunlar bo'yicha</h3>
+        <p class="sub">Har kuni yozgan bemorlar va yaratilgan qabullar</p>
+        <div class="legend"><span><i style="background:var(--series-1)"></i>Bemorlar</span><span><i style="background:var(--series-2)"></i>Qabullar</span></div>
+        <div class="cols" id="reportDaily"></div>
+        <div class="cols-axis" id="reportDailyAxis"></div>
+      </div>
+      <div class="panel">
+        <h3>Bemorlar nima bilan murojaat qilyapti</h3>
+        <p class="sub" id="reportComplaintSub"></p>
+        <div class="hbars" id="reportComplaints"></div>
+        <p class="report-note">Bemor yozgan so'zlar va qabuldagi shikoyat bo'yicha. Bitta bemor bir nechta muammoni aytgan bo'lishi mumkin.</p>
+      </div>
+      <div class="panel">
+        <h3>So'nggi shikoyatlar</h3>
+        <p class="sub">Qabulga yozilganda aytilgan sabab</p>
+        <div class="complaint-list" id="reportRecent"></div>
+      </div>
+      <div class="panel">
+        <h3>Qaysi soatlarda yozishadi</h3>
+        <p class="sub">Bemor xabarlari, Toshkent vaqti</p>
+        <div class="cols" id="reportHours" style="height:120px"></div>
+        <div class="cols-axis" id="reportHoursAxis"></div>
+      </div>
+      <div class="panel">
+        <h3>Hafta kunlari</h3>
+        <p class="sub">Bemor xabarlari</p>
+        <div class="cols" id="reportWeekdays" style="height:120px"></div>
+        <div class="cols-axis" id="reportWeekdaysAxis"></div>
+      </div>
+      <div class="panel">
+        <h3>Qabullar holati</h3>
+        <p class="sub">Davrda yaratilgan qabullar</p>
+        <div class="hbars" id="reportStatus"></div>
+      </div>
+      <div class="panel">
+        <h3>Qabul qayerdan kelgan</h3>
+        <p class="sub">Qabulni kim yaratgan</p>
+        <div class="hbars" id="reportSource"></div>
+      </div>
+    </div>
+  </section>
+  <div class="viz-tip" id="vizTip" hidden></div>
 
   <section id="tab-leads" hidden>
     <div class="panel">
@@ -1379,10 +1489,159 @@ document.getElementById("mediaUnseen").addEventListener("change", () => {
 refreshMediaBadge();
 setInterval(refreshMediaBadge, 30000);
 
+// --- hisobot ------------------------------------------------------------------
+//
+// One request for the whole period (app.api.admin.reports), drawn with plain
+// elements -- no chart library, same as the rest of this page. Every bar has
+// a hover tooltip with its exact number, and every chart names what it counts
+// in text, so nothing is read from colour alone.
+
+let REPORT_DAYS = 30;
+const WEEKDAYS_SHORT = ["Du", "Se", "Ch", "Pa", "Ju", "Sh", "Ya"];
+const MONTHS_SHORT = ["yan", "fev", "mar", "apr", "may", "iyn", "iyl", "avg", "sen", "okt", "noy", "dek"];
+
+function fmtNumber(n) {
+  return new Intl.NumberFormat("uz-UZ", { maximumFractionDigits: 1 }).format(n);
+}
+
+function fmtDay(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return `${d.getDate()}-${MONTHS_SHORT[d.getMonth()]}`;
+}
+
+function fmtDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)} soniya`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} daqiqa`;
+  return `${fmtNumber(seconds / 3600)} soat`;
+}
+
+const vizTip = document.getElementById("vizTip");
+function showTip(event, text) {
+  vizTip.textContent = text;
+  vizTip.hidden = false;
+  const x = Math.min(event.clientX + 12, window.innerWidth - vizTip.offsetWidth - 8);
+  vizTip.style.left = x + "px";
+  vizTip.style.top = event.clientY - 36 + "px";
+}
+function hideTip() {
+  vizTip.hidden = true;
+}
+function withTip(node, text) {
+  node.addEventListener("mousemove", (e) => showTip(e, text));
+  node.addEventListener("mouseleave", hideTip);
+  node.setAttribute("aria-label", text);
+  return node;
+}
+
+// "↑ 12% oldingi davrga nisbatan". lowerIsBetter flips the colour, never the arrow.
+function delta(kpi, lowerIsBetter) {
+  if (!kpi.previous) {
+    return el("small", {}, kpi.value ? "oldingi davrda ma'lumot yo'q" : "—");
+  }
+  const change = ((kpi.value - kpi.previous) / kpi.previous) * 100;
+  if (Math.abs(change) < 0.5) return el("small", {}, "o'zgarmadi");
+  const better = lowerIsBetter ? change < 0 : change > 0;
+  return el("small", { class: better ? "up" : "down" },
+    `${change > 0 ? "▲" : "▼"} ${fmtNumber(Math.abs(change))}% oldingi davrga nisbatan`);
+}
+
+function kpiTile(label, value, kpi, lowerIsBetter) {
+  return el("div", { class: "kpi" }, el("span", {}, label), el("b", {}, value), delta(kpi, lowerIsBetter));
+}
+
+function columns(containerId, axisId, points, series, axisLabel, tipText) {
+  const max = Math.max(1, ...points.flatMap((p) => series.map((s) => p[s.key])));
+  const every = Math.ceil(points.length / 12);
+  document.getElementById(containerId).replaceChildren(...points.map((p) =>
+    withTip(el("div", { class: "slot" }, series.map((s) =>
+      el("div", { class: `bar ${s.cls}`, style: `height:${(p[s.key] / max) * 100}%` }))), tipText(p))));
+  document.getElementById(axisId).replaceChildren(...points.map((p, i) =>
+    el("span", {}, i % every === 0 ? axisLabel(p, i) : "")));
+}
+
+function hbars(containerId, rows, total, mutedKey) {
+  const node = document.getElementById(containerId);
+  if (!rows.length) {
+    node.replaceChildren(el("div", { class: "report-empty" }, "Bu davrda ma'lumot yo'q"));
+    return;
+  }
+  const max = Math.max(...rows.map((r) => r.count));
+  node.replaceChildren(...rows.map((r) => {
+    const share = total ? Math.round((r.count / total) * 100) : 0;
+    return withTip(el("div", { class: "hbar" + (r.key === mutedKey ? " muted-row" : "") },
+      el("span", { class: "name", title: r.label }, r.label),
+      el("div", { class: "track" }, el("div", { class: "fill", style: `width:${(r.count / max) * 100}%` })),
+      el("span", { class: "num" }, `${r.count} · ${share}%`)), `${r.label}: ${r.count} (${share}%)`);
+  }));
+}
+
+async function loadReport() {
+  for (const chip of document.querySelectorAll("#tab-report .chip[data-days]")) {
+    chip.setAttribute("aria-pressed", String(Number(chip.dataset.days) === REPORT_DAYS));
+  }
+  const r = await api(`/reports?days=${REPORT_DAYS}`);
+
+  document.getElementById("reportPeriod").textContent =
+    `${fmtDay(r.start)} – ${fmtDay(r.end)} · oldingi ${r.days} kun bilan solishtirilgan`;
+
+  const tiles = [
+    kpiTile("Yozgan bemorlar", fmtNumber(r.active_patients.value), r.active_patients),
+    kpiTile("Yangi bemorlar", fmtNumber(r.new_patients.value), r.new_patients),
+    kpiTile("Yaratilgan qabullar", fmtNumber(r.appointments_created.value), r.appointments_created),
+    kpiTile("Qabulga yozilganlar ulushi", `${fmtNumber(r.conversion_percent.value)}%`, r.conversion_percent),
+    kpiTile("Bemor xabarlari", fmtNumber(r.patient_messages.value), r.patient_messages),
+    kpiTile("Rasm yuborganlar", fmtNumber(r.photo_patients.value), r.photo_patients),
+  ];
+  if (r.median_response_seconds) {
+    tiles.push(kpiTile("Javob vaqti (mediana)", fmtDuration(r.median_response_seconds.value), r.median_response_seconds, true));
+  }
+  document.getElementById("reportKpis").replaceChildren(...tiles);
+
+  columns("reportDaily", "reportDailyAxis", r.daily,
+    [{ key: "patients", cls: "s1" }, { key: "appointments", cls: "s2" }],
+    (p) => fmtDay(p.day),
+    (p) => `${fmtDay(p.day)}: ${p.patients} bemor, ${p.appointments} qabul`);
+
+  const hours = r.by_hour.map((count, hour) => ({ hour, count }));
+  columns("reportHours", "reportHoursAxis", hours, [{ key: "count", cls: "s1" }],
+    (p) => String(p.hour).padStart(2, "0"),
+    (p) => `${String(p.hour).padStart(2, "0")}:00–${String(p.hour).padStart(2, "0")}:59 — ${p.count} xabar`);
+
+  const weekdays = r.by_weekday.map((count, day) => ({ day, count }));
+  columns("reportWeekdays", "reportWeekdaysAxis", weekdays, [{ key: "count", cls: "s1" }],
+    (p) => WEEKDAYS_SHORT[p.day],
+    (p) => `${WEEKDAYS_SHORT[p.day]}: ${p.count} xabar`);
+
+  const patientsTotal = r.active_patients.value;
+  document.getElementById("reportComplaintSub").textContent =
+    `${r.complaint_patients} bemor muammosini aytgan · ${r.enquiry_patients} bemor narx yoki qabul haqida so'ragan`;
+  hbars("reportComplaints", r.complaints, patientsTotal, "unknown");
+
+  const created = r.appointments_created.value;
+  hbars("reportStatus", r.appointment_status, created);
+  hbars("reportSource", r.appointment_source, created);
+
+  const recent = document.getElementById("reportRecent");
+  recent.replaceChildren(...(r.recent_complaints.length
+    ? r.recent_complaints.map((c) => el("div", { class: "complaint" },
+        c.text,
+        el("small", {}, [c.patient, localDateTime(c.at), c.categories.join(", ")].filter(Boolean).join(" · "))))
+    : [el("div", { class: "report-empty" }, "Bu davrda shikoyat yozilgan qabul yo'q")]));
+}
+
+document.querySelector("#tab-report .report-range").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip[data-days]");
+  if (!chip) return;
+  REPORT_DAYS = Number(chip.dataset.days);
+  loadReport().catch((err) => toast(err.message, true));
+});
+document.getElementById("reportPrint").addEventListener("click", () => window.print());
+
 const LOADERS = {
   today: () => Promise.all([loadStats(), loadAppointments(), loadDoctors(), loadViews()]),
   chats: loadChats,
   media: loadMedia,
+  report: loadReport,
   leads: loadLeads,
   doctors: loadDoctors,
   faq: loadFaqs,

@@ -21,6 +21,7 @@ from app.api.admin.conversations import router as conversations_router
 from app.api.admin.filters import router as filters_router
 from app.api.admin.media import router as media_router
 from app.api.admin.operators import router as operators_router
+from app.api.admin.reports import router as reports_router
 from app.api.admin.schedule import router as schedule_router
 from app.api.admin.session import router as session_router
 
@@ -32,6 +33,7 @@ router.include_router(clinic_router)
 router.include_router(filters_router)
 router.include_router(media_router)
 router.include_router(operators_router)
+router.include_router(reports_router)
 router.include_router(schedule_router)
 
 __all__ = ["router"]
