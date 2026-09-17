@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(alias="DATABASE_URL")
+    # Set on a shared Postgres server: the only database name this deployment
+    # may use (see _require_the_expected_database).
+    required_database_name: str | None = Field(default=None, alias="REQUIRED_DATABASE_NAME")
     redis_url: str = Field(alias="REDIS_URL")
     webhook_verify_token: str = Field(alias="WEBHOOK_VERIFY_TOKEN")
     meta_app_secret: str = Field(alias="META_APP_SECRET")
@@ -383,6 +386,22 @@ class Settings(BaseSettings):
             raise ValueError("OPENAI_API_KEY is required")
         if self.llm_provider == "qwen" and self.hf_token is None:
             raise ValueError("HF_TOKEN is required when LLM_PROVIDER=qwen")
+        return self
+
+    @model_validator(mode="after")
+    def _require_the_expected_database(self) -> Self:
+        # On a Postgres server shared with another project, the database name
+        # in DATABASE_URL is the only thing keeping the two apart. A variable
+        # pasted into the wrong service would point this bot at the other
+        # project's patients -- so when REQUIRED_DATABASE_NAME is set, any
+        # other database refuses to boot rather than quietly mixing rows.
+        if self.required_database_name:
+            actual = self.database_url.rsplit("/", 1)[-1].split("?", 1)[0]
+            if actual != self.required_database_name:
+                raise ValueError(
+                    f"DATABASE_URL points at database {actual!r}, but this deployment "
+                    f"must use {self.required_database_name!r}"
+                )
         return self
 
     @model_validator(mode="after")
