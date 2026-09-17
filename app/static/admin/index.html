@@ -1429,7 +1429,13 @@ function mediaThumb(patient, item, index, extra) {
     return el("div", { class: "media-thumb missing", title: "Rasmni yuklab bo'lmadi" }, "yuklanmadi");
   }
   return el("button", { class: "media-thumb", onclick: () => openLightbox(patient, index), "aria-label": "Rasmni ochish" },
-    el("img", { src: mediaUrl(item), loading: "lazy", alt: "" }),
+    el("img", {
+      src: mediaUrl(item), loading: "lazy", alt: "",
+      // The server re-fetches a photo it could not download at first; if
+      // that fails too, say so rather than leave a broken image.
+      onerror: (e) => e.target.closest(".media-thumb").replaceWith(
+        el("div", { class: "media-thumb missing", title: "Instagram rasmni bermadi" }, "yuklanmadi")),
+    }),
     item.status === "new" ? el("span", { class: "new-dot", title: "Ko'rilmagan" }) : null,
     extra ? el("span", { class: "media-more" }, `+${extra}`) : null);
 }

@@ -20,6 +20,7 @@ from app.core.tenant_context import get_current_tenant
 from app.models.operator import Operator
 from app.models.patient_media import PatientMedia, PatientMediaStatus
 from app.models.user import User
+from app.services import patient_media
 
 router = APIRouter(prefix="/api/admin/media", tags=["Admin — Patient photos"])
 
@@ -87,7 +88,7 @@ async def list_patients(
                 id=media.id,
                 status=media.status,
                 created_at=media.created_at,
-                available=media.size_bytes is not None,
+                available=True,
                 size_bytes=media.size_bytes,
             )
         )
@@ -121,12 +122,21 @@ async def file(
             # The bytes are deferred so that lists never load them; here they
             # are the whole point, and a deferred column touched after the
             # query is a lazy load an async session refuses.
-            .options(undefer(PatientMedia.content))
-            .where(PatientMedia.id == media_id, PatientMedia.tenant_id == get_current_tenant())
+            .options(undefer(PatientMedia.content)).where(
+                PatientMedia.id == media_id, PatientMedia.tenant_id == get_current_tenant()
+            )
         )
     ).scalar_one_or_none()
-    if media is None or media.content is None:
+    if media is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rasm topilmadi")
+    if media.content is None:
+        # Not downloaded when it arrived: try once more now, through the
+        # Graph API if the original link is refused.
+        channel_id = (
+            await session.execute(select(User.channel_id).where(User.id == media.user_id))
+        ).scalar_one_or_none()
+        if channel_id is None or not await patient_media.repair(session, media, channel_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rasm yuklanmadi")
     return Response(
         content=media.content,
         media_type=media.content_type or "image/jpeg",

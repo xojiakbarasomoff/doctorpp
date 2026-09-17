@@ -738,6 +738,7 @@ async def handle_patient_media(
                 conversation_id=uuid.UUID(conversation_id),
                 external_id=external_id,
                 urls=urls,
+                channel_id=uuid.UUID(channel_id),
             )
             if not await _may_answer(
                 session, channel_id=uuid.UUID(channel_id), user_id=uuid.UUID(user_id)
