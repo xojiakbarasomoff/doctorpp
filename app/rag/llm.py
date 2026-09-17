@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from functools import lru_cache
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -36,6 +36,7 @@ class OpenAILLMProvider(LLMProvider):
         # writing badly is something to fix while patients are waiting, not
         # something to ship code for.
         self._model = model or resolved.openai_model
+        self._reasoning_effort = resolved.openai_reasoning_effort
         self._client = AsyncOpenAI(api_key=api_key)
 
     async def generate(self, system_prompt: str, messages: list[ChatMessage]) -> str:
@@ -48,9 +49,15 @@ class OpenAILLMProvider(LLMProvider):
             "list[ChatCompletionMessageParam]",
             [{"role": "system", "content": system_prompt}, *messages],
         )
+        extra: dict[str, Any] = {}
+        # Only reasoning models accept the parameter; sending it to another
+        # model is a 400 on every reply.
+        if self._reasoning_effort and self._model.startswith(("gpt-5", "o1", "o3", "o4")):
+            extra["reasoning_effort"] = self._reasoning_effort
         response = await self._client.chat.completions.create(
             model=self._model,
             messages=payload,
+            **extra,
         )
         content = response.choices[0].message.content
         if content is None:

@@ -39,7 +39,7 @@ from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
-from app.services import doctor_telegram, patient_media
+from app.services import callbacks, doctor_telegram, patient_media
 from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
@@ -194,6 +194,28 @@ async def process_inbound_message(
                 )
                 if appointment is not None:
                     await session.commit()
+
+            # A patient who asked to be rung. Taken from the assistant's
+            # marker when it wrote one, otherwise from the patient's own words;
+            # never while they are being booked, which is its own record.
+            reply, callback = callbacks.extract(reply)
+            if conversation is not None and appointment is None:
+                said = [turn["content"] for turn in history if turn["role"] == "user"]
+                said.append(message_text)
+                callback = callback or callbacks.from_patient_words(said)
+                if callback is not None:
+                    try:
+                        await callbacks.record(
+                            session,
+                            user=await session.get(User, conversation.user_id),
+                            conversation_id=conversation_uuid,
+                            request=callback,
+                            fallback_reason=summarise_problem(said) or None,
+                        )
+                        await session.commit()
+                    except Exception:  # noqa: BLE001 - the reply must still go out
+                        await session.rollback()
+                        logger.exception("callback_record_failed")
 
             # Full reply text stays out of INFO — it is patient-adjacent
             # content that should not sit in logs that may ship to external

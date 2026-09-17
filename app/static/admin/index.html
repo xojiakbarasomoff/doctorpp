@@ -219,6 +219,15 @@
   .complaint small { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
   .report-empty { color: var(--ink-3); font-size: 13px; padding: 24px 0; text-align: center; }
   @media print { header, nav, .report-range, #toast { display: none !important; } .panel { break-inside: avoid; } }
+  .leads-table td { vertical-align: middle; }
+  .leads-table tr.is-new td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+  .lead-who b { display: block; }
+  .lead-who span { font-size: 12px; color: var(--ink-3); }
+  .lead-phone { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+  .lead-phone a { font-family: var(--mono); font-size: 14px; color: var(--ink); text-decoration: none; font-weight: 600; }
+  .lead-phone a:hover { color: var(--accent); }
+  .lead-reason { max-width: 420px; }
+  .lead-when { white-space: nowrap; font-size: 13px; color: var(--ink-2); }
 </style>
 </head>
 <body>
@@ -236,7 +245,7 @@
   <button data-tab="chats" aria-selected="false">Suhbatlar</button>
   <button data-tab="report" aria-selected="false">📊 Hisobot</button>
   <button data-tab="media" aria-selected="false">📷 Rasm yuborganlar<span class="tab-badge" id="mediaBadge" hidden></span></button>
-  <button data-tab="leads" aria-selected="false">Lidlar</button>
+  <button data-tab="leads" aria-selected="false">📞 Nomer<span class="tab-badge" id="leadsBadge" hidden></span></button>
   <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
   <button data-tab="faq" aria-selected="false">Bilim bazasi</button>
   <button data-tab="settings" aria-selected="false">Sozlamalar</button>
@@ -412,10 +421,18 @@
 
   <section id="tab-leads" hidden>
     <div class="panel">
-      <h2>Lidlar</h2>
+      <div class="report-head" style="margin-bottom:12px">
+        <h2 style="margin:0">📞 Nomer qoldirganlar</h2>
+        <span class="media-summary" id="leadSummary"></span>
+      </div>
+      <p class="muted" style="margin:0 0 12px">Qo'ng'iroq qilishni so'ragan bemorlar: kim, qaysi raqamga va nima uchun.</p>
+      <div class="media-toolbar">
+        <input type="search" id="leadSearch" placeholder="Ism, @username, raqam yoki sabab bo'yicha qidirish" aria-label="Qidirish">
+        <label class="check"><input type="checkbox" id="leadOnlyNew" checked> Faqat qo'ng'iroq qilinmaganlar</label>
+      </div>
       <div class="row" id="views-leads" style="margin-bottom:10px;gap:6px;flex-wrap:wrap"></div>
-      <div class="scroll"><table>
-        <thead><tr><th>Bemor</th><th>Telefon</th><th>Mavzu</th><th>Qulay vaqt</th><th>Holat</th><th></th></tr></thead>
+      <div class="scroll"><table class="leads-table">
+        <thead><tr><th>Bemor</th><th>Telefon</th><th>Nima uchun</th><th>Qachon</th><th>Holat</th><th></th></tr></thead>
         <tbody id="leadRows"></tbody>
       </table></div>
     </div>
@@ -975,25 +992,60 @@ document.addEventListener("keydown", (e) => {
 
 // --- leads, doctors, faq, settings ---------------------------------------
 
-const LEAD_STATUSES = { new: "yangi", contacted: "bog'lanildi", booked: "qabulga yozildi", cancelled: "bekor qilindi" };
+const LEAD_STATUSES = { new: "🔴 Qo'ng'iroq qilinmagan", contacted: "✅ Qo'ng'iroq qilindi", booked: "📅 Qabulga yozildi", cancelled: "✖️ Bekor qilindi" };
 
 async function loadLeads() {
-  const rows = await api("/leads?" + new URLSearchParams(LIST_PARAMS.leads));
-  fill("leadRows", rows.map((l) =>
-    el("tr", {},
-      el("td", {}, l.patient_name || "—"),
-      el("td", {}, l.phone || "—"),
-      el("td", {}, l.topic || "—"),
-      el("td", {}, l.convenient_time || "—"),
-      el("td", {}, el("span", { class: "pill " + (l.status === "new" ? "bad" : "ok") }, LEAD_STATUSES[l.status] || l.status)),
+  const params = new URLSearchParams(LIST_PARAMS.leads);
+  const rows = await api("/leads?" + params);
+  const unseen = rows.filter((l) => l.status === "new").length;
+  const badge = document.getElementById("leadsBadge");
+  badge.textContent = String(unseen);
+  badge.hidden = !unseen;
+
+  const q = document.getElementById("leadSearch").value.trim().replace(/^@/, "").toLowerCase();
+  const onlyNew = document.getElementById("leadOnlyNew").checked && !params.get("status");
+  const shown = rows.filter((l) =>
+    (!onlyNew || l.status === "new") &&
+    (!q || [l.patient_name, l.username, l.phone, l.topic].some((v) => (v || "").toLowerCase().includes(q))));
+
+  document.getElementById("leadSummary").textContent =
+    `${rows.length} ta so'rov · ${unseen} tasiga hali qo'ng'iroq qilinmagan`;
+
+  if (!shown.length) {
+    fill("leadRows", [el("tr", {}, el("td", { colspan: "6", class: "muted", style: "text-align:center;padding:28px" },
+      rows.length ? "Filtrga mos so'rov yo'q" : "Hali hech kim qo'ng'iroq qilishni so'ramagan"))]);
+    return;
+  }
+  fill("leadRows", shown.map((l) => {
+    const title = l.patient_name || (l.username ? "@" + l.username : "Ismi ko'rsatilmagan");
+    const phone = l.phone
+      ? el("span", { class: "lead-phone" },
+          el("a", { href: "tel:" + l.phone.replace(/[^+\d]/g, "") }, l.phone),
+          el("button", { class: "act", title: "Nusxalash", onclick: () => copyText(l.phone) }, "⧉"))
+      : "—";
+    return el("tr", { class: l.status === "new" ? "is-new" : "" },
+      el("td", { class: "lead-who" }, el("b", {}, title), l.username && l.patient_name ? el("span", {}, "@" + l.username) : null),
+      el("td", {}, phone),
+      el("td", { class: "lead-reason" }, l.topic || el("span", { class: "muted" }, "aytilmagan")),
+      el("td", { class: "lead-when", title: localDateTime(l.created_at) }, relativeWhen(l.created_at)),
       el("td", {}, canManage()
         ? el("select", { onchange: (e) => updateLead(l.id, e.target.value) },
             ...Object.entries(LEAD_STATUSES).map(([value, label]) =>
               el("option", { value, selected: value === l.status ? "selected" : null }, label)))
-        : null)
-    )
-  ));
-  if (!rows.length) fill("leadRows", [el("tr", {}, el("td", { colspan: "6", class: "muted" }, "Hali lid yo'q"))]);
+        : el("span", { class: "pill " + (l.status === "new" ? "bad" : "ok") }, LEAD_STATUSES[l.status] || l.status)),
+      el("td", {}, l.conversation_id
+        ? el("button", { class: "act", onclick: () => openPatientChat(l.conversation_id) }, "💬 Suhbat")
+        : null));
+  }));
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Nusxalandi: " + text);
+  } catch (_) {
+    toast(text);
+  }
 }
 
 async function updateLead(id, status) {
@@ -1003,6 +1055,13 @@ async function updateLead(id, status) {
     await loadLeads();
   } catch (err) { toast(err.message, true); }
 }
+
+let LEAD_SEARCH_TIMER = null;
+document.getElementById("leadSearch").addEventListener("input", () => {
+  clearTimeout(LEAD_SEARCH_TIMER);
+  LEAD_SEARCH_TIMER = setTimeout(() => loadLeads().catch((err) => toast(err.message, true)), 200);
+});
+document.getElementById("leadOnlyNew").addEventListener("change", () => loadLeads().catch((err) => toast(err.message, true)));
 
 async function loadDoctors() {
   const rows = await api("/doctors?include_inactive=true");

@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import undefer
 
 from app.api.admin.deps import require_patient_access, verify_csrf_header
 from app.core.db import get_db_session
@@ -116,9 +117,12 @@ async def file(
 ) -> Response:
     media = (
         await session.execute(
-            select(PatientMedia).where(
-                PatientMedia.id == media_id, PatientMedia.tenant_id == get_current_tenant()
-            )
+            select(PatientMedia)
+            # The bytes are deferred so that lists never load them; here they
+            # are the whole point, and a deferred column touched after the
+            # query is a lazy load an async session refuses.
+            .options(undefer(PatientMedia.content))
+            .where(PatientMedia.id == media_id, PatientMedia.tenant_id == get_current_tenant())
         )
     ).scalar_one_or_none()
     if media is None or media.content is None:

@@ -262,6 +262,14 @@ class Settings(BaseSettings):
     # can move the model under a deployment with no change on our side, which
     # makes yesterday's behaviour impossible to reproduce.
     openai_model: str = Field(default="gpt-5-mini", alias="OPENAI_MODEL")
+    # How long a reasoning model thinks before it answers. A patient in a chat
+    # waits for every second of it: on gpt-5-mini the default took 7-12 s per
+    # reply and "minimal" about 2 s for the same prompt, and the rules that
+    # matter most -- no diagnosis, no medicine -- are also enforced outside
+    # the model (app.services.guardrail). Ignored by models without reasoning.
+    openai_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = Field(
+        default="minimal", alias="OPENAI_REASONING_EFFORT"
+    )
 
     # Which backend writes the replies. Unset -- the normal case -- they are
     # written by OpenAI, which is also what makes the embeddings.

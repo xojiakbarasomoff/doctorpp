@@ -63,6 +63,9 @@ async def test_generate_prepends_system_prompt_and_returns_content(
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": "What are your hours?"},
         ],
+        # A reasoning model is asked to think briefly: a patient waits for
+        # every second of it (see Settings.openai_reasoning_effort).
+        reasoning_effort=TEST_SETTINGS.openai_reasoning_effort,
     )
 
 

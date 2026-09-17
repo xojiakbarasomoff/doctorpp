@@ -30,6 +30,7 @@ from app.core.tenant_context import get_current_tenant
 from app.models.knowledge_base import KnowledgeBase
 from app.models.operator import Operator
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.lead import LeadRepository
@@ -103,10 +104,12 @@ async def update_doctor(
 # --- leads -----------------------------------------------------------------
 
 
-def _lead_out(lead: Any) -> LeadOut:
+def _lead_out(lead: Any, user: User | None = None) -> LeadOut:
     return LeadOut(
         id=lead.id,
-        patient_name=lead.patient_name,
+        patient_name=lead.patient_name or (user.name if user else None),
+        username=user.username if user else None,
+        conversation_id=lead.conversation_id,
         phone=lead.phone,
         topic=lead.topic,
         convenient_time=lead.convenient_time,
@@ -124,7 +127,16 @@ async def list_leads(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[LeadOut]:
     leads = await LeadRepository(session).list_recent(status=status_filter, limit=limit)
-    return [_lead_out(lead) for lead in leads]
+    user_ids = {lead.user_id for lead in leads if lead.user_id}
+    users = (
+        {
+            u.id: u
+            for u in (await session.execute(select(User).where(User.id.in_(user_ids)))).scalars()
+        }
+        if user_ids
+        else {}
+    )
+    return [_lead_out(lead, users.get(lead.user_id)) for lead in leads]
 
 
 @router.post(

@@ -151,6 +151,10 @@ class LeadOut(BaseModel):
     status: str
     notes: str | None
     created_at: datetime
+    # The patient's Instagram handle and conversation, when the lead came
+    # from a chat, so the "Nomer" screen can name them and open the thread.
+    username: str | None = None
+    conversation_id: uuid.UUID | None = None
 
 
 class LeadCreate(BaseModel):

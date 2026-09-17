@@ -43,21 +43,25 @@ from app.core.config import Settings, get_settings
 from app.core.db import db_session
 from app.core.tenant_context import reset_current_tenant, set_current_tenant
 from app.models.appointment import ACTIVE_STATUSES, Appointment, AppointmentStatus
-from app.models.message import MessageSender
+from app.models.lead import Lead
+from app.models.message import Message, MessageSender
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.appointment import CLINIC_TIMEZONE, DAYS_OFF_KEY, days_off_from
+from app.services.complaints import patient_words
 from app.services.conversation import last_inbound_at, record_outbound_message, reply_context_for
 from app.services.delivery import send_reply
+from app.services.sheets import summarise_problem
 
 logger = logging.getLogger(__name__)
 
 API = "https://api.telegram.org"
-POLL_TIMEOUT_SECONDS = 25
+POLL_TIMEOUT_SECONDS = 8
 
 CHATS_KEY = "doctor_telegram_chats"
 OFFSET_KEY = "doctor_telegram_offset"
 NOTIFIED_UNTIL_KEY = "doctor_telegram_notified_until"
+LEADS_NOTIFIED_UNTIL_KEY = "doctor_telegram_leads_notified_until"
 # Per chat: the day being picked from and the appointment ids ticked so far.
 # Kept here rather than in the button data, because a button that says "the
 # third patient" names somebody else the moment a booking lands before them.
@@ -806,16 +810,55 @@ async def notify_patient_media(
             )
 
 
+async def _patient_reason(session: AsyncSession, appointment: Appointment) -> str | None:
+    """Why the patient booked: what they said at booking, else their first
+    real message -- so the notice is never just a name and a time."""
+    words = patient_words(appointment.notes)
+    if words:
+        return words
+    if appointment.conversation_id is None:
+        return None
+    said = (
+        (
+            await session.execute(
+                select(Message.content)
+                .where(
+                    Message.conversation_id == appointment.conversation_id,
+                    Message.sender == MessageSender.PATIENT,
+                )
+                .order_by(Message.created_at)
+                .limit(30)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return summarise_problem(list(said)) or None
+
+
+def _watermark(tenant: Tenant, key: str) -> datetime | None:
+    raw = tenant.settings.get(key)
+    return datetime.fromisoformat(raw) if raw else None
+
+
 async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tenant) -> None:
-    """Tell the doctor about every appointment created since the last look."""
+    """Tell the doctor about every appointment and call-back request created
+    since the last look."""
     chats = [c for c in tenant.settings.get(CHATS_KEY, []) if isinstance(c, int)]
-    raw = tenant.settings.get(NOTIFIED_UNTIL_KEY)
-    if not raw:
+    now = datetime.now(UTC).isoformat()
+    since = _watermark(tenant, NOTIFIED_UNTIL_KEY)
+    leads_since = _watermark(tenant, LEADS_NOTIFIED_UNTIL_KEY)
+    if since is None or leads_since is None:
         # First run: start from now rather than announcing the whole history.
-        tenant.settings = {**tenant.settings, NOTIFIED_UNTIL_KEY: datetime.now(UTC).isoformat()}
+        tenant.settings = {
+            **tenant.settings,
+            NOTIFIED_UNTIL_KEY: tenant.settings.get(NOTIFIED_UNTIL_KEY) or now,
+            LEADS_NOTIFIED_UNTIL_KEY: tenant.settings.get(LEADS_NOTIFIED_UNTIL_KEY) or now,
+        }
         await session.commit()
         return
-    since = datetime.fromisoformat(raw)
+
+    today = datetime.now(CLINIC_TIMEZONE).date()
     rows = (
         await session.execute(
             select(Appointment, User)
@@ -828,34 +871,62 @@ async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tena
             .order_by(Appointment.created_at)
         )
     ).all()
-    if not rows:
-        return
-    today = datetime.now(CLINIC_TIMEZONE).date()
     for appointment, patient in rows:
         booking = Booking(appointment, patient)
         day = booking.local.date()
-        text = (
-            f"🆕 <b>Yangi qabul</b>\n\n"
-            f"📅 {_day_word(day, today)} · <i>{_long_date(day)}</i>\n"
-            f"🕐 <b>{booking.local:%H:%M}</b>\n"
-            f"👤 {html.escape(booking.name)}"
-        )
+        lines = [
+            "🆕 <b>Yangi qabul</b>",
+            "",
+            f"👤 <b>{html.escape(booking.name)}</b>",
+        ]
         if booking.phone:
-            text += f"\n📞 <code>{html.escape(booking.phone)}</code>"
+            lines.append(f"📞 <code>{html.escape(booking.phone)}</code>")
         if patient is not None and patient.username:
-            text += f"\n📷 @{html.escape(patient.username)}"
-        if appointment.notes:
-            text += f"\n📝 <i>{html.escape(appointment.notes)}</i>"
+            lines.append(f"📷 @{html.escape(patient.username)}")
+        lines.append(f"📅 {_day_word(day, today)} · <i>{_long_date(day)}</i>")
+        lines.append(f"🕐 <b>{booking.local:%H:%M}</b>")
+        reason = await _patient_reason(session, appointment)
+        lines += ["", f"📝 <b>Sabab:</b> {html.escape(reason) if reason else '<i>aytilmagan</i>'}"]
         markup = {
             "inline_keyboard": [
                 [_btn(f"📋 {_day_word(day, today)}gi qabullar", f"l:{day.isoformat()}")]
             ]
         }
         for chat_id in chats:
-            await api.send(chat_id, text, markup)
-    latest = max(appointment.created_at for appointment, _ in rows)
-    tenant.settings = {**tenant.settings, NOTIFIED_UNTIL_KEY: latest.isoformat()}
-    await session.commit()
+            await api.send(chat_id, "\n".join(lines), markup)
+
+    leads = (
+        await session.execute(
+            select(Lead, User)
+            .outerjoin(User, Lead.user_id == User.id)
+            .where(Lead.tenant_id == tenant.id, Lead.created_at > leads_since)
+            .order_by(Lead.created_at)
+        )
+    ).all()
+    for lead, patient in leads:
+        who = lead.patient_name or (patient.name if patient else None)
+        lines = ["📞 <b>Qo'ng'iroq qilishni so'radi</b>", ""]
+        if who:
+            lines.append(f"👤 <b>{html.escape(who)}</b>")
+        if patient is not None and patient.username:
+            lines.append(f"📷 @{html.escape(patient.username)}")
+        lines.append(f"☎️ <code>{html.escape(lead.phone or '—')}</code>")
+        lines += [
+            "",
+            f"📝 <b>Sabab:</b> {html.escape(lead.topic) if lead.topic else '<i>aytilmagan</i>'}",
+        ]
+        for chat_id in chats:
+            await api.send(chat_id, "\n".join(lines))
+
+    tenant.settings = {
+        **tenant.settings,
+        NOTIFIED_UNTIL_KEY: max((a.created_at for a, _ in rows), default=since).isoformat(),
+        LEADS_NOTIFIED_UNTIL_KEY: max(
+            (lead.created_at for lead, _ in leads), default=leads_since
+        ).isoformat(),
+    }
+    if rows or leads:
+        await session.commit()
 
 
 async def run_forever(stop: asyncio.Event) -> None:

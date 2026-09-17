@@ -379,6 +379,13 @@ _BY_PHONE = {
         "says whether you have asked already; if it says you have, do not ask "
         "again. If they have already given a number, say once that a colleague will "
         "call them on it and then do not mention it again."
+        '\n\nWhen a patient asks to be called -- "menga qo\'ng\'iroq qiling", "перезвоните" -- '
+        "and has not given a number, ask for it once, in one short line. Once you have "
+        "it, tell them briefly that the doctor's administrator will call them, and end "
+        "that same message with this marker, exactly: "
+        "[[CALLBACK:<their number>|<why they want the call, at most twelve words, in "
+        "their language>]]. The patient never sees it; it puts them on the list of "
+        "people to ring. Write it once per request, never while booking them."
     ),
     "urgent_rule": (
         "Give them the number first and say the clinic can see them today; do not "
@@ -427,7 +434,14 @@ _BOOKED_HERE = {
     "phone_rule": (
         "6. Ask for the patient's telephone number only while booking them (rule "
         "5), once, and never in the same message as another question. Outside a "
-        "booking, do not ask for it."
+        "booking, do not ask for it -- unless they ask to be called."
+        '\n\nWhen a patient asks to be called -- "menga qo\'ng\'iroq qiling", "перезвоните" -- '
+        "and has not given a number, ask for it once, in one short line. Once you have "
+        "it, tell them briefly that the doctor's administrator will call them, and end "
+        "that same message with this marker, exactly: "
+        "[[CALLBACK:<their number>|<why they want the call, at most twelve words, in "
+        "their language>]]. The patient never sees it; it puts them on the list of "
+        "people to ring. Write it once per request, never while booking them."
     ),
     "urgent_rule": (
         "Offer them the earliest free time in THE APPOINTMENT BOOK, and give "
