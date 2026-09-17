@@ -52,4 +52,4 @@ EXPOSE 8000
 # local `docker run` (no PORT set) falls back to 8000. `exec` replaces the
 # shell so the process gets SIGTERM directly on shutdown instead of the
 # shell swallowing it and the platform resorting to SIGKILL.
-CMD if [ "$APP_ROLE" = worker ]; then exec arq app.workers.tasks.WorkerSettings; else exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi
+CMD if [ "$APP_ROLE" = worker ]; then exec arq app.workers.tasks.WorkerSettings; elif [ "$APP_ROLE" = all ]; then exec sh scripts/run_all.sh; else exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}; fi
