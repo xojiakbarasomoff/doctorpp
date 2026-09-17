@@ -84,6 +84,24 @@ _RETRY_BACKOFF_SECONDS = (30, 120, 300, 600)
 _MAX_ATTEMPTS = 5
 
 
+async def _may_answer(session: AsyncSession, *, channel_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """Whether the assistant may answer this patient at all.
+
+    Normally yes. While ANSWER_ONLY_USERNAMES is set -- a test on the live
+    account -- only those handles are answered; everybody else's message is
+    still recorded and visible in the dashboard, and simply left for a person.
+    """
+    allowed = get_settings().answer_only_usernames
+    if not allowed:
+        return True
+    username = await ensure_instagram_username(session, channel_id=channel_id, user_id=user_id)
+    await session.commit()
+    if is_admin(username, allowed):
+        return True
+    logger.info("reply_withheld_not_on_test_list", extra={"username": username})
+    return False
+
+
 async def process_inbound_message(
     ctx: dict[str, Any],
     tenant_id: str,
@@ -137,6 +155,11 @@ async def process_inbound_message(
                     "worker_bot_disabled_for_tenant",
                     extra={"tenant_id": tenant_id, "conversation_id": conversation_id},
                 )
+                return
+            conversation_row = await session.get(Conversation, conversation_uuid)
+            if conversation_row is not None and not await _may_answer(
+                session, channel_id=uuid.UUID(channel_id), user_id=conversation_row.user_id
+            ):
                 return
             history = await context_for_reply(session, conversation_uuid)
             reply = await generate_answer(
@@ -694,6 +717,10 @@ async def handle_patient_media(
                 external_id=external_id,
                 urls=urls,
             )
+            if not await _may_answer(
+                session, channel_id=uuid.UUID(channel_id), user_id=uuid.UUID(user_id)
+            ):
+                return
             try:
                 await patient_media.acknowledge(
                     session,

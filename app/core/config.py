@@ -121,6 +121,15 @@ class Settings(BaseSettings):
     # the booking -- instead of sending every patient to the telephone.
     booking_enabled: bool = Field(default=False, alias="BOOKING_ENABLED")
 
+    # While testing on the live account: answer only these Instagram handles
+    # (comma-separated, "@" optional). Everybody else is recorded but not
+    # answered. Empty -- the default -- answers everyone.
+    answer_only_usernames_raw: str = Field(default="", alias="ANSWER_ONLY_USERNAMES")
+
+    @property
+    def answer_only_usernames(self) -> list[str]:
+        return [n.strip() for n in self.answer_only_usernames_raw.split(",") if n.strip()]
+
     @property
     def doctor_background_text(self) -> str | None:
         if not self.doctor_background:
