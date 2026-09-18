@@ -154,3 +154,17 @@ def test_an_ordinary_reply_has_nothing_wrong_with_it(reply: str) -> None:
     script = "uz-cyrl" if "Раҳмат" in reply else "uz-latn"
 
     assert problems(reply, script=script, greeted=False) == []
+
+
+def test_what_is_left_after_trimming_still_starts_like_a_sentence() -> None:
+    """Live audit, scenario 11: cutting the introduction off the front left
+    "siz Axmadaliyev Temur G'iyosiddin o'g'liga yozayapsiz" — lowercase,
+    which nobody types.
+    """
+    out = tidy(
+        "Shifokorning administratori — siz Axmadaliyev Temurga yozayapsiz.",
+        greeted=False,
+        opening=False,
+    )
+
+    assert out.startswith("Siz Axmadaliyev")

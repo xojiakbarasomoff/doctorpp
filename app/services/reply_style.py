@@ -153,7 +153,26 @@ def tidy(reply: str, *, greeted: bool, opening: bool, user_message: str = "") ->
     # "Iltimos kelish eslatmasi:" was sent to a patient exactly like that.
     body = re.sub(r"[:\s]+$", "", body)
     body = re.sub(r"[ \t]{2,}", " ", body).strip()
+    body = _capitalised(body)
     return _unmask(body, markers) if body else reply
+
+
+def _capitalised(text: str) -> str:
+    """A message starts with a capital letter.
+
+    Trimming an opening clause leaves whatever followed it, and what
+    followed it was written as the middle of a sentence: cutting
+    "Shifokorning administratori — " off the front sent a patient "siz
+    Axmadaliyev Temur G'iyosiddin o'g'liga yozayapsiz", lowercase. Nobody
+    types that, which makes it exactly the kind of tell this file exists
+    to remove.
+    """
+    for index, character in enumerate(text):
+        if character.isalpha():
+            return text[:index] + character.upper() + text[index + 1 :]
+        if not character.isspace() and character not in "\"'“«(":
+            break
+    return text
 
 
 def _script_mix(text: str) -> float:
