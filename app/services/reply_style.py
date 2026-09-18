@@ -129,12 +129,19 @@ def tidy(reply: str, *, greeted: bool, opening: bool, user_message: str = "") ->
 
     Only the front of the message and only fixed phrases, so what the
     assistant actually said is untouched.
+
+    `opening` is no longer enough on its own to keep the introduction. A
+    live audit marked sixteen replies in forty-nine as sounding like a
+    machine, and every one of them was the same thing: "Shifokorning
+    administratori —" stuck on the front of an answer nobody had asked to
+    be introduced to. A person says who they are when they are greeted or
+    when they are asked. The rest of the time they just answer.
     """
     body, markers = _mask(reply)
 
     if not greeted:
         body = _strip_opening(body, _OPENING_GREETING)
-    if not opening and not _ASKS_WHO.search(user_message):
+    if not (greeted and opening) and not _ASKS_WHO.search(user_message):
         body = _strip_opening(body, _IDENTITY)
         # The same phrase as a sentence of its own, mid-conversation: the
         # assistant took to prefixing every message with it once the greeting
@@ -222,7 +229,24 @@ def problems(reply: str, *, script: str, greeted: bool) -> list[str]:
         )
     if not greeted and _OPENING_GREETING.match(body):
         found.append("They did not greet you. Do not open with a greeting.")
+    if _OFFERS_TO_FIND_OUT.search(body):
+        found.append(
+            "You offered to find something out, ring somebody, or come back "
+            "later. You cannot do any of those. Say plainly what you do not "
+            "know, give the clinic's number once, and answer the rest."
+        )
     return found
+
+
+# "Tekshirib beraman", "so'rab qo'yaman", "aniqlab beramiz", "узнаю" -- a
+# promise nobody in this inbox can keep. The patient waits for an answer
+# that is never coming, which is worse than being told to ring.
+_OFFERS_TO_FIND_OUT = re.compile(
+    r"tekshir\w*\s+(?:ber|qo)\w*|aniqla\w*\s+(?:ber|qo)\w*|so[o'’ʻ]?ra\w*\s+(?:ber|qo)\w*"
+    r"|bilib\s+(?:ber|ol)\w*|текшир\w*\s+бер\w*|аниқла\w*\s+бер\w*|сўра\w*\s+(?:бер|қў)\w*"
+    r"|узна(?:ю|ем)|уточн(?:ю|им)\s|перезвон(?:ю|им)",
+    re.IGNORECASE,
+)
 
 
 REWRITE_INSTRUCTION = (

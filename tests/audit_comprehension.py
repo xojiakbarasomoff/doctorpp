@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.rag.llm import ChatMessage, OpenAILLMProvider
 from app.services import booking, callbacks
 from app.services.answer import generate_answer
-from tests.audit_live import _NoEmbeddings, _settings
+from tests.audit_live import _NoEmbeddings, _settings, prepare_tenant
 from tests.conftest import Seed
 
 pytestmark = pytest.mark.skipif(
@@ -291,6 +291,8 @@ async def test_comprehension_audit(
     assistant = OpenAILLMProvider(settings)  # type: ignore[arg-type]
     judge = OpenAILLMProvider(settings, model=JUDGE_MODEL)  # type: ignore[arg-type]
     embeddings = _NoEmbeddings()
+    with as_tenant(seed.tenant_a.id):
+        await prepare_tenant(db_session, seed.tenant_a)
 
     counts = {"good": 0, "weak": 0, "wrong": 0, "unjudged": 0}
     robotic = 0

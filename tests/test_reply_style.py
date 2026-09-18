@@ -168,3 +168,31 @@ def test_what_is_left_after_trimming_still_starts_like_a_sentence() -> None:
     )
 
     assert out.startswith("Siz Axmadaliyev")
+
+
+def test_the_introduction_is_only_for_a_greeting_or_a_question_about_who() -> None:
+    """A live audit marked sixteen replies in forty-nine as machine-like, and
+    every one was "Shifokorning administratori —" stuck on the front of an
+    answer nobody had asked to be introduced to.
+    """
+    out = tidy(
+        "Shifokorning administratori — Ha, doktor ertaga ishlaydi.",
+        greeted=False,
+        opening=True,
+        user_message="aka ertaga ishleysizlarmi",
+    )
+
+    assert out == "Ha, doktor ertaga ishlaydi."
+
+
+def test_offering_to_find_something_out_is_a_rewrite() -> None:
+    """"Tekshirib beraman", "so'rab bera olishimiz mumkin" — promises nobody
+    in this inbox can keep, sent to real patients who then wait.
+    """
+    faults = problems(
+        "Afsuski ma'lumot yo'q — xohlasangiz, men siz uchun so'rab beraman.",
+        script="uz-latn",
+        greeted=False,
+    )
+
+    assert any("find something out" in fault for fault in faults)

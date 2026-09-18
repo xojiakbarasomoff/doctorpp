@@ -39,6 +39,43 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+# What the clinic has actually told the assistant, from the live
+# deployment's own settings. Without these the audit measures a clinic that
+# knows nothing -- and duly reports that it answers "bizda ma'lumot yo'q".
+CLINIC_RULES = [
+    "UZI ni shifokorning o'zi qiladi (buyrak, siydik pufagi, prostata). "
+    "Bemor \"UZI qilasizmi?\" deb so'rasa, aniq \"ha, shifokorning o'zi qiladi\" deb javob bering.",
+    "Shifokor kattalarni qabul qiladi — erkaklarni ham, ayollarni ham, urologik "
+    "muammolar bilan. Bolalar uchun bolalar urologiga murojaat qilish kerakligini "
+    "ayting va klinika raqamini bering.",
+    "To'lovni karta bilan ham qilish mumkin.",
+    "Yozilmasdan kelish ham mumkin, lekin navbat kutishga to'g'ri kelishi mumkin; "
+    "vaqtga yozilgan bemor o'z vaqtida kiradi.",
+    "Klinika yonida mashina qo'yish joyi bor.",
+    "Narx, UZI ga tayyorgarlik va shunga o'xshash aniq savollar telefon orqali hal "
+    "qilinadi: +998 70 310 40 40. Hech qachon \"tekshirib beraman\", \"aniqlab beraman\" "
+    "deb va'da bermang — buni qila olmaysiz.",
+]
+
+
+async def prepare_tenant(session: object, tenant: object) -> None:
+    """Make the fixture tenant look like the live one: the clinic's standing
+    rules, and one doctor rather than the fixture's placeholder dentist."""
+    from sqlalchemy import update
+
+    from app.models.doctor import Doctor
+    from app.models.tenant import Tenant
+
+    tenant.settings = {**dict(tenant.settings or {}), "strict_rules": CLINIC_RULES}
+    await session.execute(
+        update(Doctor)
+        .where(Doctor.tenant_id == tenant.id)
+        .values(name="Axmadaliyev Temur G'iyosiddin o'g'li", specialty="urolog-androlog")
+    )
+    await session.flush()
+    assert Tenant  # imported for the reader; the row above is already loaded
+
+
 class _NoEmbeddings(EmbeddingProvider):
     """The knowledge base is empty in this deployment (ANSWER_WITHOUT_FAQ),
     so retrieval is a query that returns nothing; it still needs a vector."""
@@ -283,6 +320,8 @@ async def test_audit(
     settings = _settings()
     provider = OpenAILLMProvider(settings)  # type: ignore[arg-type]
     embeddings = _NoEmbeddings()
+    with as_tenant(seed.tenant_a.id):
+        await prepare_tenant(db_session, seed.tenant_a)
     total_turns = 0
 
     for scenario in _selected(SCENARIOS):
