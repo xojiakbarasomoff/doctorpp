@@ -13,6 +13,28 @@ from app.repositories.base import CrossTenantAccessError, TenantScopedRepository
 class AppointmentRepository(TenantScopedRepository[Appointment]):
     model = Appointment
 
+    async def list_active_for_user(
+        self, user_id: uuid.UUID, *, after: datetime
+    ) -> Sequence[Appointment]:
+        """Every booking this patient still has ahead of them, soonest first.
+
+        The answer to "qabulim bormi?" and the list a cancellation chooses
+        from. Read from the database, always: a patient may hold several
+        appointments, the assistant is shown ten turns of transcript, and
+        the two have no reason to agree.
+        """
+        result = await self.session.execute(
+            select(Appointment)
+            .where(
+                Appointment.tenant_id == get_current_tenant(),
+                Appointment.user_id == user_id,
+                Appointment.status.in_(ACTIVE_STATUSES),
+                Appointment.scheduled_at >= after,
+            )
+            .order_by(Appointment.scheduled_at)
+        )
+        return list(result.scalars().all())
+
     async def next_for_conversation(
         self, conversation_id: uuid.UUID, *, after: datetime
     ) -> Appointment | None:

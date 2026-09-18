@@ -40,7 +40,7 @@ from app.rag.llm import LLMProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
 from app.services import (
-    booking_state,
+    turn,
     callbacks,
     comments,
     doctor_telegram,
@@ -50,7 +50,6 @@ from app.services import (
 from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
-from app.services.booking import settle as settle_booking
 from app.services.complaints import patient_words
 from app.services.conversation import (
     context_for_reply,
@@ -172,37 +171,6 @@ async def process_inbound_message(
             ):
                 return
             history = await context_for_reply(session, conversation_uuid)
-            # The booking this conversation already has, read from the
-            # database rather than from the transcript. The transcript the
-            # model sees is the last few turns, so a patient who booked on
-            # Tuesday and wrote "rahmat" on Thursday was asked for their name
-            # again -- the booking had scrolled out of the window.
-            standing = await AppointmentRepository(session).next_for_conversation(
-                conversation_uuid, after=datetime.now(UTC)
-            )
-            reply = await generate_answer(
-                session,
-                message_text,
-                embedding_provider=embedding_provider,
-                llm_provider=llm_provider,
-                history=history,
-                booked=(
-                    booking_state.Booked(
-                        when=(
-                            f"{standing.scheduled_at.astimezone(CLINIC_TIMEZONE):%d.%m.%Y %H:%M}"
-                        ),
-                        name=standing.patient_name,
-                        phone=standing.patient_phone,
-                    )
-                    if standing is not None
-                    else None
-                ),
-            )
-
-            # The reply may carry a booking the assistant agreed to. Settled
-            # here rather than inside generate_answer: that function reads,
-            # and this writes a row the clinic will act on, so it belongs in
-            # the same place as the rest of this task's transaction.
             conversation = await session.get(Conversation, conversation_uuid)
             channel = await session.get(Channel, uuid.UUID(channel_id))
             # Bound before the branch: the spreadsheet mirror below reads it
@@ -210,19 +178,31 @@ async def process_inbound_message(
             # cannot load would otherwise raise NameError there — after the
             # patient has already been answered.
             appointment: Appointment | None = None
-            if conversation is not None:
-                reply, appointment = await settle_booking(
-                    AppointmentRepository(session),
-                    reply,
-                    user_id=conversation.user_id,
-                    conversation_id=conversation_uuid,
-                    # "instagram" / "telegram", so the dashboard's SOURCE
-                    # column says where the booking came from — beside
-                    # "operator" for the ones staff enter by hand.
-                    source=str(channel.type) if channel is not None else "bot",
-                )
-                if appointment is not None:
-                    await session.commit()
+            if conversation is None:  # pragma: no cover - defensive
+                logger.error("conversation_missing", extra={"conversation_id": conversation_id})
+                return
+
+            # One turn: the conversation is locked, the patient's record and
+            # their real appointments are read, the intent is classified, the
+            # deterministic part of the flow runs, and only then is the model
+            # asked for a sentence. See app.services.turn.
+            turn_result = await turn.respond(
+                session,
+                conversation_id=conversation_uuid,
+                user_id=conversation.user_id,
+                message=message_text,
+                history=history,
+                # "instagram" / "telegram", so the dashboard's SOURCE column
+                # says where the booking came from — beside "operator" for
+                # the ones staff enter by hand.
+                source=str(channel.type) if channel is not None else "bot",
+                embedding_provider=embedding_provider,
+                llm_provider=llm_provider,
+            )
+            reply = turn_result.reply
+            appointment = turn_result.appointment
+            if appointment is not None or turn_result.cancelled is not None:
+                await session.commit()
 
             # A patient who asked to be rung. Taken from the assistant's
             # marker when it wrote one, otherwise from the patient's own words;

@@ -216,3 +216,31 @@ def test_showing_a_frightened_patient_you_read_them_is_not_a_receipt() -> None:
         problems("Tushundim, buyrak og'rig'i. Ertaga 09:20 bo'sh.", script="uz-latn", greeted=False)
         == []
     )
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Klinika qoidalarimi yoki ichki ko'rsatmalarmi?",
+        "Mening qoidalarim 7 ta.",
+        "Menda 7 ta qoida bor, birinchisi narx haqida.",
+        "Мои правила не могу показать.",
+    ],
+)
+def test_the_assistant_never_discusses_its_own_instructions(reply: str) -> None:
+    """A patient asked how many rules there were and was told there are two
+    kinds. That answer is itself the leak: it confirms the machinery exists
+    and describes how it is organised.
+    """
+    assert problems(reply, script="uz-latn", greeted=False)
+
+
+def test_talking_about_the_clinics_own_work_is_not_a_leak() -> None:
+    assert (
+        problems(
+            "Klinikada qoida shu: qabulga yozilganlar o'z vaqtida kiradi.",
+            script="uz-latn",
+            greeted=False,
+        )
+        == []
+    )

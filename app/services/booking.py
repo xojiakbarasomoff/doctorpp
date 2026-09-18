@@ -386,6 +386,7 @@ async def settle(
     conversation_id: uuid.UUID,
     source: str,
     patient_name: str | None = None,
+    allow_second: bool = False,
 ) -> tuple[str, Appointment | None]:
     """Book whatever the assistant marked, and return what the patient sees.
 
@@ -420,7 +421,17 @@ async def settle(
     # So the existing booking is moved rather than duplicated. The reply has
     # already been written and says the new time; making the diary say the
     # same thing is the only outcome where the patient and the clinic agree.
-    existing = await _active_for_conversation(session_repo, conversation_id)
+    # A patient may hold several appointments, so a second marker is not
+    # automatically a mistake -- but it usually is. The assistant re-confirms
+    # a time it has already booked a turn later, when the patient answers
+    # "my name is ...", and creating a row for that leaves somebody holding
+    # two bookings for one visit. So a second row is written only when the
+    # patient actually asked for another appointment, which the intent
+    # router decides (app.services.intent.Intent.BOOK_NEW) and the caller
+    # passes in. Everything else moves the booking they already have.
+    existing = None if allow_second else await _active_for_conversation(
+        session_repo, conversation_id
+    )
     if existing is not None:
         _record_details(existing, phone, reason)
         return text, await _move(session_repo, existing, slot, marked_name)

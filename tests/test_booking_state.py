@@ -1,197 +1,172 @@
-"""Which of the three things the clinic already has.
+"""What the model is told about the patient, assembled from the records.
 
-The sequences here are lifted from a real conversation in which the
-assistant asked one patient for their telephone number three times in four
-messages and made them confirm the same reason twice.
+The old version of this file read the transcript and guessed. What it was
+guessing at now comes from users.name, users.phone, conversation_states and
+the appointments table, so what is tested here is the assembly and the
+wording of the section -- the guessing is gone, along with the failures it
+caused.
 """
 
-from app.rag.llm import ChatMessage
-from app.services.booking_state import BookingState, read, render
+import uuid
+from datetime import UTC, date, datetime, time
+
+from app.models.appointment import Appointment, AppointmentStatus
+from app.models.conversation_state import CompletedAction, ConversationState, FlowStatus
+from app.services.booking_state import Booked, BookingState, read, render
+from app.services.patient_profile import Profile
 
 
-def _user(content: str) -> ChatMessage:
-    return ChatMessage(role="user", content=content)
+def _state(**over: object) -> ConversationState:
+    fields: dict[str, object] = {
+        "status": str(FlowStatus.IDLE),
+        "intent": "none",
+        "last_completed_action": str(CompletedAction.NONE),
+        "version": 1,
+    }
+    fields.update(over)
+    return ConversationState(**fields)  # type: ignore[arg-type]
 
 
-def _bot(content: str) -> ChatMessage:
-    return ChatMessage(role="assistant", content=content)
+def _appointment(when: datetime) -> Appointment:
+    return Appointment(
+        id=uuid.uuid4(),
+        scheduled_at=when,
+        status=AppointmentStatus.SCHEDULED,
+        patient_name="Asadbek Risqiyev",
+        patient_phone="+998939511111",
+    )
 
 
-# --- reading the conversation -------------------------------------------
+# --- what is known ------------------------------------------------------
 
 
-def test_the_three_things_are_read_out_of_the_conversation() -> None:
-    history = [
-        _user("Ertaga 12ga yozib qoyin"),
-        _bot("Yaxshi, to'liq ism va familiyangizni yuboring, iltimos."),
-        _user("Asadbek Risqiyev"),
-        _bot("Rahmat. Iltimos, telefon raqamingizni yuboring."),
-        _user("93 951 4499"),
-        _bot("Iltimos, qabulga kelish sababingizni yozing."),
-    ]
-
-    state = read(history, "Konsultatsiya")
+def test_the_patients_record_is_what_is_known_about_them() -> None:
+    state = read(
+        profile=Profile(name="Asadbek Risqiyev", phone="+998939511111"),
+        state=_state(status=str(FlowStatus.COLLECTING)),
+        booking_in_progress=True,
+    )
 
     assert state.name == "Asadbek Risqiyev"
-    assert state.phone is not None and state.phone.endswith("939514499")
-    assert state.reason == "Konsultatsiya"
+    assert state.phone == "+998939511111"
+    # Name and number in hand: the next thing wanted is why they are coming.
+    assert state.next_needed == "reason"
+
+
+def test_nothing_is_wanted_outside_a_booking() -> None:
+    """A patient asking about the doctor is not halfway through a form."""
+    state = read(profile=Profile(name=None, phone=None), state=_state(), booking_in_progress=False)
+
     assert state.next_needed is None
+    assert "The one thing still missing" not in render(state)
 
 
-def test_a_number_already_given_is_never_asked_for_again() -> None:
-    """From the transcript: the number arrived, and the next three replies
-    asked for it in "+998..." form, then asked to confirm it, then asked
-    again.
-    """
-    history = [
-        _user("Assalomu alaykum"),
-        _bot("Ismingizni yozing."),
-        _user("Asadbek Risqiyev 93 9510000"),
-    ]
+def test_the_day_they_chose_is_stated_as_settled() -> None:
+    state = read(
+        profile=Profile(name="Asadbek", phone="+998939511111"),
+        state=_state(
+            status=str(FlowStatus.AWAITING_TIME),
+            reason="buyrak og'rig'i",
+            requested_date=date(2026, 9, 24),
+        ),
+        booking_in_progress=True,
+    )
 
-    state = read(history, "93 951 00 00")
+    section = render(state)
 
-    assert state.phone is not None
-    assert "Never ask for any of these again" in render(state)
-
-
-def test_a_bare_yes_is_not_a_reason() -> None:
-    """"Ha" as the complaint would put the word "Ha" in the clinic's column
-    where the reason for the visit belongs.
-    """
-    history = [
-        _bot("Ismingizni yozing."),
-        _user("Asadbek Risqiyev"),
-        _bot("Telefon raqamingizni yozing."),
-        _user("93 951 4499"),
-        _bot("Qabul sababini yozing."),
-    ]
-
-    assert read(history, "Ha").reason is None
-    assert read(history, "Buyrak ogrigi").reason == "Buyrak ogrigi"
+    assert "24.09.2026" in section
+    assert "This is settled" in section
+    assert state.next_needed == "time"
 
 
-def test_the_questions_are_asked_in_the_clinics_own_order() -> None:
-    assert read([], "Qabulga yozilmoqchiman").next_needed == "name"
-
-    with_name = read([_bot("Ismingizni yozing."), _user("Asadbek Risqiyev")], "ok")
-    assert with_name.next_needed == "phone"
-
-
-def test_a_patient_who_is_not_booking_is_not_being_collected_from() -> None:
-    """The section must not appear for somebody asking the opening hours, or
-    the assistant will start asking them for a name.
-    """
-    state = read([], "Yakshanba kunichi?")
-
-    assert state.in_progress is False
-    assert render(state) == ""
-
-
-def test_asking_to_come_starts_the_three_questions() -> None:
-    state = read([], "Man kelasi seshanba 10:00ga qabulga yozilmoqchiman")
-
-    assert state.in_progress is True
-    assert "still missing" in render(state)
-
-
-# --- what the model is told ---------------------------------------------
-
-
-def test_everything_in_hand_means_offer_a_time_not_another_question() -> None:
+def test_what_is_known_is_never_asked_for_again() -> None:
     section = render(
-        BookingState(
-            name="Asadbek Risqiyev",
-            phone="+998939514499",
-            reason="Buyrak og'rig'i",
-            in_progress=True,
+        read(
+            profile=Profile(name="Asadbek Risqiyev", phone="+998939511111"),
+            state=_state(status=str(FlowStatus.COLLECTING), reason="uzi"),
+            booking_in_progress=True,
         )
     )
 
-    assert "You have all three" in section
-    assert "Asadbek Risqiyev" in section
-    assert "+998939514499" in section
-    assert "Buyrak og'rig'i" in section
+    assert "Never ask for one of them again" in section
+    assert "Their name: Asadbek Risqiyev" in section
 
 
-def test_the_open_question_is_named_outright() -> None:
+# --- what is booked -----------------------------------------------------
+
+
+def test_every_appointment_the_patient_holds_is_listed() -> None:
+    first = _appointment(datetime(2026, 9, 24, 7, 0, tzinfo=UTC))
+    second = _appointment(datetime(2026, 10, 1, 6, 40, tzinfo=UTC))
+
     section = render(
-        BookingState(name="Asadbek Risqiyev", phone=None, reason=None, in_progress=True)
+        read(profile=Profile(None, None), state=_state(), appointments=[first, second])
     )
 
-    assert "telephone number" in section
-    assert "Asadbek Risqiyev" in section
+    assert "24.09.2026 12:00" in section
+    assert "01.10.2026 11:40" in section
+    assert "authoritative" in section
 
 
-def test_giving_out_the_clinics_number_is_not_the_start_of_a_booking() -> None:
-    """A turn with the word "telefon" in it is not a question. Without that
-    distinction, a patient who asked for the phone number was answered, and
-    then asked for their full name.
-    """
-    history = [
-        _user("Telefon raqamingiz bormi?"),
-        _bot("Klinika telefoni: +998 70 310 40 40."),
-    ]
+def test_a_finished_booking_says_so_instead_of_asking_for_a_name() -> None:
+    """"Rahmat" after a booking was answered "ism-familiyangizni yozing"."""
+    section = render(
+        read(
+            profile=Profile(name="Asadbek", phone="+998939511111"),
+            state=_state(last_completed_action=str(CompletedAction.BOOKING_CREATED)),
+            booking_in_progress=False,
+        )
+    )
 
-    state = read(history, "rahmat")
-
-    assert state.in_progress is False
-    assert render(state) == ""
+    assert "THE BOOKING IS DONE" in section
+    assert "The one thing still missing" not in section
 
 
-def test_a_time_the_patient_already_named_is_carried() -> None:
-    """Live audit: a patient who opened with "ertaga 10:00ga yozilmoqchiman"
-    was read the whole list back once the three questions were answered,
-    instead of simply being booked for the time they asked for.
-    """
-    history = [
-        _user("ertaga 10:00ga yozilmoqchiman"),
-        _bot("Ismingizni yozing."),
-        _user("Jahongir Sobirov"),
-        _bot("Telefon raqamingizni yozing."),
-        _user("90 123 45 67"),
-        _bot("Qabul sababini yozing."),
-    ]
+def test_a_cancelled_booking_is_not_rebooked_unasked() -> None:
+    section = render(
+        read(
+            profile=Profile(name="Asadbek", phone=None),
+            state=_state(last_completed_action=str(CompletedAction.BOOKING_CANCELLED)),
+            booking_in_progress=False,
+        )
+    )
 
-    state = read(history, "uzi")
-
-    assert state.wanted_when is not None and "10:00" in state.wanted_when
-    section = render(state)
-    assert "already said when they want to come" in section
-    assert "do not read the list back" in section
+    assert "CANCELLED" in section
 
 
-def test_the_latest_time_wins_when_they_change_it() -> None:
-    history = [
-        _user("ertaga 10:00ga yozilmoqchiman"),
-        _bot("Ismingizni yozing."),
-        _user("Jahongir Sobirov"),
-    ]
+def test_the_section_always_says_to_answer_the_question_first() -> None:
+    section = render(
+        BookingState(
+            name=None,
+            phone=None,
+            reason=None,
+            in_progress=True,
+            status=FlowStatus.COLLECTING,
+        )
+    )
 
-    state = read(history, "yo'q, ertaga emas, indinga dedim")
-
-    assert state.wanted_when is not None and "indinga" in state.wanted_when
-
-
-def test_somebody_who_is_not_booking_has_no_wanted_time() -> None:
-    assert read([], "ertaga ishlaysizmi?").wanted_when is None
+    assert "This is a list, not a script" in section
 
 
-def test_a_patient_who_is_already_booked_is_not_collected_from_again() -> None:
-    """From production: the patient booked, said "rahmat", and was asked for
-    their name again — the booking had scrolled out of the nine-turn window
-    the model is given, so the code decided nothing had been collected.
-    """
-    from app.services.booking_state import Booked
+def test_a_booked_appointment_is_summarised_the_way_a_person_reads_it() -> None:
+    booked = Booked.of(_appointment(datetime(2026, 9, 24, 7, 0, tzinfo=UTC)))
 
-    booked = Booked(when="19.09.2026 11:40", name="Asadbek Risqiyev", phone="+998939510000")
-    history = [_bot("Ismingizni yozing."), _user("ha")]
+    assert booked.when == "24.09.2026 12:00"
+    assert booked.name == "Asadbek Risqiyev"
 
-    state = read(history, "rahmat", booked=booked)
+
+def test_the_time_they_chose_is_carried_with_the_day() -> None:
+    state = read(
+        profile=Profile(name="A", phone="+998939511111"),
+        state=_state(
+            status=str(FlowStatus.AWAITING_CONFIRMATION),
+            reason="uzi",
+            requested_date=date(2026, 9, 24),
+            requested_time=time(12, 0),
+        ),
+        booking_in_progress=True,
+    )
 
     assert state.next_needed is None
-    assert state.name == "Asadbek Risqiyev"
-    section = render(state)
-    assert "ALREADY BOOKED: 19.09.2026 11:40" in section
-    assert "do not start a new booking" in section
-    assert "still missing" not in section
+    assert "12:00" in render(state)
+    assert "You have everything" in render(state)
