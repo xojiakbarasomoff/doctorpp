@@ -272,3 +272,51 @@ def test_the_filter_leaves_the_assistant_room_to_work(reply: str) -> None:
     actually notice.
     """
     assert review_reply(reply, "salom") == reply
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        # The one that reached a real patient: the assistant had taken the
+        # booking, and "16:20га" was read as a dose of twenty grams. The
+        # confirmation -- and the booking marker in it -- was thrown away and
+        # the patient got a refusal about medicines instead.
+        "Жуда яхши — сизни бугун 16:20га олиб қўяман.",
+        "Сизни сешанба 10:00га ёзиб қўяман.",
+        "Ertaga 09:20 ga yozib qo'ydim.",
+        "Bugun 16:00, 16:20 yoki 16:40 bo'sh.",
+        "Приём в 14:30, записать вас?",
+    ],
+)
+def test_an_appointment_time_is_not_read_as_a_dose(reply: str) -> None:
+    """A time of day is the number this inbox writes most often, and the one
+    number in it that is never a dose.
+    """
+    assert review_reply(reply, "Bugun 16:20") == reply
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "500 mg ichib turing.",
+        "Kuniga 2 tabletka.",
+        "Примите 20 мл сиропа.",
+        "5 гр kukun qo'shing.",
+    ],
+)
+def test_a_dose_is_still_withheld_after_the_clock_is_excused(reply: str) -> None:
+    assert review_reply(reply, "salom") != reply
+
+
+def test_the_booking_marker_is_not_judged_as_if_the_patient_could_read_it() -> None:
+    """The marker is machinery, and part of it is the patient's own words
+    quoted back -- the reason for their visit. Judging the assistant by what
+    the patient wrote is how a reply gets withheld for somebody describing
+    their own symptoms.
+    """
+    reply = (
+        "Juda yaxshi, sizni bugun 16:20 ga yozib qo'ydim. "
+        "[[BOOK:2026-09-18T16:20|Asadbek Risqiyev|+998934444444|Buyrak ogrigi]]"
+    )
+
+    assert review_reply(reply, "Bugun 16:20") == reply

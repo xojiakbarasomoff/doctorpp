@@ -64,15 +64,30 @@ logger = logging.getLogger(__name__)
 # A booking still worth honouring: anything not cancelled or completed.
 ACTIVE_STATUSES = (AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED)
 
-# Today plus the next three days. With Sunday closed, that always reaches at
-# least two working days, so "ertaga" and "indinga" are answerable on a
-# Saturday too.
-HORIZON_DAYS = 3
+# Today plus a fortnight.
+#
+# Three days was the window, and a patient who wrote "man kelasi seshanba
+# 10:00ga yozilmoqchiman" was told next Tuesday was not in this book -- on a
+# Friday, when next Tuesday is four days away and entirely free. People book
+# around their own week: they ask for a named weekday far more often than
+# they ask for "ertaga", and a diary that cannot see that far cannot take
+# the booking they came to make.
+HORIZON_DAYS = 13
 
 # The most slots to write into the prompt. The doctor's day is 09:00-17:00 on
-# a 20-minute grid -- 24 slots -- so this holds about three empty days, each
-# written as one line of times.
-MAX_SLOTS = 72
+# a 20-minute grid -- 24 slots -- and a fortnight holds twelve working days,
+# so an entirely empty diary fits and the cap is what stops anything longer
+# than that crowding out the FAQ context the patient's question needs.
+MAX_SLOTS = 288
+
+# How soon a slot may be offered.
+#
+# The clinic is a journey away for most patients. At 15:58 the book still
+# held 16:00 and the assistant offered it, which is a time nobody can keep:
+# the patient either misses it or arrives to find the doctor with somebody
+# else. Being able to say "the next one I can give you is 16:40" is worth
+# more than being able to say "16:00" to somebody who cannot be there.
+BOOKING_LEAD = timedelta(minutes=30)
 
 # [[BOOK:2026-09-18T09:20|full name|telephone|reason]]. Everything after the
 # time is optional, so a marker written before the name, number or complaint
@@ -161,10 +176,11 @@ async def free_slots(
         if day in closed:
             continue
         for slot in day_slots(day):
-            # Strictly after now: offering a slot that started ten minutes
-            # ago is how a patient ends up told to come at a time that has
-            # already passed.
-            if slot <= local_now:
+            # Far enough ahead to be kept: offering a slot that started ten
+            # minutes ago is how a patient ends up told to come at a time
+            # that has already passed, and offering one that starts in two
+            # minutes is barely better.
+            if slot <= local_now + BOOKING_LEAD:
                 continue
             if booked[slot.astimezone(UTC)] >= capacity:
                 continue
@@ -230,7 +246,12 @@ def render(slots: Sequence[datetime], now: datetime) -> str:
     return (
         f"{header}\n- These slots are free, and only these. Each lasts {SLOT_MINUTES} minutes.\n"
         + "\n".join(lines)
-        + '\n- Say the day the way a person would — "bugun", "ertaga", '
+        + "\n- Offer the nearest two or three times, not the whole list. A "
+        "patient who names a day or a time of their own is answered from "
+        "that day first: if what they asked for is in the list, take it and "
+        "book it; if it is not, say what is free on that same day before "
+        "offering another.\n"
+        + '- Say the day the way a person would — "bugun", "ertaga", '
         '"1-sentabr". Never read a date out in 2026-09-01 form: a patient '
         'being told to come on "ertaga 2026-08-31" is being handed a '
         "machine's notes. This is about the sentence the patient reads; the "

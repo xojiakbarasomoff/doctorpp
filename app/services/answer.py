@@ -634,6 +634,64 @@ def _fixed_line_script(user_message: str, default_language: str | None) -> str:
     return reply_script(user_message)
 
 
+# What the model is told about the alphabet, once the conversation has
+# settled on one.
+#
+# The alphabet only. Which language is written in it stays where it was, in
+# the rules above: this section exists because the assistant kept changing
+# alphabet mid-conversation, not because it was choosing the wrong language,
+# and reply_script() reads Cyrillic without Uzbek's own letters -- "Ассалом
+# алайкум" -- as Russian. Naming a language here would turn a small, honest
+# alphabet signal into a confident, wrong instruction.
+_SCRIPT_NAMES = {
+    "uz-latn": 'the LATIN alphabet ("Assalom alaykum", "buyragim og\'riyapti")',
+    "uz-cyrl": 'the CYRILLIC alphabet ("Ассалом алайкум", "буйрагим оғрияпти")',
+    "ru": 'the CYRILLIC alphabet ("Здравствуйте", "Ассалом алайкум")',
+}
+
+_SCRIPT_INSTRUCTION = """
+
+THE ALPHABET THIS PATIENT WRITES IN
+- They write in {name}. Every reply in this conversation is written in that \
+same alphabet, including the greeting and the first message: one \
+conversation, one alphabet. The language is decided by the rules above; \
+this decides only the letters it is typed in.
+- Messages that carry no letters -- a telephone number, "11:00", "ok" -- do \
+not change it. They are not a patient switching alphabets, and answering \
+them in the other one is the clearest sign there is that nobody is reading."""
+
+# A message with no letters in it cannot be evidence of an alphabet: "93 444
+# 444" and "11:00" are the two most common messages this inbox gets.
+_HAS_LETTERS = re.compile(r"[^\W\d_]", re.UNICODE)
+
+
+def conversation_script(history: Sequence[ChatMessage] | None, user_message: str) -> str:
+    """The alphabet this conversation is being held in.
+
+    Per conversation rather than per message. reply_script() reads one
+    message, which is right for a fixed line answering that message and
+    wrong for a whole conversation: a patient who wrote Latin throughout,
+    then sent "93 444 444", was answered in Cyrillic -- and the reply after
+    that went back to Latin. The patient sees an inbox that cannot hold an
+    alphabet for three messages.
+
+    The patient's own words decide it; what the assistant wrote does not,
+    or a reply that went out in the wrong alphabet would justify the next
+    one.
+    """
+    written = [user_message]
+    if history:
+        # Newest first: the alphabet a patient is writing in now, not the
+        # one they opened with.
+        written.extend(
+            message["content"] for message in reversed(history) if message.get("role") == "user"
+        )
+    for message in written:
+        if _HAS_LETTERS.search(message):
+            return reply_script(message)
+    return reply_script(user_message)
+
+
 def client_command(user_message: str) -> str | None:
     """Which button the chat client sent on the patient's behalf, if any.
 
@@ -900,6 +958,7 @@ def _build_system_prompt(
     doctor_specialty: str | None = None,
     doctor_background: str | None = None,
     appointment_book: str | None = None,
+    script: str | None = None,
 ) -> str:
     price_contact, price_contact_gloss, price_contact_bare = _price_contact_clause(
         clinic_phone_numbers
@@ -933,6 +992,8 @@ def _build_system_prompt(
     # After the signals, so the last thing the model reads before the
     # patient's message is the clinic's own instruction.
     prompt += _clinic_rules_block(clinic_rules)
+    if script is not None:
+        prompt += _SCRIPT_INSTRUCTION.format(name=_SCRIPT_NAMES[script])
     prompt += render_signals(signals)
     if flagged_as_medical_advice:
         prompt += _MEDICAL_ADVICE_REMINDER
@@ -1054,6 +1115,7 @@ async def generate_answer(
         ),
         unpriceable=unpriceable,
         clinic_rules=await clinic_rules_for(session, get_current_tenant()),
+        script=conversation_script(history, user_message),
     )
     provider = llm_provider or get_llm_provider()
     conversation: list[ChatMessage] = [

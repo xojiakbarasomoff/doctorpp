@@ -6,11 +6,12 @@ they are booked by an assistant that was meant to send them to the telephone,
 or being read the doctor's CV in answer to "salom".
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.services.answer import _build_system_prompt
+from app.rag.llm import ChatMessage
+from app.services.answer import _build_system_prompt, conversation_script
 from app.services.appointment import CLINIC_TIMEZONE, day_slots, is_within_working_hours
 from app.services.booking import extract, marker_details, render
 from app.services.conversation_signals import read_signals
@@ -160,3 +161,67 @@ def test_the_doctor_is_told_who_sent_the_photo() -> None:
 
     assert "Bemor tomonidan 2 ta rasm yuborildi" in text
     assert "Aziz (@aziz_uz)" in text
+
+
+# --- one conversation, one alphabet -------------------------------------
+
+
+def test_the_alphabet_is_the_conversations_own_not_the_last_message() -> None:
+    """A telephone number and a time have no alphabet. Deciding per message
+    answered "93 444 444" in Cyrillic in the middle of a Latin conversation,
+    and the message after it went back to Latin.
+    """
+    history: list[ChatMessage] = [
+        {"role": "user", "content": "Man kelasi seshanba 10:00ga qabulga yozilmoqchiman"},
+        {"role": "assistant", "content": "Исмингизни ёзинг"},
+        {"role": "user", "content": "Asadbek Risqiyev"},
+    ]
+
+    assert conversation_script(history, "93 444 444") == "uz-latn"
+    assert conversation_script(history, "11:00") == "uz-latn"
+    # What the assistant wrote does not count, or one reply in the wrong
+    # alphabet would justify the next one.
+    assert conversation_script(history, "Buyrak ogrigi") == "uz-latn"
+
+
+def test_a_patient_who_writes_cyrillic_is_answered_in_cyrillic() -> None:
+    history: list[ChatMessage] = [{"role": "user", "content": "буйрагим оғрияпти"}]
+
+    assert conversation_script(history, "16:20") == "uz-cyrl"
+    assert conversation_script(None, "Здравствуйте") == "ru"
+
+
+def test_both_cyrillic_scripts_are_told_to_answer_in_cyrillic() -> None:
+    """reply_script() reads Cyrillic without Uzbek's own letters -- "Ассалом
+    алайкум" -- as Russian. The section only claims what it knows: the
+    alphabet. Which language is written in it is decided elsewhere.
+    """
+    from app.services.answer import _SCRIPT_NAMES
+
+    assert "CYRILLIC" in _SCRIPT_NAMES["uz-cyrl"]
+    assert "CYRILLIC" in _SCRIPT_NAMES["ru"]
+    assert "LATIN" in _SCRIPT_NAMES["uz-latn"]
+
+
+# --- how far ahead the book goes ----------------------------------------
+
+
+def test_a_named_weekday_next_week_is_inside_the_book() -> None:
+    """"Man kelasi seshanba 10:00ga yozilmoqchiman" was answered "seshanba
+    11:00 bu jadvalda yo'q" on a Friday, with next Tuesday entirely free:
+    the book only looked three days ahead. People book around their own
+    week, and a named weekday is further off than "ertaga" every time.
+    """
+    from app.services.booking import HORIZON_DAYS
+
+    assert HORIZON_DAYS >= 8
+
+
+def test_a_time_that_starts_in_two_minutes_is_not_offered() -> None:
+    """At 15:58 the book still held 16:00 and it was offered. Nobody can
+    keep that time; they either miss it or arrive to a doctor who is with
+    somebody else.
+    """
+    from app.services.booking import BOOKING_LEAD
+
+    assert BOOKING_LEAD >= timedelta(minutes=20)

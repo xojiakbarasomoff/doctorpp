@@ -18,6 +18,7 @@ from app.models.appointment import AppointmentStatus
 from app.repositories.appointment import AppointmentRepository
 from app.services.appointment import CLINIC_TIMEZONE, create_appointment
 from app.services.booking import (
+    BOOKING_LEAD,
     HORIZON_DAYS,
     MAX_SLOTS,
     SLOT_LOST_NOTICE,
@@ -48,15 +49,17 @@ async def test_only_slots_still_ahead_are_offered(
     db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
 ) -> None:
     """Mid-morning, this morning's slots are gone. Offering one is how a
-    patient is told to come at a time that has already passed.
+    patient is told to come at a time that has already passed -- and a slot
+    twenty minutes from now is barely better, since nobody crosses a city in
+    twenty minutes.
     """
     now = _local(2026, 9, 7, 12, 40)
     with as_tenant(seed.tenant_a.id):
         slots = await free_slots(AppointmentRepository(db_session), now)
 
     assert slots
-    assert all(slot > now for slot in slots)
-    assert slots[0] == _local(2026, 9, 7, 13, 0)
+    assert all(slot > now + BOOKING_LEAD for slot in slots)
+    assert slots[0] == _local(2026, 9, 7, 13, 20)
 
 
 async def test_a_booked_slot_is_not_offered(
@@ -79,7 +82,7 @@ async def test_a_cancelled_appointment_frees_its_slot_again(
     db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
 ) -> None:
     now = _local(2026, 9, 7, 12, 40)
-    slot = _local(2026, 9, 7, 13, 0)
+    slot = _local(2026, 9, 7, 13, 20)
     with as_tenant(seed.tenant_a.id):
         repo = AppointmentRepository(db_session)
         appointment = await create_appointment(
@@ -95,21 +98,25 @@ async def test_a_cancelled_appointment_frees_its_slot_again(
 async def test_the_list_is_capped_so_it_cannot_crowd_out_the_answer(
     db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
 ) -> None:
-    """An empty diary over the whole horizon is sixty free slots. All of them
-    in the prompt would push out the FAQ context that answers what the
-    patient actually asked.
+    """An empty diary over a fortnight is more free slots than the prompt
+    can carry. All of them would push out the FAQ context that answers what
+    the patient actually asked.
     """
+    now = _local(2026, 9, 7, 9, 0)
     with as_tenant(seed.tenant_a.id):
-        slots = await free_slots(AppointmentRepository(db_session), _local(2026, 9, 7, 9, 0))
+        slots = await free_slots(AppointmentRepository(db_session), now)
 
-    assert len(slots) == MAX_SLOTS
+    assert len(slots) <= MAX_SLOTS
+    # And it still reaches next week, which is where a patient who names a
+    # weekday -- "kelasi seshanba" -- is asking to be booked.
+    assert max(slots).date() - now.date() >= timedelta(days=8)
 
 
 async def test_another_clinics_bookings_do_not_block_this_ones_diary(
     db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
 ) -> None:
     now = _local(2026, 9, 7, 12, 40)
-    slot = _local(2026, 9, 7, 13, 0)
+    slot = _local(2026, 9, 7, 13, 20)
     with as_tenant(seed.tenant_b.id):
         await create_appointment(
             AppointmentRepository(db_session),

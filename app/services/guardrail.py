@@ -343,7 +343,15 @@ _PRESCRIPTION_PATTERNS: tuple[tuple[str, str], ...] = (
         r"|празол|зозин|озин|сартан|прил|статин|профен|олол|тидин)\b",
     ),
     # A dose: a number next to a unit.
-    ("doza", r"\d+\s*(?:mg|mg\.|ml|мг|мл|gr|г|tabletka|таблетк)\w*\b"),
+    #
+    # The unit ends where the word ends. With "\w*" on the end, the single
+    # Cyrillic gram — "г" — swallowed whatever followed it, and "сизни бугун
+    # 16:20га ёзиб қўяман" read as a dose of twenty grams: the booking the
+    # assistant had just made was withheld from the patient and replaced
+    # with a refusal about medicines. The clock is masked before this runs
+    # (see review_reply) and the unit is now anchored, which are two
+    # independent reasons the same sentence cannot be read that way again.
+    ("doza", r"\b\d+\s*(?:mg|ml|mkg|mcg|мг|мл|мкг|г|гр|tabletka|таблетк\w*)\b"),
     # A schedule, in digits or in words. "kuniga ikki mahal" is the same
     # instruction as "kuniga 2 mahal" and was walking straight past.
     (
@@ -445,6 +453,28 @@ _WITHHELD_RESPONSES = {
 }
 
 
+# A time of day, which this inbox writes more often than any other number.
+#
+# Masked before the prescription rules run, and masked rather than skipped
+# so the sentence keeps its shape: everything these rules look for is a
+# number next to a word, and an appointment time is the one number here that
+# is never a dose. "16:20" became twenty grams once; that is a whole class of
+# false positive, and the class is closed here rather than one rule at a time.
+_CLOCK_RE = re.compile(r"\b\d{1,2}[:.]\d{2}\b")
+
+# [[BOOK:...]] and [[CALLBACK:...]]: machinery the patient never sees, and
+# partly the patient's own words quoted back -- a complaint, a reason for
+# the visit. Judging the assistant by what a patient wrote is how a reply
+# gets withheld for the patient having described their own symptoms.
+_MARKER_RE = re.compile(r"\[\[[^\]]*\]?\]?")
+
+
+def _inspectable(reply: str) -> str:
+    """The reply as the guard should read it: what the patient will see,
+    with the clock excused."""
+    return _CLOCK_RE.sub("VAQT", _MARKER_RE.sub(" ", reply))
+
+
 def review_reply(reply: str, user_message: str) -> str:
     """The reply, or a refusal in its place if it prescribes something.
 
@@ -453,8 +483,9 @@ def review_reply(reply: str, user_message: str) -> str:
     assistant tried to say, and a silent swap hides exactly the failure this
     exists to catch.
     """
+    inspected = _inspectable(reply)
     for name, pattern in _COMPILED_PRESCRIPTION:
-        match = pattern.search(reply)
+        match = pattern.search(inspected)
         if match is None:
             continue
         logger.error(
