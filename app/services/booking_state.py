@@ -203,19 +203,24 @@ def read(history: Sequence[ChatMessage] | None, user_message: str) -> BookingSta
 
 
 _LABELS = {
-    "name": (
-        "their full name. Ask for it in one short line and nothing else in "
-        "that message."
-    ),
-    "phone": (
-        "their telephone number. Ask for it in one short line and nothing "
-        "else in that message."
-    ),
-    "reason": (
-        "the reason they are coming, in their own words. Ask for it in one "
-        "short line and nothing else in that message."
-    ),
+    "name": "their full name — and whose name, if they are booking for somebody else",
+    "phone": "their telephone number",
+    "reason": "the reason they are coming, in their own words",
 }
+
+# Said every time the section appears, because the section caused this.
+#
+# Naming the missing field turned the assistant into a form: a patient who
+# asked "nechida kelay?" was answered "ismingizni yozing", and one who asked
+# the address mid-booking got the next question instead of the address.
+# Collecting is what it does while it answers, never instead of answering.
+_ANSWER_FIRST = (
+    "\n- This is a list, not a script. If their message asked you anything "
+    "at all — a time, the address, whether you do something — answer that "
+    "first, in the same message, and then ask for what is missing. A "
+    "patient whose question is met with the next form field has been told "
+    "nobody read it."
+)
 
 
 def render(state: BookingState) -> str:
@@ -248,5 +253,8 @@ def render(state: BookingState) -> str:
             "confirm it with the booking marker."
         )
     else:
-        section += f"\n- The one thing still missing is {_LABELS[state.next_needed]}"
-    return section
+        section += (
+            f"\n- The one thing still missing is {_LABELS[state.next_needed]}. "
+            "Ask for that one thing only — never two of them in one message."
+        )
+    return section + _ANSWER_FIRST
