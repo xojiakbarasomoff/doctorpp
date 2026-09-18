@@ -39,7 +39,7 @@ from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
-from app.services import callbacks, doctor_telegram, patient_media
+from app.services import callbacks, comments, doctor_telegram, patient_media, voice_notes
 from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
@@ -48,6 +48,8 @@ from app.services.conversation import (
     context_for_reply,
     last_inbound_at,
     record_outbound_message,
+    register_inbound_message,
+    reply_context_for,
 )
 from app.services.conversation_signals import find_phone_number
 from app.services.debounce import (
@@ -769,6 +771,149 @@ async def handle_patient_media(
         reset_current_tenant(token)
 
 
+async def answer_voice_note(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    conversation_id: str,
+    sender_external_id: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    adapter: ChannelAdapter | None = None,
+) -> None:
+    """ARQ job: answer a voice message with the clinic's one fixed line.
+
+    Not the model: it cannot hear the recording, so any reply it wrote would
+    be about a message nobody had listened to. The patient is told plainly
+    that the doctor answers these.
+    """
+    tenant_uuid = uuid.UUID(tenant_id)
+    conversation_uuid = uuid.UUID(conversation_id)
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with session_factory() as session:
+            if not await bot_replies_enabled(session, tenant_uuid):
+                return
+            conversation = await session.get(Conversation, conversation_uuid)
+            if conversation is not None and not await _may_answer(
+                session, channel_id=uuid.UUID(channel_id), user_id=conversation.user_id
+            ):
+                return
+            text = await voice_notes.reply_for(session, conversation_uuid)
+            delivered = await send_reply(
+                session,
+                channel_id=uuid.UUID(channel_id),
+                recipient_external_id=sender_external_id,
+                text=text,
+                last_user_message_at=await last_inbound_at(session, conversation_uuid)
+                or datetime.now(UTC),
+                reply_context=await reply_context_for(session, conversation_uuid),
+                adapter=adapter,
+            )
+            if delivered is not None:
+                await record_outbound_message(
+                    session,
+                    conversation_id=conversation_uuid,
+                    channel_type=delivered,
+                    text=text,
+                )
+                await session.commit()
+            logger.info("voice_note_answered", extra={"delivered": delivered is not None})
+    finally:
+        reset_current_tenant(token)
+
+
+async def answer_comment(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    comment_id: str,
+    author_external_id: str | None,
+    username: str | None,
+    text: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    embedding_provider: EmbeddingProvider | None = None,
+    llm_provider: LLMProvider | None = None,
+    client: InstagramClient | None = None,
+) -> None:
+    """ARQ job: answer a comment in Direct, and say so under the comment.
+
+    The real answer goes to the writer's inbox -- a comment thread is a
+    public place, and a patient's question is not. The public reply is one
+    line telling them (and everyone reading) that it has been answered there.
+    """
+    settings = get_settings()
+    allowed = settings.comment_reply_usernames or settings.answer_only_usernames
+    if allowed and not is_admin(username, allowed):
+        logger.info("comment_ignored_not_on_list", extra={"username": username})
+        return
+
+    tenant_uuid = uuid.UUID(tenant_id)
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with session_factory() as session:
+            if not await bot_replies_enabled(session, tenant_uuid):
+                return
+            channel = await ChannelRepository(session).get(uuid.UUID(channel_id))
+            if channel is None:
+                return
+            access_token = decrypt(channel.credentials)
+            instagram = client or get_instagram_client()
+
+            # Recorded as a message from this patient, so the conversation the
+            # reply lands in reads in order: what they asked, then the answer.
+            inbound = None
+            if author_external_id:
+                inbound = await register_inbound_message(
+                    session,
+                    channel_id=uuid.UUID(channel_id),
+                    channel_type=str(channel.type),
+                    sender_external_id=author_external_id,
+                    text=f"💬 Izoh: {text}",
+                )
+                await session.commit()
+
+            reply = await generate_answer(
+                session,
+                text,
+                embedding_provider=embedding_provider,
+                llm_provider=llm_provider,
+                history=(
+                    await context_for_reply(session, inbound.conversation_id)
+                    if inbound is not None
+                    else None
+                ),
+            )
+            reply, _ = callbacks.extract(reply)
+
+            try:
+                await instagram.send_private_reply(
+                    access_token=access_token, comment_id=comment_id, text=reply
+                )
+            except Exception:  # noqa: BLE001 - the public line must still go out
+                logger.exception("comment_private_reply_failed")
+            else:
+                if inbound is not None:
+                    await record_outbound_message(
+                        session,
+                        conversation_id=inbound.conversation_id,
+                        channel_type=str(channel.type),
+                        text=reply,
+                    )
+                    await session.commit()
+
+            with suppress(Exception):
+                await instagram.reply_to_comment(
+                    access_token=access_token,
+                    comment_id=comment_id,
+                    text=comments.public_reply(text),
+                )
+            logger.info("comment_answered", extra={"username": username})
+    finally:
+        reset_current_tenant(token)
+
+
 class WorkerSettings:
     on_startup = _start_doctor_telegram
     on_shutdown = _stop_doctor_telegram
@@ -779,6 +924,8 @@ class WorkerSettings:
         apply_admin_rule,
         apply_owner_rule,
         handle_patient_media,
+        answer_voice_note,
+        answer_comment,
     ]
     # Named here as well as in _MAX_ATTEMPTS so the retry ladder in
     # fire_debounce_window and arq's own limit cannot drift apart.

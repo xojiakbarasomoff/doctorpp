@@ -129,9 +129,18 @@ class Settings(BaseSettings):
     # answered. Empty -- the default -- answers everyone.
     answer_only_usernames_raw: str = Field(default="", alias="ANSWER_ONLY_USERNAMES")
 
+    # Whose comments under the account's posts get an answer. Empty falls
+    # back to ANSWER_ONLY_USERNAMES, and if that is empty too, every comment
+    # is answered.
+    comment_reply_usernames_raw: str = Field(default="", alias="COMMENT_REPLY_USERNAMES")
+
     @property
     def answer_only_usernames(self) -> list[str]:
         return [n.strip() for n in self.answer_only_usernames_raw.split(",") if n.strip()]
+
+    @property
+    def comment_reply_usernames(self) -> list[str]:
+        return [n.strip() for n in self.comment_reply_usernames_raw.split(",") if n.strip()]
 
     @property
     def doctor_background_text(self) -> str | None:

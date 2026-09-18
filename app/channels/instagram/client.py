@@ -78,6 +78,22 @@ class InstagramClient(ABC):
         """
 
     @abstractmethod
+    async def reply_to_comment(self, *, access_token: str, comment_id: str, text: str) -> None:
+        """Reply under a comment, publicly.
+
+        Raises InstagramSendError on any non-2xx response.
+        """
+
+    @abstractmethod
+    async def send_private_reply(self, *, access_token: str, comment_id: str, text: str) -> None:
+        """Answer a comment in the writer's Direct inbox.
+
+        Instagram allows exactly one of these per comment, and only within
+        seven days of it -- which is why it carries the real answer while the
+        public reply says only that the answer is waiting in Direct.
+        """
+
+    @abstractmethod
     async def fetch_username(self, *, access_token: str, igsid: str) -> str | None:
         """The patient's Instagram handle, or None if it cannot be had.
 
@@ -127,6 +143,42 @@ class GraphAPIInstagramClient(InstagramClient):
                 },
             )
             raise InstagramSendError(f"Instagram send failed with status {response.status_code}")
+
+    def _raise_for_error(self, response: httpx.Response, event: str, subject: str) -> None:
+        if not response.is_error:
+            return
+        error_code: object = None
+        error_subcode: object = None
+        with suppress(ValueError):
+            error = response.json().get("error", {})
+            error_code = error.get("code")
+            error_subcode = error.get("error_subcode")
+        logger.error(
+            event,
+            extra={
+                "subject": subject,
+                "status_code": response.status_code,
+                "error_code": error_code,
+                "error_subcode": error_subcode,
+            },
+        )
+        raise InstagramSendError(f"{event}: status {response.status_code}")
+
+    async def reply_to_comment(self, *, access_token: str, comment_id: str, text: str) -> None:
+        response = await self._http.post(
+            f"/{comment_id}/replies",
+            params={"access_token": access_token},
+            json={"message": text},
+        )
+        self._raise_for_error(response, "instagram_comment_reply_failed", comment_id)
+
+    async def send_private_reply(self, *, access_token: str, comment_id: str, text: str) -> None:
+        response = await self._http.post(
+            "/me/messages",
+            params={"access_token": access_token},
+            json={"recipient": {"comment_id": comment_id}, "message": {"text": text}},
+        )
+        self._raise_for_error(response, "instagram_private_reply_failed", comment_id)
 
     async def fetch_username(self, *, access_token: str, igsid: str) -> str | None:
         # The sender's own node, which the messaging permission grants for

@@ -16,7 +16,7 @@ import logging
 
 from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -76,9 +76,32 @@ class MessagingEvent(BaseModel):
     message: WebhookMessage | None = None
 
 
+class CommentFrom(BaseModel):
+    id: str | None = None
+    username: str | None = None
+
+
+class CommentValue(BaseModel):
+    id: str | None = None
+    text: str | None = None
+    # Instagram sends the comment's author here; a reply to another comment
+    # also carries parent_id, which is left alone -- answering a thread the
+    # clinic is not part of would be talking over somebody.
+    parent_id: str | None = None
+    from_: CommentFrom | None = Field(default=None, alias="from")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class WebhookChange(BaseModel):
+    field: str
+    value: CommentValue | None = None
+
+
 class WebhookEntry(BaseModel):
     id: str
     messaging: list[MessagingEvent] = []
+    changes: list[WebhookChange] = []
 
 
 class WebhookPayload(BaseModel):
@@ -179,6 +202,12 @@ async def _handle_event(
     ]
     if event.message.text is None and image_urls:
         await _handle_images(session, pool, channel, event, image_urls)
+        return
+
+    if event.message.text is None and any(
+        attachment.type in {"audio", "voice"} for attachment in event.message.attachments
+    ):
+        await _handle_voice_note(session, pool, channel, event)
         return
 
     if event.message.text is None:
@@ -356,6 +385,86 @@ async def _handle_images(
     )
 
 
+async def _handle_voice_note(
+    session: AsyncSession,
+    pool: ArqRedis,
+    channel: ResolvedChannel,
+    event: MessagingEvent,
+) -> None:
+    """A voice message. Recorded, and answered with the one line the clinic
+    wants said: the administrator does not listen to these, the doctor
+    answers them. The model is never asked -- it cannot hear the message, so
+    anything it wrote would be about a message it had not read."""
+    assert event.message is not None
+    if event.message.mid is not None and not await claim_event(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_type=channel.channel_type,
+        event_id=event.message.mid,
+    ):
+        return
+    inbound = await register_inbound_message(
+        session,
+        channel_id=channel.channel_id,
+        channel_type=channel.channel_type,
+        sender_external_id=event.sender.id,
+        text="🎤 Ovozli xabar",
+    )
+    await session.commit()
+    logger.info("webhook_voice_note_received", extra={"tenant_id": str(channel.tenant_id)})
+    await pool.enqueue_job(
+        "resolve_username", str(channel.tenant_id), str(channel.channel_id), str(inbound.user_id)
+    )
+    await pool.enqueue_job(
+        "answer_voice_note",
+        str(channel.tenant_id),
+        str(channel.channel_id),
+        str(inbound.conversation_id),
+        event.sender.id,
+    )
+
+
+async def _handle_comment(
+    pool: ArqRedis, channel: ResolvedChannel, change: WebhookChange, page_id: str
+) -> None:
+    """A comment under one of the account's posts.
+
+    Only the cheap checks happen here -- there is a comment, it has text, and
+    it is not the account replying to itself. Everything else, including who
+    is allowed an answer, belongs to the job.
+    """
+    value = change.value
+    if value is None or not value.id or not value.text:
+        return
+    author = value.from_.id if value.from_ else None
+    if author == page_id:
+        return
+    if not await claim_event(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_type=channel.channel_type,
+        event_id=f"comment:{value.id}",
+    ):
+        return
+    logger.info(
+        "webhook_comment_received",
+        extra={
+            "tenant_id": str(channel.tenant_id),
+            "username": value.from_.username if value.from_ else None,
+            "text_preview": preview(value.text),
+        },
+    )
+    await pool.enqueue_job(
+        "answer_comment",
+        str(channel.tenant_id),
+        str(channel.channel_id),
+        value.id,
+        author,
+        value.from_.username if value.from_ else None,
+        value.text,
+    )
+
+
 async def _handle_payload(session: AsyncSession, pool: ArqRedis, payload: WebhookPayload) -> None:
     for entry in payload.entry:
         # entry.id is the IG account (page) id that received the message —
@@ -372,6 +481,9 @@ async def _handle_payload(session: AsyncSession, pool: ArqRedis, payload: Webhoo
         try:
             for event in entry.messaging:
                 await _handle_event(session, pool, channel, event, entry.id)
+            for change in entry.changes:
+                if change.field in {"comments", "live_comments"}:
+                    await _handle_comment(pool, channel, change, entry.id)
         finally:
             reset_current_tenant(token)
 

@@ -386,6 +386,12 @@ _BY_PHONE = {
         "[[CALLBACK:<their number>|<why they want the call, at most twelve words, in "
         "their language>]]. The patient never sees it; it puts them on the list of "
         "people to ring. Write it once per request, never while booking them."
+        '\n\nIf they say they rang and nobody answered -- "telefon qildim, ko\'tarmadingiz", '
+        '"звонил, никто не взял" -- apologise once and plainly, ask for their number so '
+        'the clinic can ring them back, and say the clinic will call: the idea of "ming '
+        "bor uzr, telefon raqamingizni qoldiring, o'zimiz aloqaga chiqamiz\", in their "
+        "own words, never that sentence copied. Do not explain why the call was missed "
+        "and do not promise a time. When they give the number, write the CALLBACK marker."
     ),
     "urgent_rule": (
         "Give them the number first and say the clinic can see them today; do not "
@@ -442,6 +448,12 @@ _BOOKED_HERE = {
         "[[CALLBACK:<their number>|<why they want the call, at most twelve words, in "
         "their language>]]. The patient never sees it; it puts them on the list of "
         "people to ring. Write it once per request, never while booking them."
+        '\n\nIf they say they rang and nobody answered -- "telefon qildim, ko\'tarmadingiz", '
+        '"звонил, никто не взял" -- apologise once and plainly, ask for their number so '
+        'the clinic can ring them back, and say the clinic will call: the idea of "ming '
+        "bor uzr, telefon raqamingizni qoldiring, o'zimiz aloqaga chiqamiz\", in their "
+        "own words, never that sentence copied. Do not explain why the call was missed "
+        "and do not promise a time. When they give the number, write the CALLBACK marker."
     ),
     "urgent_rule": (
         "Offer them the earliest free time in THE APPOINTMENT BOOK, and give "

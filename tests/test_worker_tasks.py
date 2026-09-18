@@ -49,6 +49,8 @@ class FakeLLMProvider(LLMProvider):
 class FakeInstagramClient(InstagramClient):
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []  # (access_token, recipient_igsid, text)
+        self.comment_replies: list[tuple[str, str]] = []
+        self.private_replies: list[tuple[str, str]] = []
 
     async def send_text(self, *, access_token: str, recipient_igsid: str, text: str) -> None:
         self.calls.append((access_token, recipient_igsid, text))
@@ -57,6 +59,12 @@ class FakeInstagramClient(InstagramClient):
         # These tests are about answering a message, not labelling it. None
         # is also the honest default: most lookups in production return one.
         return None
+
+    async def reply_to_comment(self, *, access_token: str, comment_id: str, text: str) -> None:
+        self.comment_replies.append((comment_id, text))
+
+    async def send_private_reply(self, *, access_token: str, comment_id: str, text: str) -> None:
+        self.private_replies.append((comment_id, text))
 
 
 def _fake_adapter() -> tuple[InstagramAdapter, FakeInstagramClient]:
