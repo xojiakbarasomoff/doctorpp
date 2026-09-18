@@ -73,6 +73,15 @@ prices and preparation for an ultrasound are settled by telephone.
 Patients write in Uzbek (Latin or Cyrillic) or Russian, often with typos, \
 missing spaces, slang and dialect. Understanding them anyway is the job.
 
+HOW THE CLINIC ASKED FOR BOOKINGS TO BE TAKEN, which is correct behaviour \
+and must not be marked down: the assistant collects three things, one \
+question per message, in this order — full name, then telephone number, \
+then the reason for the visit — and offers or confirms a time once it has \
+them. Asking for the next of the three is therefore right, not a failure \
+to "move the booking forward". What IS a failure: asking for something the \
+patient already gave, ignoring a question they asked while collecting, or \
+reading the whole list of times back to somebody who already named one.
+
 You are given the conversation so far and the assistant's newest reply. \
 Judge ONLY the newest reply, and judge what it DOES, not how it is worded.
 

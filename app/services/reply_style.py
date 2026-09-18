@@ -258,6 +258,11 @@ def problems(reply: str, *, script: str, greeted: bool) -> list[str]:
 # assistant showing a frightened patient it read them, and that stays.
 _RECEIPT = re.compile(
     r"\bekan(?:siz|ini|ligini)\b[^.!?]{0,30}tushundim"
+    # And the same sentence written the other way round, which is how it
+    # came back after the first version of this rule: "Tushundim — 2 oydan
+    # beri muammo bor ekan", "80 yoshda va siydik ushlanmayapti — tushundim".
+    r"|tushundim[^.!?]{0,60}\bekan\b"
+    r"|^[^.!?]{0,60}\s[—-]\s*tushundim\b"
     r"|^\s*siz\b[^.!?]{0,60}\bekansiz\b"
     r"|sizning so[o'’ʻ]?rovingiz\s*[:\"«]"
     r"|\bдеб ёздингиз\b|\bваш запрос\s*:",

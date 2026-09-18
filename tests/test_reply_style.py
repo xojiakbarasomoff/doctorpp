@@ -196,3 +196,23 @@ def test_offering_to_find_something_out_is_a_rewrite() -> None:
     )
 
     assert any("find something out" in fault for fault in faults)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Tushundim — 2 oydan beri muammo bor ekan. Ismingizni yozing.",
+        "80 yoshda va siydik ushlanmayapti — tushundim. Ismingizni yozing.",
+        "Siz 35 yosh ekansiz va muammo bor ekan — tushundim.",
+    ],
+)
+def test_the_receipt_is_caught_whichever_way_round_it_is_written(reply: str) -> None:
+    assert problems(reply, script="uz-latn", greeted=False)
+
+
+def test_showing_a_frightened_patient_you_read_them_is_not_a_receipt() -> None:
+    """The line the empathy rule exists for. It must survive."""
+    assert (
+        problems("Tushundim, buyrak og'rig'i. Ertaga 09:20 bo'sh.", script="uz-latn", greeted=False)
+        == []
+    )
