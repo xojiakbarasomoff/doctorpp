@@ -36,7 +36,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -887,23 +887,33 @@ async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tena
         return
 
     today = datetime.now(CLINIC_TIMEZONE).date()
+    # Changed as well as new.
+    #
+    # A patient who moves their time does not make a row, they edit one, and
+    # the doctor was told about the visit at nine and never told it had moved
+    # to half eleven. Matched on whichever of the two timestamps is later, so
+    # a booking is announced when it is made and again whenever it changes.
+    touched = func.greatest(Appointment.created_at, Appointment.updated_at)
     rows = (
         await session.execute(
-            select(Appointment, User)
+            select(Appointment, User, touched.label("touched"))
             .outerjoin(User, Appointment.user_id == User.id)
             .where(
                 Appointment.tenant_id == tenant.id,
-                Appointment.created_at > since,
+                touched > since,
                 Appointment.status.in_(ACTIVE_STATUSES),
             )
-            .order_by(Appointment.created_at)
+            .order_by(touched)
         )
     ).all()
-    for appointment, patient in rows:
+    for appointment, patient, _touched in rows:
         booking = Booking(appointment, patient)
         day = booking.local.date()
+        # "New" means the row was made since the last look; anything else
+        # the patient did to it is a change, and reads as one.
+        is_new = appointment.created_at > since
         lines = [
-            "🆕 <b>Yangi qabul</b>",
+            "🆕 <b>Yangi qabul</b>" if is_new else "🔄 <b>Qabul vaqti o'zgardi</b>",
             "",
             f"👤 <b>{html.escape(booking.name)}</b>",
         ]
@@ -948,7 +958,7 @@ async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tena
 
     tenant.settings = {
         **tenant.settings,
-        NOTIFIED_UNTIL_KEY: max((a.created_at for a, _ in rows), default=since).isoformat(),
+        NOTIFIED_UNTIL_KEY: max((t for _, _, t in rows), default=since).isoformat(),
         LEADS_NOTIFIED_UNTIL_KEY: max(
             (lead.created_at for lead, _ in leads), default=leads_since
         ).isoformat(),
