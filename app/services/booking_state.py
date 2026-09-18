@@ -70,6 +70,22 @@ _WANTS_TO_COME = re.compile(
     re.IGNORECASE,
 )
 
+# A day or a time the patient asked for, in their own words. Kept as they
+# wrote it rather than parsed: the appointment book in the prompt holds the
+# real slots, and what this needs to carry is "they already told you when".
+_WANTED_WHEN = re.compile(
+    # No word boundary after the minutes: Uzbek sticks the case ending
+    # straight onto the time, and "10:00ga" is how a patient writes it.
+    r"\b\d{1,2}[:.]\d{2}"
+    r"|\b(?:bugun|ertaga|indinga|erta|ertalab|tushdan\s+keyin|kechqurun|kechroq"
+    r"|dushanba|seshanba|chorshanba|payshanba|juma|shanba)\w*"
+    r"|\b(?:бугун|эртага|индинга|эрталаб|кечқурун|душанба|сешанба|чоршанба"
+    r"|пайшанба|жума|шанба)\w*"
+    r"|\b(?:завтра|сегодня|послезавтра|утром|вечером|после\s+обеда"
+    r"|понедельник\w*|вторник\w*|сред\w+|четверг\w*|пятниц\w+|суббот\w+)",
+    re.IGNORECASE,
+)
+
 # A name is short, has no digits in it, and is not a greeting. Two or three
 # words in Uzbek ("Asadbek Risqiyev", "Xurshid Alimov o'g'li"); one is
 # accepted because plenty of people answer with just their first name.
@@ -124,6 +140,8 @@ class BookingState:
     # Whether anything at all says this patient is being booked: they asked
     # to be, or the assistant has already started collecting.
     in_progress: bool
+    # The day or time they asked for in their own words, if they named one.
+    wanted_when: str | None = None
 
     @property
     def next_needed(self) -> str | None:
@@ -151,6 +169,7 @@ def read(history: Sequence[ChatMessage] | None, user_message: str) -> BookingSta
     reason: str | None = None
     asked_anything = False
     wants_to_come = False
+    wanted_when: str | None = None
     last_question = ""
 
     for turn in turns:
@@ -168,6 +187,12 @@ def read(history: Sequence[ChatMessage] | None, user_message: str) -> BookingSta
 
         if _WANTS_TO_COME.search(text):
             wants_to_come = True
+
+        when = _WANTED_WHEN.findall(text)
+        if when and (wants_to_come or asked_anything):
+            # The latest one they named: a patient who says "ertaga" and
+            # then "yo'q, indinga dedim" means the second.
+            wanted_when = " ".join(_WANTED_WHEN.findall(text))
 
         # A number is a number wherever it appears: patients send one
         # unprompted as often as they are asked for it.
@@ -199,6 +224,7 @@ def read(history: Sequence[ChatMessage] | None, user_message: str) -> BookingSta
         phone=phone,
         reason=reason,
         in_progress=wants_to_come or asked_anything,
+        wanted_when=wanted_when,
     )
 
 
@@ -246,10 +272,17 @@ def render(state: BookingState) -> str:
     else:
         section += "\n- Nothing yet."
 
+    if state.wanted_when:
+        section += (
+            f'\n- They have already said when they want to come: "{state.wanted_when}". '
+            "If that time is in THE APPOINTMENT BOOK, book it and confirm it — "
+            "do not read the list back at somebody who has already chosen. "
+            "Offer other times only if theirs is not free."
+        )
     if state.next_needed is None:
         section += (
-            "\n- You have all three. Do not ask for anything else: offer a "
-            "time from THE APPOINTMENT BOOK, and when they accept one, "
+            "\n- You have all three. Do not ask for anything else: book the "
+            "time they asked for, or offer one from THE APPOINTMENT BOOK, and "
             "confirm it with the booking marker."
         )
     else:

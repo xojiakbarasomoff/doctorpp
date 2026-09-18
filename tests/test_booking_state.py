@@ -137,3 +137,41 @@ def test_giving_out_the_clinics_number_is_not_the_start_of_a_booking() -> None:
 
     assert state.in_progress is False
     assert render(state) == ""
+
+
+def test_a_time_the_patient_already_named_is_carried() -> None:
+    """Live audit: a patient who opened with "ertaga 10:00ga yozilmoqchiman"
+    was read the whole list back once the three questions were answered,
+    instead of simply being booked for the time they asked for.
+    """
+    history = [
+        _user("ertaga 10:00ga yozilmoqchiman"),
+        _bot("Ismingizni yozing."),
+        _user("Jahongir Sobirov"),
+        _bot("Telefon raqamingizni yozing."),
+        _user("90 123 45 67"),
+        _bot("Qabul sababini yozing."),
+    ]
+
+    state = read(history, "uzi")
+
+    assert state.wanted_when is not None and "10:00" in state.wanted_when
+    section = render(state)
+    assert "already said when they want to come" in section
+    assert "do not read the list back" in section
+
+
+def test_the_latest_time_wins_when_they_change_it() -> None:
+    history = [
+        _user("ertaga 10:00ga yozilmoqchiman"),
+        _bot("Ismingizni yozing."),
+        _user("Jahongir Sobirov"),
+    ]
+
+    state = read(history, "yo'q, ertaga emas, indinga dedim")
+
+    assert state.wanted_when is not None and "indinga" in state.wanted_when
+
+
+def test_somebody_who_is_not_booking_has_no_wanted_time() -> None:
+    assert read([], "ertaga ishlaysizmi?").wanted_when is None

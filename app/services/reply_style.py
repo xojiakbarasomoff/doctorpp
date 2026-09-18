@@ -229,6 +229,17 @@ def problems(reply: str, *, script: str, greeted: bool) -> list[str]:
         )
     if not greeted and _OPENING_GREETING.match(body):
         found.append("They did not greet you. Do not open with a greeting.")
+    if _RECEIPT.search(body):
+        found.append(
+            "You opened by reading the patient's own words back to them "
+            '("35 yosh ekansiz", "2 oydan beri ekanini tushundim"). That is '
+            "a receipt, not an answer. Start with the answer."
+        )
+    if _BAND_ON_A_FREE_SLOT.search(body):
+        found.append(
+            'You called free times "band". "Band" means taken; a free slot '
+            'is "bo\'sh". Say it the way the patient will read it.'
+        )
     if _OFFERS_TO_FIND_OUT.search(body):
         found.append(
             "You offered to find something out, ring somebody, or come back "
@@ -241,6 +252,27 @@ def problems(reply: str, *, script: str, greeted: bool) -> list[str]:
 # "Tekshirib beraman", "so'rab qo'yaman", "aniqlab beramiz", "узнаю" -- a
 # promise nobody in this inbox can keep. The patient waits for an answer
 # that is never coming, which is worse than being told to ring.
+# The receipt: the patient's own words read back before the answer. "Siz 35
+# yosh ekansiz va muammo bor ekan — tushundim", "Sizning so'rovingiz:
+# Online korik". Narrow on purpose -- "Tushundim, buyrak og'rig'i" is the
+# assistant showing a frightened patient it read them, and that stays.
+_RECEIPT = re.compile(
+    r"\bekan(?:siz|ini|ligini)\b[^.!?]{0,30}tushundim"
+    r"|^\s*siz\b[^.!?]{0,60}\bekansiz\b"
+    r"|sizning so[o'’ʻ]?rovingiz\s*[:\"«]"
+    r"|\bдеб ёздингиз\b|\bваш запрос\s*:",
+    re.IGNORECASE,
+)
+
+# "Ertaga 09:00, 09:20 yoki 09:40 band" -- said of slots that are free.
+# "Band" is what a taken slot is, and a patient reading it is being told
+# the opposite of what was meant.
+_BAND_ON_A_FREE_SLOT = re.compile(
+    r"\d{1,2}:\d{2}[^.!?]{0,60}\bband\b(?!\s*emas)"
+    r"|\bband\b(?!\s*emas)[^.!?]{0,30}\d{1,2}:\d{2}[^.!?]{0,30}\d{1,2}:\d{2}",
+    re.IGNORECASE,
+)
+
 _OFFERS_TO_FIND_OUT = re.compile(
     r"tekshir\w*\s+(?:ber|qo)\w*|aniqla\w*\s+(?:ber|qo)\w*|so[o'’ʻ]?ra\w*\s+(?:ber|qo)\w*"
     r"|bilib\s+(?:ber|ol)\w*|текшир\w*\s+бер\w*|аниқла\w*\s+бер\w*|сўра\w*\s+(?:бер|қў)\w*"

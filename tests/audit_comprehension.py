@@ -62,6 +62,13 @@ name of each weekday. A specific free time, a named weekday and a calendar \
 date are therefore read from that book, NOT invented. Judge them as \
 invented only if they contradict the working hours or fall on a Sunday.
 - It is currently September 2026.
+- The clinic's own standing rules, which the assistant is given and which \
+are therefore facts, not inventions: the doctor performs the ultrasound \
+(UZI) himself — kidney, bladder, prostate; he sees adults, men and women, \
+for urological problems, and children are referred to a paediatric \
+urologist; cards are accepted; walk-ins are possible but may wait, while a \
+booked patient is seen at their time; there is parking at the clinic; \
+prices and preparation for an ultrasound are settled by telephone.
 
 Patients write in Uzbek (Latin or Cyrillic) or Russian, often with typos, \
 missing spaces, slang and dialect. Understanding them anyway is the job.
