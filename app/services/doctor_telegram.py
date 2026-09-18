@@ -51,7 +51,7 @@ from app.services.appointment import CLINIC_TIMEZONE, DAYS_OFF_KEY, days_off_fro
 from app.services.complaints import patient_words
 from app.services.conversation import last_inbound_at, record_outbound_message, reply_context_for
 from app.services.delivery import send_reply
-from app.services.sheets import summarise_problem
+from app.services.sheets import AppointmentRow, mirror_appointment, summarise_problem
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +426,26 @@ async def cancel_bookings(
         )
         appointment.notes = f"{appointment.notes}\n{note}" if appointment.notes else note
         await session.commit()
+
+        # The clinic's own spreadsheet, which some people read instead of the
+        # dashboard: a booking cancelled here has to read cancelled there too,
+        # or somebody rings a patient about a visit that is not happening.
+        # Never raises -- the cancellation is already saved.
+        await mirror_appointment(
+            AppointmentRow(
+                appointment_id=appointment.id,
+                created_at=appointment.created_at,
+                scheduled_at=appointment.scheduled_at,
+                patient_name=booking.name,
+                phone=booking.phone,
+                doctor=appointment.doctor_name,
+                channel=appointment.source,
+                client_id=patient.external_id if patient else None,
+                status=appointment.status,
+                cancel_reason=note,
+                note=patient_words(appointment.notes) or None,
+            )
+        )
         (told if delivered is not None else untold).append(booking)
     return told, untold
 

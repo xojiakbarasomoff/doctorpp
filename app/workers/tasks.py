@@ -258,12 +258,15 @@ async def process_inbound_message(
             phone = next(
                 (found for text in patient_said if (found := find_phone_number(text))), None
             )
+            if callback is not None:
+                phone = callback.phone
             lead = (
                 LeadRow(
                     name=appointment.patient_name if appointment is not None else None,
                     phone=phone,
                     source=str(channel.type) if channel is not None else "bot",
-                    comment=summarise_problem(patient_said),
+                    comment=(callback.reason if callback else None)
+                    or summarise_problem(patient_said),
                     # The day of the visit, not the day they wrote. Somebody
                     # who messages on the 28th to be seen on the 31st belongs
                     # in the 31st's list, because that is the list the front
