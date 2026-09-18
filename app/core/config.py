@@ -276,8 +276,14 @@ class Settings(BaseSettings):
     # reply and "minimal" about 2 s for the same prompt, and the rules that
     # matter most -- no diagnosis, no medicine -- are also enforced outside
     # the model (app.services.guardrail). Ignored by models without reasoning.
+    #
+    # "minimal" was the setting, and two seconds bought sentences no Uzbek
+    # speaker would write: "Эртага 10:30 бурулмаган", "Тасниф: диабетни...",
+    # "11:00 band -- mavjud bo'lmagan vaqt" in the same breath. "low" costs
+    # about two seconds more and buys back the grammar; the clinic asked for
+    # five-second replies, and four is still four.
     openai_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = Field(
-        default="minimal", alias="OPENAI_REASONING_EFFORT"
+        default="low", alias="OPENAI_REASONING_EFFORT"
     )
 
     # Which backend writes the replies. Unset -- the normal case -- they are

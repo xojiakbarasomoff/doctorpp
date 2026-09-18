@@ -1,3 +1,4 @@
+import logging
 import re
 from collections.abc import Sequence
 
@@ -12,6 +13,7 @@ from app.rag.retrieval import retrieve_relevant_faqs
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
+from app.services import reply_style
 from app.services.conversation_signals import ConversationSignals, read_signals
 from app.services.conversation_signals import render as render_signals
 from app.services.guardrail import (
@@ -23,6 +25,8 @@ from app.services.guardrail import (
 )
 from app.services.question_shape import names_nothing_to_price
 from app.services.tenant_resolution import clinic_rules as clinic_rules_for
+
+logger = logging.getLogger(__name__)
 
 # Shared opening of both system prompts below: who the assistant is, and how
 # it greets, sounds, and picks a language. Only the rule about where facts may
@@ -1112,10 +1116,12 @@ async def generate_answer(
     # be putting the temptation in front of it and trusting a rule to hold.
     doctors = await DoctorRepository(session).list_active()
 
+    signals = read_signals(history, user_message)
+    script = conversation_script(history, user_message)
     system_prompt = _build_system_prompt(
         matches,
         doctors=doctors,
-        signals=read_signals(history, user_message),
+        signals=signals,
         flagged_as_medical_advice=guardrail.category is GuardrailCategory.MEDICAL_ADVICE,
         default_language=resolved_settings.default_reply_language,
         clinic_phone_numbers=resolved_settings.clinic_phone_numbers,
@@ -1131,7 +1137,7 @@ async def generate_answer(
         ),
         unpriceable=unpriceable,
         clinic_rules=await clinic_rules_for(session, get_current_tenant()),
-        script=conversation_script(history, user_message),
+        script=script,
     )
     provider = llm_provider or get_llm_provider()
     conversation: list[ChatMessage] = [
@@ -1140,4 +1146,77 @@ async def generate_answer(
     ]
     # Read once more on the way out. Everything above this line guards what
     # the model is asked; this guards what it said, which nothing did before.
-    return review_reply(await provider.generate(system_prompt, conversation), user_message)
+    reply = review_reply(await provider.generate(system_prompt, conversation), user_message)
+    return await _in_the_clinics_voice(
+        reply,
+        provider=provider,
+        system_prompt=system_prompt,
+        conversation=conversation,
+        signals=signals,
+        script=script,
+        user_message=user_message,
+    )
+
+
+async def _in_the_clinics_voice(
+    reply: str,
+    *,
+    provider: LLMProvider,
+    system_prompt: str,
+    conversation: Sequence[ChatMessage],
+    signals: ConversationSignals,
+    script: str,
+    user_message: str,
+) -> str:
+    """The reply, tidied — and rewritten once if tidying is not enough.
+
+    Two passes at most. The first costs nothing: a greeting nobody gave and
+    a self-introduction in the fortieth message are cut without asking
+    anybody. What is left is the kind of fault that needs the sentence
+    written again — two alphabets, three questions, four hundred characters
+    — and that is worth one more call, because the alternative is what the
+    clinic read in a real transcript.
+
+    A reply that fails twice still goes out. It is logged at ERROR, with the
+    rules it broke, so the clinic can see the pattern; a patient waiting on
+    an answer is worse served by silence than by an inelegant message.
+    """
+    tidied = reply_style.tidy(
+        reply,
+        greeted=signals.patient_greeted_now,
+        opening=signals.is_opening,
+        user_message=user_message,
+    )
+    faults = reply_style.problems(
+        tidied, script=script, greeted=signals.patient_greeted_now
+    )
+    if not faults:
+        return tidied
+
+    logger.warning("reply_style_rewriting faults=%s reply=%r", faults, tidied[:200])
+    instruction = reply_style.REWRITE_INSTRUCTION.format(
+        problems="\n".join(f"- {fault}" for fault in faults)
+    )
+    try:
+        second = review_reply(
+            await provider.generate(system_prompt + instruction, list(conversation)),
+            user_message,
+        )
+    except Exception:
+        logger.exception("reply_style_rewrite_failed")
+        return tidied
+
+    second = reply_style.tidy(
+        second,
+        greeted=signals.patient_greeted_now,
+        opening=signals.is_opening,
+        user_message=user_message,
+    )
+    remaining = reply_style.problems(
+        second, script=script, greeted=signals.patient_greeted_now
+    )
+    if remaining:
+        logger.error("reply_style_unfixable faults=%s reply=%r", remaining, second[:200])
+    # The rewrite is used even when it is still imperfect: it was written
+    # against the complaint, so it is the better of the two by construction.
+    return second
