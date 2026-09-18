@@ -13,7 +13,7 @@ from app.rag.retrieval import retrieve_relevant_faqs
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
-from app.services import reply_style
+from app.services import booking_state, reply_style
 from app.services.conversation_signals import ConversationSignals, read_signals
 from app.services.conversation_signals import render as render_signals
 from app.services.guardrail import (
@@ -974,6 +974,7 @@ def _build_system_prompt(
     clinic_work_hours: str | None = None,
     unpriceable: bool = False,
     clinic_rules: Sequence[str] = (),
+    booking: booking_state.BookingState | None = None,
     doctor_name: str | None = None,
     doctor_specialty: str | None = None,
     doctor_background: str | None = None,
@@ -1015,6 +1016,11 @@ def _build_system_prompt(
     if script is not None:
         prompt += _SCRIPT_INSTRUCTION.format(name=_SCRIPT_NAMES[script])
     prompt += render_signals(signals)
+    # After the signals and before the book: what the clinic has been told
+    # already is part of where the conversation stands, and the book below
+    # is what it does next with it.
+    if booking is not None and booking_enabled:
+        prompt += booking_state.render(booking)
     if flagged_as_medical_advice:
         prompt += _MEDICAL_ADVICE_REMINDER
     if unpriceable:
@@ -1138,6 +1144,7 @@ async def generate_answer(
         unpriceable=unpriceable,
         clinic_rules=await clinic_rules_for(session, get_current_tenant()),
         script=script,
+        booking=booking_state.read(history, user_message),
     )
     provider = llm_provider or get_llm_provider()
     conversation: list[ChatMessage] = [
