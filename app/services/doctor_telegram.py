@@ -930,6 +930,14 @@ async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tena
                 [_btn(f"📋 {_day_word(day, today)}gi qabullar", f"l:{day.isoformat()}")]
             ]
         }
+        logger.info(
+            "doctor_telegram_booking_announced",
+            extra={
+                "appointment_id": str(appointment.id),
+                "chats": len(chats),
+                "kind": "new" if is_new else "moved",
+            },
+        )
         for chat_id in chats:
             await api.send(chat_id, "\n".join(lines), markup)
 
