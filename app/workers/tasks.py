@@ -39,7 +39,14 @@ from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
-from app.services import callbacks, comments, doctor_telegram, patient_media, voice_notes
+from app.services import (
+    booking_state,
+    callbacks,
+    comments,
+    doctor_telegram,
+    patient_media,
+    voice_notes,
+)
 from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
@@ -165,12 +172,31 @@ async def process_inbound_message(
             ):
                 return
             history = await context_for_reply(session, conversation_uuid)
+            # The booking this conversation already has, read from the
+            # database rather than from the transcript. The transcript the
+            # model sees is the last few turns, so a patient who booked on
+            # Tuesday and wrote "rahmat" on Thursday was asked for their name
+            # again -- the booking had scrolled out of the window.
+            standing = await AppointmentRepository(session).next_for_conversation(
+                conversation_uuid, after=datetime.now(UTC)
+            )
             reply = await generate_answer(
                 session,
                 message_text,
                 embedding_provider=embedding_provider,
                 llm_provider=llm_provider,
                 history=history,
+                booked=(
+                    booking_state.Booked(
+                        when=(
+                            f"{standing.scheduled_at.astimezone(CLINIC_TIMEZONE):%d.%m.%Y %H:%M}"
+                        ),
+                        name=standing.patient_name,
+                        phone=standing.patient_phone,
+                    )
+                    if standing is not None
+                    else None
+                ),
             )
 
             # The reply may carry a booking the assistant agreed to. Settled

@@ -1090,6 +1090,7 @@ async def generate_answer(
     guardrail_classifier: GuardrailClassifier | None = None,
     settings: Settings | None = None,
     history: Sequence[ChatMessage] | None = None,
+    booked: booking_state.Booked | None = None,
 ) -> str:
     """Turn an incoming patient message into a reply: guardrail check, then
     (unless it's an emergency) retrieve relevant FAQs and ask the LLM to
@@ -1176,7 +1177,7 @@ async def generate_answer(
         unpriceable=unpriceable,
         clinic_rules=await clinic_rules_for(session, get_current_tenant()),
         script=script,
-        booking=booking_state.read(history, user_message),
+        booking=booking_state.read(history, user_message, booked=booked),
     )
     provider = llm_provider or get_llm_provider()
     conversation: list[ChatMessage] = [

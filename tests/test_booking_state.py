@@ -175,3 +175,23 @@ def test_the_latest_time_wins_when_they_change_it() -> None:
 
 def test_somebody_who_is_not_booking_has_no_wanted_time() -> None:
     assert read([], "ertaga ishlaysizmi?").wanted_when is None
+
+
+def test_a_patient_who_is_already_booked_is_not_collected_from_again() -> None:
+    """From production: the patient booked, said "rahmat", and was asked for
+    their name again — the booking had scrolled out of the nine-turn window
+    the model is given, so the code decided nothing had been collected.
+    """
+    from app.services.booking_state import Booked
+
+    booked = Booked(when="19.09.2026 11:40", name="Asadbek Risqiyev", phone="+998939510000")
+    history = [_bot("Ismingizni yozing."), _user("ha")]
+
+    state = read(history, "rahmat", booked=booked)
+
+    assert state.next_needed is None
+    assert state.name == "Asadbek Risqiyev"
+    section = render(state)
+    assert "ALREADY BOOKED: 19.09.2026 11:40" in section
+    assert "do not start a new booking" in section
+    assert "still missing" not in section

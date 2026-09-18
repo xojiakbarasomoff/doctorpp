@@ -127,7 +127,21 @@ def _looks_like_a_name(text: str) -> bool:
         return False
     if looks_like_a_phone_number(stripped) or looks_like_a_greeting(stripped):
         return False
+    # "Ha" is a word of the right shape and it is never anybody's name. It
+    # was recorded as one, and the clinic's sheet duly said the patient was
+    # called Ha.
+    if _is_agreement(stripped):
+        return False
     return bool(_NAME.match(stripped))
+
+
+@dataclass(frozen=True)
+class Booked:
+    """A booking this conversation already has, as the database holds it."""
+
+    when: str
+    name: str | None
+    phone: str | None
 
 
 @dataclass(frozen=True)
@@ -142,10 +156,14 @@ class BookingState:
     in_progress: bool
     # The day or time they asked for in their own words, if they named one.
     wanted_when: str | None = None
+    # The booking this conversation already has, from the database.
+    booked: "Booked | None" = None
 
     @property
     def next_needed(self) -> str | None:
         """The one question still open, in the order the clinic asks them."""
+        if self.booked is not None:
+            return None
         if self.name is None:
             return "name"
         if self.phone is None:
@@ -155,7 +173,12 @@ class BookingState:
         return None
 
 
-def read(history: Sequence[ChatMessage] | None, user_message: str) -> BookingState:
+def read(
+    history: Sequence[ChatMessage] | None,
+    user_message: str,
+    *,
+    booked: "Booked | None" = None,
+) -> BookingState:
     """What has already been said, from the conversation itself.
 
     The patient's turns are read in order, each one in the light of the
@@ -219,10 +242,18 @@ def read(history: Sequence[ChatMessage] | None, user_message: str) -> BookingSta
             if not looks_like_a_greeting(text):
                 reason = text.strip()
 
+    if booked is not None:
+        # What the database holds beats what the window shows. The transcript
+        # the model is given is the last few turns; a name given twenty
+        # messages ago is not missing, it is off-screen.
+        name = booked.name or name
+        phone = booked.phone or phone
+
     return BookingState(
         name=name,
         phone=phone,
         reason=reason,
+        booked=booked,
         in_progress=wants_to_come or asked_anything,
         wanted_when=wanted_when,
     )
@@ -271,6 +302,16 @@ def render(state: BookingState) -> str:
         )
     else:
         section += "\n- Nothing yet."
+
+    if state.booked is not None:
+        section += (
+            f"\n- This patient is ALREADY BOOKED: {state.booked.when}. They are "
+            "not in the middle of booking. Do not ask for their name, their "
+            "number or the reason again, and do not start a new booking — "
+            "answer what they wrote. Only if they ask to change or cancel "
+            "the time does the booking come up again."
+        )
+        return section + _ANSWER_FIRST
 
     if state.wanted_when:
         section += (

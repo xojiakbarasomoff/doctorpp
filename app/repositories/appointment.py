@@ -1,3 +1,4 @@
+import uuid
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -11,6 +12,30 @@ from app.repositories.base import CrossTenantAccessError, TenantScopedRepository
 
 class AppointmentRepository(TenantScopedRepository[Appointment]):
     model = Appointment
+
+    async def next_for_conversation(
+        self, conversation_id: uuid.UUID, *, after: datetime
+    ) -> Appointment | None:
+        """This conversation's next booking that is still standing.
+
+        Read from the database rather than from the transcript, because the
+        transcript the model is given is the last few turns only. A patient
+        who booked on Tuesday and wrote "rahmat" on Thursday was asked for
+        their name again: the booking had scrolled out of the window, so the
+        code that works out what is still missing decided everything was.
+        """
+        result = await self.session.execute(
+            select(Appointment)
+            .where(
+                Appointment.tenant_id == get_current_tenant(),
+                Appointment.conversation_id == conversation_id,
+                Appointment.status.in_(ACTIVE_STATUSES),
+                Appointment.scheduled_at >= after,
+            )
+            .order_by(Appointment.scheduled_at)
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def get_active_at(self, scheduled_at: datetime) -> Appointment | None:
         """The booking holding this exact instant, if any — mirrors what the
