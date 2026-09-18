@@ -613,3 +613,19 @@ def test_the_code_column_is_written_but_never_shown() -> None:
 
     assert len(hidden) == 1
     assert hidden[0]["range"]["startIndex"] == APPOINTMENT_HEADER.index("Kod")
+
+
+@pytest.mark.parametrize(
+    "greeting",
+    ["assalomu aleykum", "Osalamayalaykum", "Ассалому алайкум!", "Здравствуйте", "salam alikum"],
+)
+def test_a_greeting_is_never_the_reason_for_the_visit(greeting: str) -> None:
+    """The clinic's column read "Assalomu aleykum" where the reason should
+    have been: the list of openings was exact, and one vowel walked past it.
+    """
+    assert summarise_problem([greeting]) == ""
+    assert summarise_problem([greeting, "buyragim og'riyapti"]) == "buyragim og'riyapti"
+
+
+def test_a_greeting_with_the_complaint_attached_is_kept_whole() -> None:
+    assert summarise_problem(["salom, buyragim og'riyapti"]) == "salom, buyragim og'riyapti"

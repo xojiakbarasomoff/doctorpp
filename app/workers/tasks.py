@@ -44,6 +44,7 @@ from app.services.admin_commands import add_rule, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
 from app.services.booking import settle as settle_booking
+from app.services.complaints import patient_words
 from app.services.conversation import (
     context_for_reply,
     last_inbound_at,
@@ -260,13 +261,24 @@ async def process_inbound_message(
             )
             if callback is not None:
                 phone = callback.phone
+            # Why they are coming, in the order of how reliably each says it.
+            #
+            # The assistant asks every patient for the reason before it books
+            # them and carries their answer in the marker, so a booked
+            # patient's own answer to that question is the best line there
+            # is. Without it the first substantive thing they wrote is a
+            # guess -- and on a conversation that opened "Assalomu alaykum /
+            # Asadbek Risqiyev / 93 444 444 / buyrak og'rig'i" the guess was
+            # the greeting, which told the clinic nothing at all.
+            visit_reason = (
+                patient_words(appointment.notes) if appointment is not None else ""
+            ) or summarise_problem(patient_said)
             lead = (
                 LeadRow(
                     name=appointment.patient_name if appointment is not None else None,
                     phone=phone,
                     source=str(channel.type) if channel is not None else "bot",
-                    comment=(callback.reason if callback else None)
-                    or summarise_problem(patient_said),
+                    comment=(callback.reason if callback else None) or visit_reason,
                     # The day of the visit, not the day they wrote. Somebody
                     # who messages on the 28th to be seen on the 31st belongs
                     # in the 31st's list, because that is the list the front
@@ -324,7 +336,7 @@ async def process_inbound_message(
                             channel=str(channel.type) if channel is not None else "web",
                             client_id=sender_external_id,
                             status=appointment.status,
-                            note=summarise_problem(patient_said),
+                            note=visit_reason,
                         )
                     )
 

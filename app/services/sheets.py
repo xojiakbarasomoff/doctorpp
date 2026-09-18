@@ -41,7 +41,7 @@ from google.oauth2 import service_account
 
 from app.core.config import Settings, get_settings
 from app.services.appointment import CLINIC_TIMEZONE
-from app.services.conversation_signals import looks_like_a_phone_number
+from app.services.conversation_signals import looks_like_a_greeting, looks_like_a_phone_number
 
 logger = logging.getLogger(__name__)
 
@@ -1087,8 +1087,29 @@ def summarise_problem(patient_messages: Sequence[str]) -> str:
     candidates = [
         text.strip()
         for text in patient_messages
-        if text.strip()
-        and text.strip().lower().strip("!?.,") not in _SMALL_TALK
-        and not looks_like_a_phone_number(text)
+        if text.strip() and not _says_nothing(text) and not looks_like_a_phone_number(text)
     ]
     return candidates[0] if candidates else ""
+
+
+# How long a message can be and still be nothing but hello. "Assalomu
+# alaykum" is sixteen letters; "salom, buyragim og'riyapti" is a complaint
+# with a greeting on the front of it and must not be skipped.
+_GREETING_LETTERS = 20
+_NOT_LETTERS = re.compile(r"[^a-zЀ-ӿ]+")
+
+
+def _says_nothing(text: str) -> bool:
+    """Whether this message says anything about why the patient wrote.
+
+    The fixed list of openings was exact, so it held "assalomu alaykum" and
+    missed "assalomu aleykum" -- one vowel -- and the clinic's column read
+    "Assalomu aleykum" where the reason for the visit should have been.
+    Spelling is the one thing a greeting never does the same way twice, so
+    it is matched the way app.services.conversation_signals matches one.
+    """
+    stripped = text.strip().lower().strip("!?.,")
+    if stripped in _SMALL_TALK:
+        return True
+    letters = _NOT_LETTERS.sub("", stripped)
+    return len(letters) <= _GREETING_LETTERS and looks_like_a_greeting(letters)

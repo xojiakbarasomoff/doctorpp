@@ -156,19 +156,27 @@
   .media-foot .muted { margin-right: auto; }
   .media-empty { grid-column: 1 / -1; text-align: center; padding: 48px 16px; color: var(--ink-3); }
   .media-empty b { display: block; font-size: 32px; margin-bottom: 6px; }
-  .lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(10,12,11,.92); display: grid; grid-template-rows: auto 1fr auto; color: #fff; }
+  /* The photo fits the screen, whatever the phone took it at.
+     The stage is a fixed box and the image is centred inside it absolutely,
+     rather than being laid out by the grid and asked to keep itself to
+     "max-height: 100%": that percentage is measured against a track height
+     the browser works out from the image it is meant to be constraining, so
+     a 3000px photo opened 3000px tall, its middle filling the screen and the
+     rest of it past the top and bottom edges. Here the box is known first
+     and the image is fitted into it. */
+  .lightbox { position: fixed; inset: 0; z-index: 60; background: rgba(10,12,11,.92); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; color: #fff; height: 100dvh; }
   .lightbox[hidden] { display: none; }
   .lightbox .lb-head { display: flex; align-items: center; gap: 12px; padding: calc(12px + env(safe-area-inset-top, 0px)) 18px 12px; }
   .lightbox .lb-head b { font-size: 16px; }
   .lightbox .lb-head span { color: #cfd5d2; font-size: 13px; margin-left: auto; }
-  .lightbox .stage { display: grid; place-items: center; padding: 0 60px; min-height: 0; }
-  .lightbox .stage img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; }
+  .lightbox .stage { position: relative; min-height: 0; overflow: hidden; padding: 0 60px; cursor: zoom-out; }
+  .lightbox .stage img { position: absolute; inset: 0; margin: auto; max-width: calc(100% - 120px); max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 6px; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
   .lightbox .nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,.12); border: 0; color: #fff; width: 44px; height: 44px; border-radius: 50%; font-size: 22px; cursor: pointer; }
   .lightbox .nav.prev { left: 12px; }
   .lightbox .nav.next { right: 12px; }
   .lightbox .lb-foot { display: flex; gap: 10px; justify-content: center; padding: 12px 18px calc(16px + env(safe-area-inset-bottom, 0px)); }
   .lightbox .act { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.25); text-decoration: none; }
-  @media (max-width: 600px) { .lightbox .stage { padding: 0 8px; } .media-summary { margin-left: 0; } }
+  @media (max-width: 600px) { .lightbox .stage { padding: 0 8px; } .lightbox .stage img { max-width: calc(100% - 16px); } .media-summary { margin-left: 0; } }
   /* Hisobot. Series colours are the reference palette's first two
      categorical slots (validated as an adjacent pair in both modes); every
      single-series chart uses slot 1. */
