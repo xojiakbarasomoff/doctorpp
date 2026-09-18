@@ -29,7 +29,7 @@ import json
 import logging
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from functools import lru_cache
@@ -75,43 +75,50 @@ _DATE_FORMAT = "dd.MM.yyyy"
 APPOINTMENT_SHEET = "Qabullar"
 
 APPOINTMENT_HEADER = (
-    "Qabul_ID",
-    "Yozilgan_Vaqti",
-    "Bemor_F_I_Sh",
-    "Telefon_Raqami",
-    "Qabul_Sanasi",
-    "Qabul_Vaqti",
-    "Shifokor",
-    "Mutaxassislik",
-    "Xizmat_Turi",
-    "Xizmat_Narxi",
+    "Bemor",
+    "Telefon",
+    "Sana",
+    "Vaqti",
     "Kanal",
-    "Mijoz_ID",
     "Status",
-    "Bekor_Qilish_Sababi",
-    "Izoh_Eslatma",
+    "Izoh",
+    "Kod",
 )
 
-# H (Mutaxassislik) and J (Xizmat_Narxi) are never written.
-#
-# They hold one ARRAYFORMULA each, in row 2, spilling down every row --
-# which is the only shape that reaches a row the bot has not created yet.
-# Writing a value into a spilled cell does not overwrite it, it breaks it:
-# the whole column turns into #REF! for every appointment at once. So the
-# bot writes around them, in three ranges rather than one.
-_APPOINTMENT_HEAD = "A:G"
-_APPOINTMENT_SERVICE = "I"
-_APPOINTMENT_TAIL = "K:O"
+_APPOINTMENT_LAST_COLUMN = "H"
 
-# The clinic reads Uzbek, and these are the words in its own dropdowns --
-# the Sozlamalar sheet is the single source of both, so a status written
-# here always matches one the sheet offers.
+# The reference lives in the last column, hidden.
+#
+# One doctor's book has no use for a booking id -- nobody reads it out and
+# nobody dials it -- but a retry, and every cancellation, has to find the
+# row it already wrote. Matching on name and time instead would rewrite the
+# wrong row the day a patient moves their visit. So the code stays, out of
+# sight, and the column is hidden when the sheet is laid out.
+_APPOINTMENT_KEY_COLUMN = "H"
+
+# The clinic reads Uzbek, and these are the words in its own dropdown --
+# the same four the Status column offers, so a status the bot writes is
+# always one the dropdown accepts.
 STATUS_LABELS = {
     "scheduled": "Kutilmoqda",
-    "confirmed": "Tasdiqlandi",
+    "confirmed": "Kutilmoqda",
     "cancelled": "Bekor qilindi",
-    "completed": "Yakunlandi",
+    "completed": "Keldi",
     "no_show": "Kelmadi",
+}
+
+# What the dropdown offers, in the order the day goes: waiting, then how it
+# ended. "Bekor qilindi" last because it is the one the doctor's Telegram
+# bot also writes by itself.
+STATUS_CHOICES = ("Kutilmoqda", "Keldi", "Kelmadi", "Bekor qilindi")
+
+# What each of those looks like, so the book can be read at a glance rather
+# than word by word.
+_STATUS_COLOURS = {
+    "Kutilmoqda": ("#FEF3C7", "#92400E"),
+    "Keldi": ("#DCFCE7", "#166534"),
+    "Kelmadi": ("#FEE2E2", "#991B1B"),
+    "Bekor qilindi": ("#E5E7EB", "#4B5563"),
 }
 
 CHANNEL_LABELS = {
@@ -148,6 +155,11 @@ TIMEOUT_SECONDS = 20.0
 _HEADER_COLOUR = "#0F766E"
 _BAND_COLOUR = "#F1F5F9"
 _COLUMN_WIDTHS = (110, 200, 160, 120, 520)
+
+# The appointment book, sized for what each column actually holds: a full
+# name, a dialable number, a day, a twenty-minute slot, and a sentence.
+_APPOINTMENT_WIDTHS = (220, 160, 110, 90, 120, 150, 420, 90)
+_TIME_FORMAT = "HH:mm"
 
 
 def _rgb(value: str) -> dict[str, float]:
@@ -300,6 +312,187 @@ def _decoration_requests(sheet_id: int) -> list[dict[str, Any]]:
     return requests
 
 
+def _appointment_layout_requests(sheet_id: int) -> list[dict[str, Any]]:
+    """The parts the appointment book does not work without.
+
+    A booking is read in a hurry, between patients, so the columns are
+    typed rather than merely filled: the day is a real date and the slot a
+    real time, which is what lets Sheets offer "Bugun / Erta" on one and
+    sort the morning above the afternoon on the other. The status is a
+    dropdown, because a book where one person types "keldi" and another
+    "Keldi ✅" cannot be counted.
+    """
+    white = {"red": 1.0, "green": 1.0, "blue": 1.0}
+    ink = _rgb("#1F2937")
+    columns = len(APPOINTMENT_HEADER)
+    full = {"sheetId": sheet_id, "startColumnIndex": 0, "endColumnIndex": columns}
+    status = APPOINTMENT_HEADER.index("Status")
+    body = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": _FORMATTED_ROWS}
+
+    def _column(name: str) -> dict[str, Any]:
+        index = APPOINTMENT_HEADER.index(name)
+        return {**body, "startColumnIndex": index, "endColumnIndex": index + 1}
+
+    def _format(name: str, number: dict[str, str]) -> dict[str, Any]:
+        return {
+            "repeatCell": {
+                "range": _column(name),
+                "cell": {"userEnteredFormat": {"numberFormat": number}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        }
+
+    requests: list[dict[str, Any]] = [
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+                "fields": "gridProperties.frozenRowCount",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {**full, "startRowIndex": 0, "endRowIndex": 1},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": _rgb(_HEADER_COLOUR),
+                        "textFormat": {"foregroundColor": white, "bold": True, "fontSize": 11},
+                        "verticalAlignment": "MIDDLE",
+                        "horizontalAlignment": "LEFT",
+                        "padding": {"left": 10, "right": 10, "top": 6, "bottom": 6},
+                    }
+                },
+                "fields": (
+                    "userEnteredFormat(backgroundColor,textFormat,verticalAlignment,"
+                    "horizontalAlignment,padding)"
+                ),
+            }
+        },
+        {
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 40},
+                "fields": "pixelSize",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {**full, "startRowIndex": 1},
+                "cell": {
+                    "userEnteredFormat": {
+                        "wrapStrategy": "WRAP",
+                        "verticalAlignment": "MIDDLE",
+                        "textFormat": {"foregroundColor": ink, "fontSize": 10},
+                        "padding": {"left": 10, "right": 10, "top": 6, "bottom": 6},
+                    }
+                },
+                "fields": "userEnteredFormat(wrapStrategy,verticalAlignment,textFormat,padding)",
+            }
+        },
+        _format("Telefon", {"type": "TEXT"}),
+        _format("Sana", {"type": "DATE", "pattern": _DATE_FORMAT}),
+        _format("Vaqti", {"type": "TIME", "pattern": _TIME_FORMAT}),
+        {
+            "repeatCell": {
+                "range": _column("Vaqti"),
+                "cell": {"userEnteredFormat": {"horizontalAlignment": "CENTER"}},
+                "fields": "userEnteredFormat.horizontalAlignment",
+            }
+        },
+        {
+            # The dropdown. Not strict: a receptionist who types something
+            # else gets a warning triangle, not a refusal in the middle of
+            # a patient's visit.
+            "setDataValidation": {
+                "range": {**body, "startColumnIndex": status, "endColumnIndex": status + 1},
+                "rule": {
+                    "condition": {
+                        "type": "ONE_OF_LIST",
+                        "values": [{"userEnteredValue": choice} for choice in STATUS_CHOICES],
+                    },
+                    "showCustomUi": True,
+                    "strict": False,
+                },
+            }
+        },
+        {
+            # The code is how a cancellation finds its row again; nobody
+            # reads it, so nobody has to look at it.
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": APPOINTMENT_HEADER.index("Kod"),
+                    "endIndex": APPOINTMENT_HEADER.index("Kod") + 1,
+                },
+                "properties": {"hiddenByUser": True},
+                "fields": "hiddenByUser",
+            }
+        },
+        {"setBasicFilter": {"filter": {"range": {**full, "startRowIndex": 0}}}},
+    ]
+    requests.extend(
+        {
+            "addConditionalFormatRule": {
+                "index": 0,
+                "rule": {
+                    "ranges": [{**body, "startColumnIndex": status, "endColumnIndex": status + 1}],
+                    "booleanRule": {
+                        "condition": {
+                            "type": "TEXT_EQ",
+                            "values": [{"userEnteredValue": label}],
+                        },
+                        "format": {
+                            "backgroundColor": _rgb(background),
+                            "textFormat": {"foregroundColor": _rgb(foreground), "bold": True},
+                        },
+                    },
+                },
+            }
+        }
+        for label, (background, foreground) in _STATUS_COLOURS.items()
+    )
+    return requests
+
+
+def _appointment_decoration_requests(sheet_id: int) -> list[dict[str, Any]]:
+    """Banding and column widths: nice to have, and allowed to fail."""
+    white = {"red": 1.0, "green": 1.0, "blue": 1.0}
+    full = {
+        "sheetId": sheet_id,
+        "startColumnIndex": 0,
+        "endColumnIndex": len(APPOINTMENT_HEADER),
+    }
+    requests: list[dict[str, Any]] = [
+        {
+            "addBanding": {
+                "bandedRange": {
+                    "range": {**full, "startRowIndex": 1},
+                    "rowProperties": {
+                        "firstBandColor": white,
+                        "secondBandColor": _rgb(_BAND_COLOUR),
+                    },
+                }
+            }
+        },
+    ]
+    requests.extend(
+        {
+            "updateDimensionProperties": {
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": index,
+                    "endIndex": index + 1,
+                },
+                "properties": {"pixelSize": width},
+                "fields": "pixelSize",
+            }
+        }
+        for index, width in enumerate(_APPOINTMENT_WIDTHS)
+    )
+    return requests
+
+
 class SheetsError(Exception):
     """Raised when the sheet cannot be written. Never reaches a patient."""
 
@@ -387,14 +580,38 @@ class AppointmentRow:
         """
         return f"MED-{self.appointment_id.hex[:6].upper()}"
 
-    def head_cells(self) -> list[str]:
-        """A-G. Written as text Sheets parses: the date and time columns are
-        formatted as a real date and a real time, so "2026-09-02" and "14:30"
-        become values the filter and the Dashboard can count."""
+    @property
+    def status_label(self) -> str:
+        return STATUS_LABELS.get(self.status, self.status)
+
+    def comment(self) -> str:
+        """Izoh. Why the patient is coming, or why they are not.
+
+        One column rather than two. A separate "Bekor qilish sababi" is
+        empty on every row but the rare cancelled one, and a column that is
+        blank ninety-nine times out of a hundred is a column nobody reads
+        the hundredth time.
+        """
+        parts = []
+        if self.cancel_reason and self.status == "cancelled":
+            parts.append(f"Bekor: {self.cancel_reason.strip()}")
+        note = (self.note or "").strip()
+        if note:
+            parts.append(note)
+        comment = " \u00b7 ".join(parts).replace(chr(10), " ")
+        if len(comment) > MAX_COMMENT:
+            comment = comment[: MAX_COMMENT - 1].rstrip() + "\u2026"
+        return comment
+
+    def cells(self) -> list[str]:
+        """A-H, in the order the book is read.
+
+        Written as text Sheets parses: the day and the slot are formatted
+        as a real date and a real time, so "2026-09-02" and "14:30" become
+        values the filter can offer "Bugun" on and the sort can order.
+        """
         local = self.scheduled_at.astimezone(CLINIC_TIMEZONE)
         return [
-            self.reference,
-            f"{self.created_at.astimezone(CLINIC_TIMEZONE):%Y-%m-%d %H:%M}",
             self.patient_name or "",
             # Leading apostrophe: Sheets reads a cell that starts with "+"
             # as a formula, exactly as it reads "=", so USER_ENTERED turned
@@ -405,25 +622,10 @@ class AppointmentRow:
             f"'{_e164(self.phone)}" if self.phone else "",
             f"{local:%Y-%m-%d}",
             f"{local:%H:%M}",
-            self.doctor,
-        ]
-
-    def service_cell(self) -> list[str]:
-        """I. Empty for a booking the assistant took: it agrees a time, not a
-        procedure, and guessing a billable service from a complaint is how a
-        patient is charged for something nobody offered them."""
-        return [self.service or ""]
-
-    def tail_cells(self) -> list[str]:
-        comment = (self.note or "").strip().replace(chr(10), " ")
-        if len(comment) > MAX_COMMENT:
-            comment = comment[: MAX_COMMENT - 1].rstrip() + "\u2026"
-        return [
             CHANNEL_LABELS.get(self.channel.lower(), "Web"),
-            str(self.client_id or ""),
-            STATUS_LABELS.get(self.status, self.status),
-            self.cancel_reason or "",
-            comment,
+            self.status_label,
+            self.comment(),
+            self.reference,
         ]
 
 
@@ -530,7 +732,9 @@ class SheetsMirror:
             if "properties" in sheet
         }
 
-    async def _create_worksheet(self, client: httpx.AsyncClient, title: str) -> int:
+    async def _create_worksheet(
+        self, client: httpx.AsyncClient, title: str, columns: int = len(HEADER)
+    ) -> int:
         body = await self._call(
             client,
             "POST",
@@ -541,7 +745,7 @@ class SheetsMirror:
                         "addSheet": {
                             "properties": {
                                 "title": title,
-                                "gridProperties": {"columnCount": len(HEADER)},
+                                "gridProperties": {"columnCount": columns},
                             }
                         }
                     }
@@ -552,7 +756,13 @@ class SheetsMirror:
         logger.warning("sheets_created title=%s", title)
         return sheet_id
 
-    async def _style(self, client: httpx.AsyncClient, gid: int) -> None:
+    async def _style(
+        self,
+        client: httpx.AsyncClient,
+        gid: int,
+        layout: Callable[[int], list[dict[str, Any]]] = _layout_requests,
+        decoration: Callable[[int], list[dict[str, Any]]] = _decoration_requests,
+    ) -> None:
         """Lay the sheet out, once, when it is created.
 
         Two calls, not one: batchUpdate is atomic, so a refused decoration
@@ -564,8 +774,8 @@ class SheetsMirror:
         styling it went wrong.
         """
         for name, requests in (
-            ("layout", _layout_requests(gid)),
-            ("decoration", _decoration_requests(gid)),
+            ("layout", layout(gid)),
+            ("decoration", decoration(gid)),
         ):
             try:
                 await self._call(client, "POST", ":batchUpdate", json={"requests": requests})
@@ -631,23 +841,36 @@ class SheetsMirror:
             return
         sheets = await self.worksheet_ids(client)
         if APPOINTMENT_SHEET not in sheets:
-            sheets[APPOINTMENT_SHEET] = await self._create_worksheet(client, APPOINTMENT_SHEET)
+            sheets[APPOINTMENT_SHEET] = await self._create_worksheet(
+                client, APPOINTMENT_SHEET, columns=len(APPOINTMENT_HEADER)
+            )
         existing = await self._call(
             client,
             "GET",
-            f"/values/{APPOINTMENT_SHEET}!A1:O1",
+            f"/values/{APPOINTMENT_SHEET}!A1:Z1",
             params={"majorDimension": "ROWS"},
         )
         header = [str(cell).strip() for cell in (existing.get("values") or [[]])[0]]
         if header != list(APPOINTMENT_HEADER):
             if header:
+                # A book laid out by an older version of this file: wider,
+                # with columns for a price nobody charges here. Clearing
+                # row 1 first is what stops "Xizmat_Narxi" surviving off
+                # the end of the new header.
                 logger.warning("sheets_appointment_header_replaced found=%s", header)
+                await self._call(client, "POST", f"/values/{APPOINTMENT_SHEET}!A1:Z1:clear")
             await self._call(
                 client,
                 "PUT",
-                f"/values/{APPOINTMENT_SHEET}!A1:O1",
+                f"/values/{APPOINTMENT_SHEET}!A1:{_APPOINTMENT_LAST_COLUMN}1",
                 params={"valueInputOption": "RAW"},
                 json={"values": [list(APPOINTMENT_HEADER)]},
+            )
+            await self._style(
+                client,
+                sheets[APPOINTMENT_SHEET],
+                layout=_appointment_layout_requests,
+                decoration=_appointment_decoration_requests,
             )
         self._appointments_ready = True
 
@@ -657,7 +880,7 @@ class SheetsMirror:
         body = await self._call(
             client,
             "GET",
-            f"/values/{APPOINTMENT_SHEET}!A:A",
+            f"/values/{APPOINTMENT_SHEET}!{_APPOINTMENT_KEY_COLUMN}:{_APPOINTMENT_KEY_COLUMN}",
             params={"majorDimension": "ROWS"},
         )
         for index, values in enumerate(body.get("values") or [], start=1):
@@ -668,59 +891,63 @@ class SheetsMirror:
     async def _write_appointment(
         self, client: httpx.AsyncClient, row_number: int, row: AppointmentRow
     ) -> None:
-        """The three ranges the bot owns, in one request.
+        """Rewrite a booking the book already has.
 
-        Three rather than one because H and J hold spilled formulas; one
-        request rather than three because a booking half-written is a
-        booking the front desk cannot act on.
+        Everything but the Status column. Status is the one cell in this
+        sheet that belongs to a person rather than to the bot: the doctor
+        marks "Keldi" when the patient walks in, and a reply arriving a
+        minute later must not put it back to "Kutilmoqda". The exception is
+        a cancellation, which the bot is the one who knows about.
         """
+        cells = row.cells()
+        status = APPOINTMENT_HEADER.index("Status")
+        if row.status == "cancelled":
+            data = [
+                {
+                    "range": f"{APPOINTMENT_SHEET}!A{row_number}:{_APPOINTMENT_LAST_COLUMN}"
+                    f"{row_number}",
+                    "values": [cells],
+                }
+            ]
+        else:
+            data = [
+                {
+                    "range": f"{APPOINTMENT_SHEET}!A{row_number}:E{row_number}",
+                    "values": [cells[:status]],
+                },
+                {
+                    "range": f"{APPOINTMENT_SHEET}!G{row_number}:{_APPOINTMENT_LAST_COLUMN}"
+                    f"{row_number}",
+                    "values": [cells[status + 1 :]],
+                },
+            ]
         await self._call(
             client,
             "POST",
             "/values:batchUpdate",
-            json={
-                "valueInputOption": "USER_ENTERED",
-                "data": [
-                    {
-                        "range": f"{APPOINTMENT_SHEET}!A{row_number}:G{row_number}",
-                        "values": [row.head_cells()],
-                    },
-                    {
-                        "range": f"{APPOINTMENT_SHEET}!I{row_number}",
-                        "values": [row.service_cell()],
-                    },
-                    {
-                        "range": f"{APPOINTMENT_SHEET}!K{row_number}:O{row_number}",
-                        "values": [row.tail_cells()],
-                    },
-                ],
-            },
+            json={"valueInputOption": "USER_ENTERED", "data": data},
         )
 
     async def upsert_appointment(self, row: AppointmentRow) -> None:
         """Put this booking in the appointment book, once.
 
-        The row is allocated by appending the head columns and reading back
-        which row Google used, rather than by counting rows ourselves: two
-        bookings taken in the same second would otherwise pick the same one
-        and the second would overwrite the first.
+        A new booking is appended in one call and the row Google chose is
+        never guessed at: two bookings taken in the same second would
+        otherwise pick the same row and the second would overwrite the
+        first.
         """
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             await self._ensure_appointment_sheet(client)
             existing = await self.find_appointment_row(client, row.reference)
             if existing is None:
-                appended = await self._call(
+                await self._call(
                     client,
                     "POST",
-                    f"/values/{APPOINTMENT_SHEET}!{_APPOINTMENT_HEAD}:append",
+                    f"/values/{APPOINTMENT_SHEET}!A:{_APPOINTMENT_LAST_COLUMN}:append",
                     params={"valueInputOption": "USER_ENTERED"},
-                    json={"values": [row.head_cells()]},
+                    json={"values": [row.cells()]},
                 )
-                updated = appended.get("updates", {}).get("updatedRange", "")
-                existing = _row_number(updated)
-                if existing is None:  # pragma: no cover - Google always says
-                    logger.error("sheets_appointment_row_unknown range=%s", updated)
-                    return
+                return
             await self._write_appointment(client, existing, row)
 
     async def upsert(self, row: LeadRow) -> None:

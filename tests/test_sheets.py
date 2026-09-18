@@ -20,11 +20,13 @@ from app.services.sheets import (
     APPOINTMENT_HEADER,
     HEADER,
     MAX_COMMENT,
+    STATUS_CHOICES,
     VIEW_SHEET,
     AppointmentRow,
     LeadRow,
     SheetsError,
     SheetsMirror,
+    _appointment_layout_requests,
     _decoration_requests,
     _layout_requests,
     _load_credentials,
@@ -462,11 +464,11 @@ def test_the_booking_carries_the_time_it_was_agreed_for() -> None:
     """The whole point of the appointment book. A date alone tells the front
     desk somebody is coming; the time tells them when to expect them.
     """
-    head = _appointment().head_cells()
+    cells = _appointment().cells()
 
-    assert head[4] == "2026-09-02"
-    assert head[5] == "14:30"  # 09:30 UTC in the clinic's own time zone
-    assert head[6] == "Dr. Aliyev A.A."
+    assert cells[0] == "Erkin Shodmonov"
+    assert cells[2] == "2026-09-02"
+    assert cells[3] == "14:30"  # 09:30 UTC in the clinic's own time zone
 
 
 def test_the_reference_is_the_same_every_time_for_one_booking() -> None:
@@ -482,65 +484,132 @@ def test_the_phone_is_written_in_the_shape_the_column_documents() -> None:
     """+998XXXXXXXXX. A patient types nine digits; the clinic dials twelve."""
     # The apostrophe is Sheets' own escape: without it USER_ENTERED reads a
     # leading "+" as a formula and the country code is lost to arithmetic.
-    assert _appointment().head_cells()[3] == "'+998771997272"
-    assert _appointment(phone="+998 90 111 22 33").head_cells()[3] == "'+998901112233"
-    assert _appointment(phone=None).head_cells()[3] == ""
+    assert _appointment().cells()[1] == "'+998771997272"
+    assert _appointment(phone="+998 90 111 22 33").cells()[1] == "'+998901112233"
+    assert _appointment(phone=None).cells()[1] == ""
 
 
 def test_statuses_and_channels_are_written_in_the_sheets_own_words() -> None:
     """The sheet's dropdown offers "Kutilmoqda", not "scheduled". A status
     outside the list reads as invalid to the person filtering on it.
     """
-    tail = _appointment().tail_cells()
+    cells = _appointment().cells()
 
-    assert tail[0] == "Instagram"
-    assert tail[2] == "Kutilmoqda"
-    assert _appointment(status="cancelled").tail_cells()[2] == "Bekor qilindi"
-    assert _appointment(status="no_show").tail_cells()[2] == "Kelmadi"
+    assert cells[4] == "Instagram"
+    assert cells[5] == "Kutilmoqda"
+    assert _appointment(status="cancelled").cells()[5] == "Bekor qilindi"
+    assert _appointment(status="no_show").cells()[5] == "Kelmadi"
+    assert _appointment(status="completed").cells()[5] == "Keldi"
+    # Every word the bot writes is one the dropdown offers, or the person
+    # filtering on the column sees a value the filter does not list.
+    for status in ("scheduled", "confirmed", "cancelled", "completed", "no_show"):
+        assert _appointment(status=status).cells()[5] in STATUS_CHOICES
 
 
-def test_the_service_column_is_left_for_a_person_to_fill() -> None:
-    """The assistant agrees a time, not a procedure. Guessing a billable
-    service from "tishim og'riyapti" is how somebody is charged for
-    something nobody offered them.
+def test_the_booking_ends_with_the_code_that_finds_it_again() -> None:
+    """Hidden in the sheet, but written: a cancellation has to rewrite the
+    row it already made rather than adding a second line for the same visit.
     """
-    assert _appointment().service_cell() == [""]
-    assert _appointment(service="EKG").service_cell() == ["EKG"]
+    assert _appointment().cells()[7] == _appointment().reference
+    assert len(_appointment().cells()) == len(APPOINTMENT_HEADER)
 
 
-async def test_the_formula_columns_are_never_written_over() -> None:
-    """H and J hold one spilled ARRAYFORMULA each. A value written into a
-    spilled cell does not overwrite it -- it turns the whole column into
-    #REF!, for every appointment at once. So the bot writes around them.
+def test_the_comment_carries_the_reason_and_the_cancellation() -> None:
+    """One Izoh column, not two. A separate cancellation column is empty on
+    every row but the rare one, and nobody reads a column that is usually
+    blank.
+    """
+    assert _appointment(note="Buyrak og'riyapti").cells()[6] == "Buyrak og'riyapti"
+    cancelled = _appointment(
+        status="cancelled", cancel_reason="Shifokor kelmaydi", note="Buyrak og'riyapti"
+    )
+    assert cancelled.cells()[6] == "Bekor: Shifokor kelmaydi · Buyrak og'riyapti"
+    # A reason on a booking that is not cancelled is history, not news.
+    assert _appointment(cancel_reason="eski").cells()[6] == ""
+
+
+async def test_a_reply_does_not_undo_a_status_a_person_set() -> None:
+    """Status is the one cell in the book that belongs to the doctor: they
+    mark "Keldi" when the patient walks in, and a later write from the bot
+    must not put it back to "Kutilmoqda". A cancellation is the exception --
+    that one the bot is the one who knows about.
     """
     ranges: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
-        if request.method == "GET" and "/values/" in url and "A1:O1" in url:
+        if request.method == "GET" and "/values/" in url and "A1%3AZ1" in url.replace(":", "%3A"):
             return httpx.Response(200, json={"values": [list(APPOINTMENT_HEADER)]})
         if request.method == "GET" and "/values/" in url:
-            return httpx.Response(200, json={"values": [["Qabul_ID"]]})
+            # The hidden code column: row 2 already holds this booking.
+            return httpx.Response(200, json={"values": [["Kod"], [_appointment().reference]]})
         if request.method == "GET":
             return httpx.Response(
                 200, json={"sheets": [{"properties": {"sheetId": 0, "title": "Qabullar"}}]}
             )
-        if "append" in url:
-            return httpx.Response(200, json={"updates": {"updatedRange": "Qabullar!A2:G2"}})
         if "values:batchUpdate" in url:
             body = json.loads(request.content)
             ranges.extend(entry["range"] for entry in body["data"])
         return httpx.Response(200, json={})
 
     mirror, _ = _mirror(handler)
-    mirror._appointments_ready = False  # type: ignore[attr-defined]
     real_client = httpx.AsyncClient
 
     def fake(*args: object, **kwargs: object) -> httpx.AsyncClient:
         return real_client(transport=httpx.MockTransport(handler))
 
     with patch("app.services.sheets.httpx.AsyncClient", fake):
+        mirror._appointments_ready = False  # type: ignore[attr-defined]
         await mirror.upsert_appointment(_appointment())
+        assert ranges == ["Qabullar!A2:E2", "Qabullar!G2:H2"]
 
-    assert ranges == ["Qabullar!A2:G2", "Qabullar!I2", "Qabullar!K2:O2"]
-    assert not any("H" in written or "J" in written for written in ranges)
+        ranges.clear()
+        await mirror.upsert_appointment(_appointment(status="cancelled"))
+        assert ranges == ["Qabullar!A2:H2"]
+
+
+def test_the_status_column_is_a_dropdown_rather_than_free_text() -> None:
+    """A book where one person types "keldi" and another "Keldi ✅" cannot be
+    counted, and counting is what the column is for.
+    """
+    requests = _appointment_layout_requests(7)
+    [validation] = [r["setDataValidation"] for r in requests if "setDataValidation" in r]
+
+    offered = [v["userEnteredValue"] for v in validation["rule"]["condition"]["values"]]
+    assert offered == list(STATUS_CHOICES)
+    # Not strict: a receptionist who types something else gets a warning
+    # triangle, not a refusal in the middle of a patient's visit.
+    assert validation["rule"]["strict"] is False
+    assert validation["range"]["startColumnIndex"] == APPOINTMENT_HEADER.index("Status")
+
+
+def test_the_day_and_the_slot_are_real_dates_and_times() -> None:
+    """Typed rather than merely filled: this is what lets Sheets offer
+    "Bugun" on the day column and sort the morning above the afternoon.
+    """
+    formats = {
+        request["repeatCell"]["range"]["startColumnIndex"]: request["repeatCell"]["cell"][
+            "userEnteredFormat"
+        ].get("numberFormat")
+        for request in _appointment_layout_requests(7)
+        if "repeatCell" in request and "numberFormat" in request["repeatCell"]["fields"]
+    }
+
+    assert formats[APPOINTMENT_HEADER.index("Sana")]["type"] == "DATE"
+    assert formats[APPOINTMENT_HEADER.index("Vaqti")]["type"] == "TIME"
+    # A phone is a label, not a quantity: as a number it loses its zero.
+    assert formats[APPOINTMENT_HEADER.index("Telefon")]["type"] == "TEXT"
+
+
+def test_the_code_column_is_written_but_never_shown() -> None:
+    """Nobody reads a booking id out loud, but a cancellation has to find
+    its row. So the column exists and is hidden.
+    """
+    hidden = [
+        request["updateDimensionProperties"]
+        for request in _appointment_layout_requests(7)
+        if request.get("updateDimensionProperties", {}).get("properties", {}).get("hiddenByUser")
+    ]
+
+    assert len(hidden) == 1
+    assert hidden[0]["range"]["startIndex"] == APPOINTMENT_HEADER.index("Kod")
