@@ -287,6 +287,17 @@ def render(signals: ConversationSignals) -> str:
             "They have greeted you in this message, but your own last message "
             "already opened with a greeting — do not open with one again."
         )
+    else:
+        # Said out loud, because the rule on its own was not holding. "Man
+        # kelasi seshanba 10:00ga qabulga yozilmoqchiman" — no greeting in it
+        # anywhere — was answered "Ва алайкум ассалом", which answers a
+        # message the patient never sent and leaves the one they did send
+        # unanswered.
+        lines.append(
+            "There is no greeting in what they just wrote — do not open with "
+            'one, and never with "Va alaykum assalom", which is the answer to a '
+            "greeting nobody gave you. Begin with what they actually asked."
+        )
     already = [
         label
         for label, given in (

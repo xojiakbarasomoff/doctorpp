@@ -359,3 +359,21 @@ def test_a_loose_number_is_not_read_as_the_hours() -> None:
     history = [_user("qayerdasiz"), _assistant("Moyqo'rg'on ko'chasi 11A uy, 2-qavat.")]
 
     assert not read_signals(history, "nechida ochilasiz?").hours_already_given
+
+
+def test_a_patient_who_did_not_greet_is_not_greeted_back() -> None:
+    """From a real conversation: "Man kelasi seshanba 10:00ga qabulga
+    yozilmoqchiman" was answered "Ва алайкум ассалом" — the answer to a
+    greeting nobody gave, with the actual question left unanswered.
+    """
+    rendered = render(read_signals([], "Man kelasi seshanba 10:00ga qabulga yozilmoqchiman"))
+
+    assert "no greeting in what they just wrote" in rendered
+    assert "Va alaykum assalom" in rendered
+
+
+def test_a_patient_who_did_greet_is_still_greeted_back() -> None:
+    rendered = render(read_signals([], "Assalomu alaykum"))
+
+    assert "no greeting in what they just wrote" not in rendered
+    assert "return the greeting" in rendered
