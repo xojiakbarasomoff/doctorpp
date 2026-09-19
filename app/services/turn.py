@@ -37,10 +37,19 @@ from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.conversation_state import ConversationStateRepository
+from app.services import booking as booking_service
 from app.services import booking_state, cancellation, patient_profile
 from app.services import when as when_service
+from app.repositories.doctor import DoctorRepository
 from app.services.answer import generate_answer
-from app.services.appointment import CLINIC_TIMEZONE
+from app.services.appointment import (
+    CLINIC_TIMEZONE,
+    SlotAlreadyBookedError,
+    assign_doctor,
+    create_appointment,
+    days_off,
+    is_within_working_hours,
+)
 from app.services.booking import settle as settle_booking
 from app.services.intent import BOOKING_INTENTS, Intent, classify
 
@@ -113,6 +122,7 @@ async def respond(
 
     facts: list[str] = []
     cancelled: Appointment | None = None
+    appointment: Appointment | None = None
 
     if intent is Intent.CANCEL_REQUEST:
         state, facts = await _begin_cancellation(
@@ -123,6 +133,26 @@ async def respond(
             session, states, state, user_id=user_id
         )
         if cancelled is not None:
+            appointments = await AppointmentRepository(session).list_active_for_user(
+                user_id, after=moment
+            )
+    elif intent is Intent.BOOKING_CONFIRM:
+        # They said yes to the summary the assistant read back. Everything
+        # the row needs is in the state, so it is written here -- before the
+        # model is asked for a sentence, so that "tasdiqlandi" is only ever
+        # said about a booking the diary already holds.
+        appointment, facts = await _book_from_state(
+            session,
+            state,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            source=source,
+            profile=profile,
+        )
+        if appointment is not None:
+            state = await states.clear_flow(
+                state, action=CompletedAction.BOOKING_CREATED, appointment_id=appointment.id
+            )
             appointments = await AppointmentRepository(session).list_active_for_user(
                 user_id, after=moment
             )
@@ -162,8 +192,20 @@ async def respond(
         facts=facts,
     )
 
-    appointment: Appointment | None = None
-    if resolved.booking_enabled:
+    if FlowStatus(state.status) is FlowStatus.AWAITING_CONFIRMATION:
+        # The summary has been read back and the patient has not said yes
+        # yet. A marker written now is the model booking on its own
+        # authority, which is the one thing it may never do: it is dropped,
+        # the patient sees only the question, and the row waits for the
+        # confirmation that creates it.
+        cleaned, marked, _ = booking_service.extract(reply)
+        if marked is not None:
+            logger.warning(
+                "booking_marker_ignored_before_confirmation",
+                extra={"conversation_id": str(conversation_id), "slot": marked.isoformat()},
+            )
+        reply = cleaned
+    elif appointment is None and resolved.booking_enabled:
         reply, appointment = await settle_booking(
             AppointmentRepository(session),
             reply,
@@ -209,6 +251,77 @@ async def respond(
 
 
 # --- the deterministic halves ------------------------------------------------
+
+
+async def _book_from_state(
+    session: AsyncSession,
+    state: ConversationState,
+    *,
+    user_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    source: str,
+    profile: patient_profile.Profile,
+) -> tuple[Appointment | None, list[str]]:
+    """Write the booking the patient has just confirmed.
+
+    Everything comes from the state and the patient's record: the day, the
+    time, the name, the number. The model is not consulted and its marker is
+    not needed -- this is the "tool" the clinic asked for, and the only
+    thing that may make the assistant say a booking exists.
+    """
+    if state.requested_date is None or state.requested_time is None:
+        return None, [
+            "There is nothing to confirm yet: the day and the time are not "
+            "both settled. Ask for the missing one."
+        ]
+
+    slot = datetime.combine(
+        state.requested_date, state.requested_time, tzinfo=CLINIC_TIMEZONE
+    )
+    if not is_within_working_hours(slot) or slot.date() in await days_off(
+        AppointmentRepository(session)
+    ):
+        return None, [
+            f"{slot:%d.%m.%Y %H:%M} is NOT a time this clinic can give: it is "
+            "outside working hours or on a closed day. Say so and offer a time "
+            "from THE APPOINTMENT BOOK."
+        ]
+
+    repo = AppointmentRepository(session)
+    doctors = await DoctorRepository(session).list_active()
+    try:
+        doctor_id, doctor_name = await assign_doctor(repo, doctors, slot.astimezone(UTC))
+        appointment = await create_appointment(
+            repo,
+            scheduled_at=slot.astimezone(UTC),
+            source=source,
+            doctor_id=doctor_id,
+            doctor_name=doctor_name,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            patient_name=profile.name,
+            patient_phone=profile.phone,
+            notes=state.reason,
+        )
+    except SlotAlreadyBookedError:
+        logger.warning(
+            "confirmed_slot_taken",
+            extra={"conversation_id": str(conversation_id), "slot": slot.isoformat()},
+        )
+        return None, [
+            f"{slot:%d.%m.%Y %H:%M} was taken while you were confirming it. Say "
+            "so plainly and offer the nearest free times."
+        ]
+
+    logger.info(
+        "booking_created_on_confirmation",
+        extra={"appointment_id": str(appointment.id), "slot": slot.isoformat()},
+    )
+    return appointment, [
+        "The booking IS NOW IN THE DIARY: "
+        f"{slot:%d.%m.%Y} at {slot:%H:%M}, with {doctor_name}. Confirm it to "
+        "them in one short line, with the date and the time."
+    ]
 
 
 async def _begin_cancellation(

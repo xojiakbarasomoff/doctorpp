@@ -38,6 +38,7 @@ class Intent(StrEnum):
     RESCHEDULE_EXISTING = "reschedule_existing"
     CANCEL_REQUEST = "cancel_request"
     CANCEL_CONFIRM = "cancel_confirm"
+    BOOKING_CONFIRM = "booking_confirm"
     EXISTING_BOOKING_QUERY = "existing_booking_query"
     THANKS = "thanks"
     GOODBYE = "goodbye"
@@ -148,6 +149,13 @@ def classify(
     # 1. The answer to the question that is open.
     if status is FlowStatus.AWAITING_CANCEL_CONFIRM and _YES.match(text):
         return Intent.CANCEL_CONFIRM
+    if status is FlowStatus.AWAITING_CONFIRMATION and _YES.match(text):
+        # "Ha" is a confirmation only when something is waiting for one --
+        # the clinic's own rule, and the reason a stray "ok" cannot book
+        # anybody.
+        return Intent.BOOKING_CONFIRM
+    if status is FlowStatus.AWAITING_CONFIRMATION and _NO.match(text):
+        return Intent.BOOKING_REQUEST
     if status is FlowStatus.AWAITING_CANCEL_CHOICE and not _CANCEL.search(text):
         return Intent.CANCEL_REQUEST  # they are naming which one
     if status in {FlowStatus.AWAITING_DATE, FlowStatus.AWAITING_TIME, FlowStatus.COLLECTING}:
@@ -204,6 +212,7 @@ BOOKING_INTENTS = frozenset(
         Intent.BOOKING_REQUEST,
         Intent.BOOKING_DATE,
         Intent.BOOKING_TIME,
+        Intent.BOOKING_CONFIRM,
         Intent.BOOK_NEW,
         Intent.RESCHEDULE_EXISTING,
     }

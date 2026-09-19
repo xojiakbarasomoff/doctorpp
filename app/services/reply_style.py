@@ -44,9 +44,14 @@ _PLACEHOLDER = "\x00marker%d\x00"
 # because a greeting in the middle of a sentence is the patient's own words
 # being quoted back and is none of this function's business.
 _OPENING_GREETING = re.compile(
-    r"^\s*(?:va\s*)?(?:a?ssalom\w*|вa?а?лейкум|ваалейкум|ва\s*алайкум|ассалом\w*"
-    r"|алайкум\s*ассалом|алейкум\s*ассалом|здравствуйте|привет|salom|салом)"
-    r"[\s,!.—-]*(?:alaykum|aleykum|алайкум|алейкум|ассалом)?[\s,!.—-]*",
+    r"^\s*(?:va|ва)?\s*"
+    r"(?:a?ssalom\w*|alaykum|aleykum|salom|ассалом\w*|алайкум|алейкум|салом"
+    r"|здравствуйте|привет|добрый\s+\w+)"
+    r"[\s,!.—-]*"
+    # ...and the second half, in either order: "va alaykum assalom" and
+    # "assalomu alaykum" are the same greeting written back to front.
+    r"(?:(?:va|ва)?\s*(?:alaykum|aleykum|a?ssalom\w*|алайкум|алейкум|ассалом\w*))?"
+    r"[\s,!.—-]*",
     re.IGNORECASE,
 )
 
@@ -56,7 +61,26 @@ _OPENING_GREETING = re.compile(
 _IDENTITY = re.compile(
     r"(?:men\s+|мен\s+)?(?:shifokorning|шифокор(?:нинг)?|доктор(?:нинг)?|врача)?\s*"
     r"(?:administrator(?:i|man|iman)?|администратор(?:и|ман|иман)?)"
-    r"(?:\s+(?:shifokorning|шифокорнинг|врача))?[\s,.!—-]*",
+    r"(?:\s+(?:shifokorning|шифокорнинг|врача))?"
+    # The punctuation is what makes it a label rather than a subject.
+    # "Shifokorning administratori — ..." is the tic; "Shifokorning
+    # administratori sizga qo'ng'iroq qiladi" is a sentence about who will
+    # ring them, and cutting its subject leaves nonsense.
+    r"\s*[,.!:—-]+\s*",
+    re.IGNORECASE,
+)
+
+# The introduction as a sentence on its own, anywhere in the message.
+# Bounded by sentence edges so "shifokorning administratori sizga qo'ng'iroq
+# qiladi" -- the phrase used as a noun in a real sentence -- survives.
+_SIGNATURE = re.compile(
+    r"(?:(?<=^)|(?<=[.!?\n]))\s*(?:men\s+|мен\s+)?"
+    r"(?:shifokorning\s+administratori(?:man)?|шифокорнинг\s+администратори(?:ман)?"
+    r"|администратор\s+врача)"
+    # A whole sentence, not the subject of one: "shifokorning administratori
+    # sizga qo'ng'iroq qiladi" is the assistant telling a patient who will
+    # ring them, and it stays.
+    r"\s*(?=[.!?\n]|$)[.!?\n]?\s*",
     re.IGNORECASE,
 )
 
@@ -143,16 +167,11 @@ def tidy(reply: str, *, greeted: bool, opening: bool, user_message: str = "") ->
         body = _strip_opening(body, _OPENING_GREETING)
     if not (greeted and opening) and not _ASKS_WHO.search(user_message):
         body = _strip_opening(body, _IDENTITY)
-        # The same phrase as a sentence of its own, mid-conversation: the
-        # assistant took to prefixing every message with it once the greeting
-        # was gone.
-        body = re.sub(
-            r"(?m)^\s*(?:men\s+|мен\s+)?(?:shifokorning\s+administratori"
-            r"|шифокорнинг\s+администратори)[\s,.!—-]*",
-            "",
-            body,
-            flags=re.IGNORECASE,
-        )
+        # ...and wherever else it appears as a sentence of its own. It moved
+        # to the end of the message once the front was being trimmed, which
+        # is how a signature works and is exactly what the clinic asked for
+        # it not to be.
+        body = _SIGNATURE.sub(" ", body)
 
     body = _MACHINERY.sub(" ", body)
     body = _ISO_DATE.sub(lambda m: f"{m.group(3)}.{m.group(2)}.{m.group(1)}", body)

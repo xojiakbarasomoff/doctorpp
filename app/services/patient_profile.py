@@ -119,8 +119,21 @@ _CORRECTS_THEIR_NAME = re.compile(
 )
 
 
+# Words that belong to an errand, never to a name. One of these anywhere in
+# the candidate rules it out: "qabulga yozilmoqchiman" has the shape of two
+# names and is a sentence about wanting an appointment.
+_ERRAND_WORDS = re.compile(
+    r"qabul|yozil|yozing|navbat|band\s|kerak|bo'?ladi|mumkin|iltimos|so'?ra"
+    r"|запис|нужн|хочу|можно|пожалуйста"
+    r"|og'?ri|ogri|tekshir|muammo|kel(?:a|i)sh|ko'?rik",
+    re.IGNORECASE,
+)
+
+
 def looks_like_a_name(text: str) -> bool:
     stripped = text.strip().rstrip(".!,")
+    if _ERRAND_WORDS.search(stripped):
+        return False
     if not stripped or len(stripped) > _MAX_NAME_LENGTH:
         return False
     if stripped.lower() in _NOT_A_NAME or looks_like_a_greeting(stripped):
@@ -215,6 +228,13 @@ def read_turn(message: str, *, asked_for_name: bool) -> Found:
             return Found(
                 name=candidate, phone=phone, corrects=corrects, language=language
             )
+        # "Asadbek Risqiyev, qabulga yozilmoqchiman" -- the name and then the
+        # errand in one breath, which is how people answer this question. The
+        # clause before the comma is the answer; the rest is the sentence
+        # they were going to write anyway.
+        head = re.split(r"[,;\n]", candidate, maxsplit=1)[0].strip()
+        if head and head != candidate and looks_like_a_name(head):
+            return Found(name=head, phone=phone, corrects=corrects, language=language)
 
     return Found(phone=phone, corrects=corrects, language=language)
 

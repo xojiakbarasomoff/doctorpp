@@ -188,14 +188,18 @@ async def test_the_whole_reported_conversation(
         history = history[-10:]
 
         # 5. The time. The day must still be Thursday -- not tomorrow.
-        marker = f"[[BOOK:{thursday:%Y-%m-%dT%H:%M}|Asadbek Risqiyev|+998939511111|buyrak]]"
-        llm.say(f"Payshanba 12:00 ga yozib qo'ydim. {marker}")
+        llm.say("Payshanba 12:00 ga yozaymi?")
         result = await _say(db_session, seed, llm, "12:00", history=history)
 
         prompt = llm.last_prompt
         assert "Asadbek Risqiyev" in prompt, "the name must survive the window"
         assert "+998939511111" in prompt, "the number must survive the window"
         assert f"{thursday:%d.%m.%Y}" in prompt, "the chosen day must survive the window"
+        assert result.appointment is None, "nothing is written before they confirm"
+
+        # ...and the confirmation is what writes it.
+        llm.say("Yozib qo'ydim.")
+        result = await _say(db_session, seed, llm, "ha", history=history)
 
         assert result.appointment is not None
         assert result.appointment.scheduled_at == thursday.astimezone(UTC)
@@ -557,3 +561,64 @@ async def test_a_reply_that_could_not_be_delivered_is_still_visible(
     assert not any(m.content == text for m in for_the_model), (
         "the model must not be told a turn the patient never received"
     )
+
+
+async def test_nothing_is_booked_until_the_patient_confirms(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """The clinic's rule: read the booking back, ask, and only then write it.
+
+    The model is not trusted to decide when: even if it writes a booking
+    marker while the flow is still waiting for a yes, nothing is created.
+    """
+    from app.models.conversation_state import FlowStatus
+    from app.repositories.appointment import AppointmentRepository
+
+    thursday = _next_thursday(datetime.now(UTC))
+    marker = f"[[BOOK:{thursday:%Y-%m-%dT%H:%M}|Asadbek Risqiyev|+998939511111|uzi]]"
+
+    with as_tenant(seed.tenant_a.id):
+        llm.say("Telefon raqamingizni yozing.")
+        await _say(
+            db_session,
+            seed,
+            llm,
+            "Asadbek Risqiyev, qabulga yozilmoqchiman",
+            history=[{"role": "assistant", "content": "Ism-familiyangizni yozing."}],
+        )
+        llm.say("Sababini yozing.")
+        await _say(db_session, seed, llm, "93 951 11 11", history=[])
+        llm.say("Qaysi kun?")
+        await _say(
+            db_session,
+            seed,
+            llm,
+            "uzi",
+            history=[{"role": "assistant", "content": "Qabul sababini yozing."}],
+        )
+        llm.say("Soat nechada?")
+        await _say(db_session, seed, llm, f"{thursday:%d}-sentabr", history=[])
+
+        # The model jumps the gun and writes a marker before any confirmation.
+        llm.say(f"Yozib qo'ydim. {marker}")
+        result = await _say(db_session, seed, llm, "12:00", history=[])
+
+        state = await ConversationStateRepository(db_session).get(seed.a.conversation.id)
+        assert state is not None
+        assert FlowStatus(state.status) is FlowStatus.AWAITING_CONFIRMATION
+        live = await AppointmentRepository(db_session).list_active_for_user(
+            seed.a.user.id, after=datetime.now(UTC)
+        )
+        assert live == [], "nothing may be written before they say yes"
+        assert result.appointment is None
+
+        # Now they confirm, and the backend writes it -- no marker needed.
+        llm.say("Tasdiqladim.")
+        result = await _say(db_session, seed, llm, "ha", history=[])
+
+        assert result.intent is Intent.BOOKING_CONFIRM
+        assert result.appointment is not None
+        assert "IS NOW IN THE DIARY" in llm.last_prompt
