@@ -1169,7 +1169,11 @@ async def generate_answer(
     doctors = await DoctorRepository(session).list_active()
 
     signals = read_signals(history, user_message)
-    script = conversation_script(history, user_message)
+    # A language the patient asked for outranks the alphabet their latest
+    # message happens to be in: somebody who said "по-русски" and then typed
+    # "ok" was being answered in Uzbek again.
+    chosen = booking.language if booking is not None else None
+    script = chosen or conversation_script(history, user_message)
     system_prompt = _build_system_prompt(
         matches,
         doctors=doctors,

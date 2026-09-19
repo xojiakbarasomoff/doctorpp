@@ -100,6 +100,7 @@ _NOT_A_NAME = frozenset(
         "ha", "xa", "yoq", "yo'q", "ok", "okey", "mayli", "shu", "shuni",
         "rahmat", "raxmat", "tushunarli", "bo'ldi", "boldi", "zor", "yaxshi",
         "qabul", "narx", "uzi", "tekshiruv", "shifokor", "doktor", "salom",
+        "aka", "uka", "opa", "singlim", "hurmatli", "iltimos", "assalom",
         "да", "нет", "хорошо", "спасибо", "приём", "прием", "врач",
     }
 )  # fmt: skip
@@ -129,6 +130,32 @@ def looks_like_a_name(text: str) -> bool:
     return bool(_NAME_SHAPE.match(stripped))
 
 
+# A patient asking to be answered in a particular language. Said once, it
+# holds for the conversation: somebody who writes "давайте по-русски" and
+# then answers "ok" was being answered in Uzbek again, because the language
+# was read out of each message rather than remembered.
+_ASKS_FOR = (
+    ("ru", re.compile(
+        r"rus(?:cha|\s*tilida|\s*tilda)|по[\s-]?русски|на\s+русском|русск\w*\s+язык",
+        re.IGNORECASE,
+    )),
+    ("uz-latn", re.compile(
+        r"o[o'’ʻ]?zbek(?:cha)?(?:\s*til\w*)?\s*(?:yoz|gapir|javob)"
+        r"|lotin(?:cha)?da|на\s+узбекском",
+        re.IGNORECASE,
+    )),
+    ("uz-cyrl", re.compile(r"кирилл(?:ча|ицей|ица)|кирил\w*\s*(?:ёз|яз)", re.IGNORECASE)),
+)
+
+
+def asks_for_language(message: str) -> str | None:
+    """The language this patient just asked to be answered in, if they did."""
+    for language, pattern in _ASKS_FOR:
+        if pattern.search(message):
+            return language
+    return None
+
+
 @dataclass(frozen=True)
 class Found:
     """What this turn said about who the patient is."""
@@ -136,6 +163,11 @@ class Found:
     name: str | None = None
     phone: str | None = None
     corrects: bool = False
+    language: str | None = None
+    # A second, different number from a patient who already has one on
+    # file. Not applied here: the clinic rings these, so which one is
+    # current is a question to ask, not a guess to make.
+    other_phone: str | None = None
 
 
 def read_turn(message: str, *, asked_for_name: bool) -> Found:
@@ -147,12 +179,27 @@ def read_turn(message: str, *, asked_for_name: bool) -> Found:
     """
     phone = normalise_phone(message)
     corrects = bool(_CORRECTS_THEIR_NAME.search(message))
+    language = asks_for_language(message)
 
     said = _SAYS_THEIR_NAME.search(message)
     if said is not None:
         name = said.group("name") or said.group("cyr") or said.group("ru")
         if name and looks_like_a_name(name):
-            return Found(name=name.strip(), phone=phone, corrects=corrects)
+            return Found(
+                name=name.strip(), phone=phone, corrects=corrects, language=language
+            )
+
+    if not asked_for_name and phone is not None:
+        # "Asadbek Risqiyev 93 951 11 11, buyrak og'rig'i, payshanba 12:00" --
+        # one bubble with everything in it, which is how people who have
+        # booked before write. The name is what stands immediately in front
+        # of the number; nothing else in the sentence is read as one.
+        run = _PHONE_RUN.search(message)
+        before = message[: run.start()].strip(" ,.-—\n") if run is not None else ""
+        if before and looks_like_a_name(before):
+            return Found(
+                name=before, phone=phone, corrects=corrects, language=language
+            )
 
     if asked_for_name:
         # The answer to "ismingizni yozing" is whatever is left once the
@@ -165,9 +212,11 @@ def read_turn(message: str, *, asked_for_name: bool) -> Found:
                 without_number = message.replace(run.group(0), " ")
         candidate = without_number.strip(" ,.-—\n")
         if looks_like_a_name(candidate):
-            return Found(name=candidate, phone=phone, corrects=corrects)
+            return Found(
+                name=candidate, phone=phone, corrects=corrects, language=language
+            )
 
-    return Found(phone=phone, corrects=corrects)
+    return Found(phone=phone, corrects=corrects, language=language)
 
 
 def asked_for_a_name(history: Sequence[ChatMessage] | None) -> bool:
@@ -193,7 +242,7 @@ async def remember(
     saying so, not a regex being confident.
     """
     found = read_turn(message, asked_for_name=asked_for_a_name(history))
-    if found.name is None and found.phone is None:
+    if found.name is None and found.phone is None and found.language is None:
         return found
 
     user = await session.get(User, user_id)
@@ -204,11 +253,24 @@ async def remember(
     if found.name and (user.name is None or (found.corrects and found.name != user.name)):
         user.name = found.name
         changed.append("name")
-    if found.phone and (user.phone is None or found.phone != user.phone):
-        # A number is replaced by a number: they typed it, it is the one they
-        # want to be rung on, and the old one is no use to anybody.
+    if found.phone and user.phone is None:
         user.phone = found.phone
         changed.append("phone")
+    elif found.phone and found.phone != user.phone:
+        # A second, different number. Not written over the first: the clinic
+        # rings these, and a patient who types a friend's number, or their
+        # own with a digit wrong, must not silently become unreachable. The
+        # flow asks which one is current (app.services.turn).
+        found = Found(
+            name=found.name,
+            phone=None,
+            corrects=found.corrects,
+            language=found.language,
+            other_phone=found.phone,
+        )
+    if found.language and found.language != user.preferred_language:
+        user.preferred_language = found.language
+        changed.append("language")
 
     if changed:
         await session.flush()
@@ -225,6 +287,7 @@ class Profile:
 
     name: str | None
     phone: str | None
+    language: str | None = None
 
     @property
     def known(self) -> bool:
@@ -235,4 +298,4 @@ async def load(session: AsyncSession, user_id: uuid.UUID) -> Profile:
     user = await session.get(User, user_id)
     if user is None:
         return Profile(name=None, phone=None)
-    return Profile(name=user.name, phone=user.phone)
+    return Profile(name=user.name, phone=user.phone, language=user.preferred_language)

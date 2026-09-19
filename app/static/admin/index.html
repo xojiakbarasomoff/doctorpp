@@ -128,6 +128,9 @@
   .msg.patient { background: var(--panel-2); align-self: flex-start; }
   .msg.bot, .msg.operator { background: var(--accent-soft); align-self: flex-end; }
   .msg small { display: block; font-size: 10px; color: var(--ink-3); margin-top: 3px; }
+  /* A reply that never reached the patient: shown, and shown as different. */
+  .msg.undelivered { background: #fff4f4; border: 1px dashed #e0b4b4; opacity: .85; }
+  .msg.undelivered small { color: #b04242; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   /* Rasm yuborganlar */
   .tab-badge[hidden] { display: none; }
@@ -872,7 +875,21 @@ function renderThread(detail) {
     patientLabel(detail.conversation) + " — " + detail.conversation.channel;
   document.getElementById("thread").replaceChildren(
     ...detail.messages.map((m) =>
-      el("div", { class: "msg " + m.sender }, m.content, el("small", {}, m.sender + " · " + localDateTime(m.created_at)))
+      el(
+        "div",
+        { class: "msg " + m.sender + (m.delivery_status && m.delivery_status !== "sent" ? " undelivered" : "") },
+        m.content,
+        el(
+          "small",
+          {},
+          m.sender + " · " + localDateTime(m.created_at) +
+            // An answer the patient never received. Marked rather than
+            // hidden: a chat of questions with no answers used to look like
+            // a bot that had said nothing.
+            (m.delivery_status === "undeliverable" ? " · ⚠️ yetkazilmadi (24 soat oynasi yopiq)" :
+             m.delivery_status === "failed" ? " · ⚠️ yuborishda xato" : "")
+        )
+      )
     )
   );
   document.getElementById("replyHint").textContent = detail.conversation.is_bot_enabled

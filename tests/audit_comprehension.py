@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.rag.llm import ChatMessage, OpenAILLMProvider
 from app.services import booking, callbacks
-from app.services.answer import generate_answer
+from app.services import turn as turn_service
 from tests.audit_live import _NoEmbeddings, _settings, prepare_tenant
 from tests.conftest import Seed
 
@@ -297,6 +297,30 @@ def _judge_payload(history: Sequence[ChatMessage], patient: str, reply: str) -> 
 _JSON = re.compile(r"\{.*\}", re.DOTALL)
 
 
+async def _reset_patient(session: AsyncSession, seed: Seed) -> None:
+    """Start each scenario as a stranger with an empty diary."""
+    from sqlalchemy import delete, update
+
+    from app.models.appointment import Appointment, AppointmentStatus
+    from app.models.conversation_state import ConversationState
+    from app.models.user import User
+
+    await session.execute(
+        delete(ConversationState).where(
+            ConversationState.conversation_id == seed.a.conversation.id
+        )
+    )
+    await session.execute(
+        update(Appointment)
+        .where(Appointment.user_id == seed.a.user.id)
+        .values(status=AppointmentStatus.CANCELLED)
+    )
+    await session.execute(
+        update(User).where(User.id == seed.a.user.id).values(name=None, phone=None)
+    )
+    await session.flush()
+
+
 @pytest.mark.asyncio
 async def test_comprehension_audit(
     db_session: AsyncSession,
@@ -317,16 +341,22 @@ async def test_comprehension_audit(
     for case in CASES:
         history: list[ChatMessage] = []
         print(f"\n\n=== {case.name} ===")
+        with as_tenant(seed.tenant_a.id):
+            await _reset_patient(db_session, seed)
         for turn in case.turns:
             with as_tenant(seed.tenant_a.id):
-                raw = await generate_answer(
+                result = await turn_service.respond(
                     db_session,
-                    turn.patient,
-                    embedding_provider=embeddings,
-                    llm_provider=assistant,
-                    settings=settings,  # type: ignore[arg-type]
+                    conversation_id=seed.a.conversation.id,
+                    user_id=seed.a.user.id,
+                    message=turn.patient,
                     history=list(history),
+                    source="instagram",
+                    settings=settings,  # type: ignore[arg-type]
+                    llm_provider=assistant,
+                    embedding_provider=embeddings,
                 )
+            raw = result.reply
             visible = callbacks.extract(booking.extract(raw)[0])[0]
             total += 1
 

@@ -11,7 +11,7 @@ from app.models.conversation_state import (
 from app.models.doctor import Doctor
 from app.models.knowledge_base import KnowledgeBase
 from app.models.lead import Lead, LeadStatus
-from app.models.message import Message, MessageSender
+from app.models.message import DeliveryStatus, Message, MessageSender
 from app.models.operator import Operator
 from app.models.patient_media import PatientMedia, PatientMediaStatus
 from app.models.saved_filter import SavedFilter
@@ -33,6 +33,7 @@ __all__ = [
     "KnowledgeBase",
     "Lead",
     "LeadStatus",
+    "DeliveryStatus",
     "Message",
     "MessageSender",
     "Operator",

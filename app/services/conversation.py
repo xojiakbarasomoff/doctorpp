@@ -25,7 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation
-from app.models.message import Message, MessageSender
+from app.models.message import DeliveryStatus, Message, MessageSender
 from app.models.user import User
 from app.rag.llm import ChatMessage
 from app.repositories.conversation import OPEN_STATUS, ConversationRepository
@@ -151,18 +151,26 @@ async def record_outbound_message(
     channel_type: str,
     text: str,
     sender: MessageSender = MessageSender.BOT,
+    status: DeliveryStatus = DeliveryStatus.SENT,
+    error: str | None = None,
 ) -> Message:
-    """Record a reply the clinic sent, so the transcript holds both sides.
+    """Record a reply, and whether the patient actually received it.
 
-    Written after the send succeeds, not before: a message in the transcript
-    that the patient never received would make the next reply's history
-    describe a conversation that did not happen.
+    Every reply is recorded now, delivered or not. It used to be written
+    only after a successful send, which kept the model's history honest --
+    it never sees a turn the patient did not get -- but left the clinic
+    looking at chats full of questions and no answers, with nothing to say
+    whether the assistant had stayed silent or its answer had been refused
+    by Instagram. The history stays honest a different way: recent_history
+    reads only delivered messages.
     """
     return await MessageRepository(session).create(
         conversation_id=conversation_id,
         sender=sender,
         content=text,
         channel=channel_type,
+        delivery_status=str(status),
+        delivery_error=error[:255] if error else None,
     )
 
 

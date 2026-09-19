@@ -404,3 +404,156 @@ async def test_the_conversation_lock_is_taken_before_anything_is_read(
         # Taking it twice in the same transaction is free; a second
         # transaction would wait, which is the point.
         await turn.lock_conversation(db_session, seed.a.conversation.id)
+
+
+# --- the clinic's second list of complaints --------------------------------
+
+
+async def test_everything_in_one_message_is_taken_apart(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """Name, number, reason and a time, all in one bubble."""
+    thursday = _next_thursday(datetime.now(UTC))
+
+    with as_tenant(seed.tenant_a.id):
+        llm.say("Yozib qo'ydim.")
+        await _say(
+            db_session,
+            seed,
+            llm,
+            f"Asadbek Risqiyev 93 951 11 11, buyrak og'rig'i, {thursday:%d}-sentabr 12:00 ga "
+            "qabulga yozilmoqchiman",
+            history=[],
+        )
+
+        prompt = llm.last_prompt
+        assert "Asadbek Risqiyev" in prompt
+        assert "+998939511111" in prompt
+        state = await ConversationStateRepository(db_session).get(seed.a.conversation.id)
+        assert state is not None
+        assert state.requested_time is not None and state.requested_time.hour == 12
+
+
+async def test_a_confirmation_cannot_name_a_day_the_booking_is_not_on(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """Live: "Bugun 16:20" was agreed and the confirmation said "ertaga
+    16:20". The row was right and the sentence was wrong, and the sentence
+    is the one the patient acts on.
+    """
+    today = datetime.now(CLINIC_TIMEZONE).replace(hour=16, minute=20, second=0, microsecond=0)
+    if today <= datetime.now(CLINIC_TIMEZONE) + timedelta(minutes=40):
+        today = today + timedelta(days=1)  # too close to now to be offered
+    marker = f"[[BOOK:{today:%Y-%m-%dT%H:%M}|Asadbek Risqiyev|+998939511111|buyrak]]"
+
+    with as_tenant(seed.tenant_a.id):
+        # The model names the wrong day on purpose.
+        wrong = "ertaga" if today.date() == datetime.now(CLINIC_TIMEZONE).date() else "bugun"
+        llm.say(f"Yaxshi, {wrong} 16:20 ga yozib qo'ydim. {marker}")
+        result = await _say(db_session, seed, llm, "16:20 bo'ladi", history=[])
+
+    assert result.appointment is not None
+    assert wrong not in result.reply.lower(), "the wrong day word must not survive"
+
+
+async def test_the_language_a_patient_asks_for_is_remembered(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """They asked for Russian, then sent "ok", and were answered in Uzbek."""
+    with as_tenant(seed.tenant_a.id):
+        llm.say("Хорошо, отвечаю по-русски.")
+        await _say(db_session, seed, llm, "давайте по-русски", history=[])
+
+        llm.say("Записать вас?")
+        await _say(db_session, seed, llm, "ok", history=[])
+
+    assert "CYRILLIC" in llm.last_prompt or "Russian" in llm.last_prompt
+    user = await db_session.get(__import__("app.models.user", fromlist=["User"]).User, seed.a.user.id)
+    assert user is not None and user.preferred_language == "ru"
+
+
+async def test_a_second_number_is_questioned_not_swapped(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """The clinic rings these numbers. A patient who types a second one gets
+    asked which is current; the first is not silently thrown away.
+    """
+    from app.models.user import User
+
+    with as_tenant(seed.tenant_a.id):
+        llm.say("Rahmat.")
+        await _say(
+            db_session,
+            seed,
+            llm,
+            "93 951 11 11",
+            history=[{"role": "assistant", "content": "Telefon raqamingizni yozing."}],
+        )
+
+        llm.say("Qaysi raqamga qo'ng'iroq qilaylik?")
+        await _say(db_session, seed, llm, "90 777 88 99 ham bor", history=[])
+
+        user = await db_session.get(User, seed.a.user.id)
+
+    assert user is not None and user.phone == "+998939511111", "the first number stands"
+    assert "SECOND NUMBER" in llm.last_prompt
+
+
+async def test_a_reply_that_could_not_be_delivered_is_still_visible(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+) -> None:
+    """The clinic opened chats full of questions and no answers, with no way
+    to tell a silent bot from an answer Instagram refused. The row is kept
+    now -- and kept out of the model's own history, because the patient
+    never saw it.
+    """
+    from sqlalchemy import select
+
+    from app.models.message import DeliveryStatus, Message
+    from app.repositories.message import MessageRepository
+    from app.services.conversation import record_outbound_message
+
+    text = "Ertaga 09:20 bo'sh."
+    with as_tenant(seed.tenant_a.id):
+        await record_outbound_message(
+            db_session,
+            conversation_id=seed.a.conversation.id,
+            channel_type="instagram",
+            text=text,
+            status=DeliveryStatus.UNDELIVERABLE,
+            error="outside the 24-hour window",
+        )
+        rows = (
+            (
+                await db_session.execute(
+                    select(Message).where(Message.conversation_id == seed.a.conversation.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for_the_model = await MessageRepository(db_session).list_recent(
+            seed.a.conversation.id, 20
+        )
+
+    kept = [row for row in rows if row.content == text]
+    assert len(kept) == 1, "the clinic must be able to see it"
+    assert kept[0].delivery_status == str(DeliveryStatus.UNDELIVERABLE)
+    assert kept[0].delivery_error == "outside the 24-hour window"
+    assert not any(m.content == text for m in for_the_model), (
+        "the model must not be told a turn the patient never received"
+    )

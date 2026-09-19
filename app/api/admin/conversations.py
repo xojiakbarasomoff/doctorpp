@@ -212,6 +212,8 @@ async def get_conversation(
                 content=message.content,
                 channel=message.channel,
                 created_at=message.created_at,
+                delivery_status=message.delivery_status,
+                delivery_error=message.delivery_error,
             )
             for message in messages
         ],
@@ -304,4 +306,6 @@ async def reply_as_operator(
         content=message.content,
         channel=message.channel,
         created_at=message.created_at,
+        delivery_status=message.delivery_status,
+        delivery_error=message.delivery_error,
     )

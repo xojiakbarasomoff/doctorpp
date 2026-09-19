@@ -10,6 +10,16 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
+class DeliveryStatus(StrEnum):
+    """What became of an outbound message."""
+
+    SENT = "sent"
+    FAILED = "failed"
+    # Generated, and deliberately not sent: outside Instagram's messaging
+    # window, or the channel is switched off.
+    UNDELIVERABLE = "undeliverable"
+
+
 class MessageSender(StrEnum):
     """Who produced a message, as stored in messages.sender.
 
@@ -44,6 +54,19 @@ class Message(Base):
     # — a random UUID. That reorders a conversation, which is not a
     # cosmetic problem when the ordered transcript is what the next reply is
     # generated from. clock_timestamp() reads the real clock per row.
+    # Whether this message actually reached the patient.
+    #
+    # A reply that could not be delivered -- Instagram's 24-hour window
+    # closed, the channel switched off, the API refusing -- used not to be
+    # stored at all, so the clinic opened a chat, saw the patient's
+    # questions and no answers, and could not tell a bot that said nothing
+    # from a bot whose answer never arrived. It is stored either way now,
+    # and this column says which happened.
+    delivery_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="sent"
+    )
+    delivery_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("clock_timestamp()"), nullable=False
     )

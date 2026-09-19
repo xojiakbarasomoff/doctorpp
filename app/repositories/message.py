@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.tenant_context import get_current_tenant
 from app.models.conversation import Conversation
-from app.models.message import Message, MessageSender
+from app.models.message import DeliveryStatus, Message, MessageSender
 from app.repositories.base import BaseRepository, CrossTenantAccessError
 
 
@@ -56,6 +56,13 @@ class MessageRepository(BaseRepository[Message]):
             .where(
                 Message.conversation_id == conversation_id,
                 Conversation.tenant_id == get_current_tenant(),
+                # Only what the patient actually received. Undelivered
+                # replies are kept for the clinic to see (see
+                # app.services.conversation.record_outbound_message), but
+                # showing one to the model would have it answer as though a
+                # conversation had happened that did not.
+                Message.delivery_status != str(DeliveryStatus.UNDELIVERABLE),
+                Message.delivery_status != str(DeliveryStatus.FAILED),
             )
             .order_by(Message.created_at.desc(), Message.id.desc())
             .limit(limit)

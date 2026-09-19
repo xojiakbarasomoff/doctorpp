@@ -60,6 +60,10 @@ class BookingState:
     requested_date: date | None = None
     requested_time: time | None = None
     last_action: CompletedAction = CompletedAction.NONE
+    # The language this patient asked to be answered in, if they asked.
+    language: str | None = None
+    # A second number they gave, when one is already on file.
+    other_phone: str | None = None
     # Every future appointment this patient holds, soonest first.
     appointments: tuple[Booked, ...] = ()
 
@@ -98,6 +102,7 @@ def read(
     history: Sequence[ChatMessage] | None = None,
     user_message: str = "",
     booking_in_progress: bool | None = None,
+    other_phone: str | None = None,
 ) -> BookingState:
     """Assemble the state of play for one turn.
 
@@ -135,6 +140,8 @@ def read(
         requested_time=state.requested_time if state is not None else None,
         last_action=last_action,
         appointments=tuple(Booked.of(appointment) for appointment in appointments),
+        language=profile.language,
+        other_phone=other_phone,
     )
 
 
@@ -191,6 +198,14 @@ def render(state: BookingState) -> str:
             "\n- These come from the clinic's own records, not from this "
             "conversation. Never ask for one of them again, and never ask "
             "the patient to confirm one."
+        )
+
+    if state.other_phone:
+        section += (
+            "\n\nTHEY HAVE JUST GIVEN A SECOND NUMBER: "
+            f"{state.other_phone}, and the clinic already holds {state.phone}. "
+            "Ask, in one short line, which of the two they want to be rung on. "
+            "Nothing is changed until they say."
         )
 
     if state.appointments:

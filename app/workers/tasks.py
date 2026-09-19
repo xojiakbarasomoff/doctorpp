@@ -34,6 +34,7 @@ from app.core.tenant_context import reset_current_tenant, set_current_tenant
 from app.models.appointment import Appointment
 from app.models.channel import Channel
 from app.models.conversation import Conversation
+from app.models.message import DeliveryStatus
 from app.models.user import User
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
@@ -300,6 +301,7 @@ async def process_inbound_message(
                 else None
             )
 
+            delivery_error: str | None = None
             try:
                 delivered_over = await send_reply(
                     session,
@@ -310,6 +312,22 @@ async def process_inbound_message(
                     reply_context=reply_context,
                     adapter=adapter,
                 )
+            except Exception as exc:
+                # Recorded as failed and re-raised: the job is retried, and
+                # meanwhile the clinic can see in the dashboard that an
+                # answer was written and did not arrive. Silence here is
+                # what made a broken account look like an idle bot.
+                delivery_error = f"{type(exc).__name__}: {exc}"
+                await record_outbound_message(
+                    session,
+                    conversation_id=conversation_uuid,
+                    channel_type=str(channel.type) if channel is not None else "bot",
+                    text=reply,
+                    status=DeliveryStatus.FAILED,
+                    error=delivery_error,
+                )
+                await session.commit()
+                raise
             finally:
                 # In a finally, and after the send rather than before it, for
                 # two different reasons.
@@ -346,17 +364,25 @@ async def process_inbound_message(
                         )
                     )
 
-            # Recorded only when it actually went out: a reply in the
-            # transcript the patient never received would make the next
-            # reply's history describe a conversation that did not happen.
-            if delivered_over is not None:
-                await record_outbound_message(
-                    session,
-                    conversation_id=conversation_uuid,
-                    channel_type=delivered_over,
-                    text=reply,
-                )
-                await session.commit()
+            # Recorded either way. Delivered, it is part of the
+            # conversation; undelivered -- outside Instagram's 24-hour
+            # window, or a channel switched off -- it is the thing the
+            # clinic most needs to see, and used to be the one thing that
+            # was never written down. The model's history still reads only
+            # what was delivered (app.repositories.message.list_recent).
+            await record_outbound_message(
+                session,
+                conversation_id=conversation_uuid,
+                channel_type=delivered_over or (str(channel.type) if channel else "bot"),
+                text=reply,
+                status=(
+                    DeliveryStatus.SENT
+                    if delivered_over is not None
+                    else DeliveryStatus.UNDELIVERABLE
+                ),
+                error=None if delivered_over is not None else "not delivered",
+            )
+            await session.commit()
     finally:
         reset_current_tenant(token)
 

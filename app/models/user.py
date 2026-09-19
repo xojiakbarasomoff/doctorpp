@@ -43,6 +43,11 @@ class User(Base):
     # A patient without a username is still a patient the clinic must see.
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # The language this patient asked to be answered in, when they have said
+    # so: "rus tilida yozing", "по-русски". Stored on the patient rather
+    # than worked out from each message, because a patient who asks for
+    # Russian and then sends "ok" was being answered in Uzbek again.
+    preferred_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Whether this patient may use the bot's own admin commands. From the
     # Telegram side, and a different thing from Operator: an Operator logs
     # into the dashboard, this is a patient chatting to the bot who is also

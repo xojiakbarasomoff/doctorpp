@@ -21,6 +21,7 @@ turns long, so anything older had simply gone.
 """
 
 import logging
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -146,6 +147,7 @@ async def respond(
         history=history,
         user_message=message,
         booking_in_progress=_is_booking(state, intent),
+        other_phone=found.other_phone,
     )
 
     reply = await generate_answer(
@@ -177,6 +179,7 @@ async def respond(
             state = await states.clear_flow(
                 state, action=CompletedAction.BOOKING_CREATED, appointment_id=appointment.id
             )
+            reply = _say_the_day_that_was_booked(reply, appointment, moment)
 
     after = f"{state.status}/{state.awaiting_field or '-'}"
     logger.info(
@@ -355,6 +358,54 @@ async def _advance_booking(
         if intent is Intent.BOOK_NEW
         else None,
     )
+
+
+# "Bugun 16:20" agreed, and the confirmation said "ertaga 16:20". The row
+# was right; the sentence was not, and the sentence is what the patient
+# acts on. Every day-word in a confirmation is checked against the row that
+# was actually written, and a wrong one is replaced by the date itself --
+# unambiguous, and never the wrong day.
+_DAY_WORDS = {
+    "bugun": 0,
+    "бугун": 0,
+    "сегодня": 0,
+    "ertaga": 1,
+    "эртага": 1,
+    "завтра": 1,
+    "indinga": 2,
+    "индинга": 2,
+    "послезавтра": 2,
+}
+_DAY_WORD_RE = re.compile(r"\b(" + "|".join(_DAY_WORDS) + r")\w*", re.IGNORECASE)
+
+
+def _say_the_day_that_was_booked(
+    reply: str, appointment: Appointment, moment: datetime
+) -> str:
+    """Correct a confirmation that names the wrong day.
+
+    Only when it is wrong: a confirmation that says "bugun" for a booking
+    made today is left exactly as the model wrote it.
+    """
+    booked = appointment.scheduled_at.astimezone(CLINIC_TIMEZONE).date()
+    today = moment.astimezone(CLINIC_TIMEZONE).date()
+    offset = (booked - today).days
+
+    def fix(match: "re.Match[str]") -> str:
+        word = match.group(1).lower()
+        if _DAY_WORDS[word] == offset:
+            return match.group(0)
+        logger.warning(
+            "confirmation_day_corrected",
+            extra={
+                "appointment_id": str(appointment.id),
+                "said": match.group(0),
+                "booked": booked.isoformat(),
+            },
+        )
+        return when_service.spoken(booked, today)
+
+    return _DAY_WORD_RE.sub(fix, reply)
 
 
 def _is_booking(state: ConversationState, intent: Intent) -> bool:

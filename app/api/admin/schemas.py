@@ -68,6 +68,11 @@ class MessageOut(BaseModel):
     content: str
     channel: str
     created_at: datetime
+    # "sent", "undeliverable", "failed". An answer that never reached the
+    # patient is the thing the clinic most needs to see in a transcript,
+    # and it used not to be written down at all.
+    delivery_status: str = "sent"
+    delivery_error: str | None = None
 
 
 class ConversationDetail(BaseModel):
