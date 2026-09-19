@@ -244,3 +244,41 @@ def test_talking_about_the_clinics_own_work_is_not_a_leak() -> None:
         )
         == []
     )
+
+
+def test_the_clinics_own_greeting_survives_untouched() -> None:
+    """The exact words the clinic asked for, in the one place they belong:
+    the first greeting of a conversation.
+    """
+    reply = "Va alaykum assalom. Men doktor administratoriman. Sizga qanday yordam bera olaman?"
+
+    assert tidy(reply, greeted=True, opening=True, user_message="Assalomu alaykum") == reply
+    assert problems(reply, script="uz-latn", greeted=True) == []
+
+
+def test_the_introduction_does_not_come_back_later() -> None:
+    out = tidy(
+        "Ertaga 09:20 bo'sh. Men doktor administratoriman.",
+        greeted=False,
+        opening=False,
+        user_message="ertaga bormi",
+    )
+
+    assert out == "Ertaga 09:20 bo'sh."
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Shifokorning administratori sizga javob beradi.",
+        "Assalomu alaykum, shifokorning administratoriman.",
+    ],
+)
+def test_the_wording_the_clinic_replaced_is_rejected(reply: str) -> None:
+    """They changed it to "doktor administratori". A phrase they have asked
+    us not to use is a rewrite, not a silent edit: it turns up mid-sentence
+    as often as at the edges.
+    """
+    assert any("shifokorning administratori" in fault for fault in problems(
+        reply, script="uz-latn", greeted=True
+    ))
