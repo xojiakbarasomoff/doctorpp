@@ -44,6 +44,7 @@ from app.repositories.doctor import DoctorRepository
 from app.services.answer import generate_answer
 from app.services.appointment import (
     CLINIC_TIMEZONE,
+    WORK_DAYS,
     SlotAlreadyBookedError,
     assign_doctor,
     create_appointment,
@@ -54,6 +55,10 @@ from app.services.booking import settle as settle_booking
 from app.services.intent import BOOKING_INTENTS, Intent, classify
 
 logger = logging.getLogger(__name__)
+
+_WEEKDAY_NAMES = [
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+]  # fmt: skip
 
 
 @dataclass
@@ -161,7 +166,8 @@ async def respond(
         FlowStatus.AWAITING_DATE,
         FlowStatus.AWAITING_TIME,
     }:
-        state = await _advance_booking(
+        state, facts = await _advance_booking(
+            session,
             states,
             state,
             message=message,
@@ -223,6 +229,29 @@ async def respond(
             )
             reply = _say_the_day_that_was_booked(reply, appointment, moment)
 
+    # Nothing may say a booking exists unless one does.
+    #
+    # The prompt says this, the state says this, and the model said
+    # "Tasdiqlayman — ertaga 20.09.2026 soat 15:00ga yozildingiz" about a
+    # Sunday the clinic is shut and a row that was never written. A patient
+    # who is told they are booked will come; this is the one failure that
+    # ends with somebody standing at a locked door, so it is checked rather
+    # than asked for.
+    reply = await _no_false_claims(
+        reply,
+        appointment=appointment,
+        cancelled=cancelled,
+        facts=facts,
+        session=session,
+        message=message,
+        history=history,
+        settings=resolved,
+        llm_provider=llm_provider,
+        embedding_provider=embedding_provider,
+        booking=booking,
+        intent=intent,
+    )
+
     after = f"{state.status}/{state.awaiting_field or '-'}"
     logger.info(
         "turn_handled",
@@ -251,6 +280,80 @@ async def respond(
 
 
 # --- the deterministic halves ------------------------------------------------
+
+
+# "Yozib qo'ydim", "tasdiqlandi", "записал", "booked" -- the assistant
+# telling somebody the clinic now expects them.
+_CLAIMS_A_BOOKING = re.compile(
+    r"yozib\s*qo|yozildingiz|yozdim|band\s*qildim|tasdiqlan|tasdiqlayman"
+    r"|ko[o'’ʻ]?chirdim|bekor\s*qildim|bekor\s*qilindi"
+    r"|ёзиб\s*қў|ёзилдингиз|тасдиқлан"
+    r"|записа(?:л|ли|ны)|перенес(?:ли|ено)|отменен|отменили"
+    r"|\bbooked\b|\bcancelled\b|\brescheduled\b",
+    re.IGNORECASE,
+)
+
+# What the patient is told instead, when the assistant claimed something the
+# database does not support and would not take it back.
+_COULD_NOT = {
+    "uz-latn": (
+        "Kechirasiz, bu vaqtga yozib bo'lmadi. Qaysi kun sizga qulay bo'lardi?"
+    ),
+    "uz-cyrl": (
+        "Кечирасиз, бу вақтга ёзиб бўлмади. Қайси кун сизга қулай бўларди?"
+    ),
+    "ru": "Извините, на это время записать не получилось. Какой день вам удобен?",
+}
+
+
+async def _no_false_claims(
+    reply: str,
+    *,
+    appointment: Appointment | None,
+    cancelled: Appointment | None,
+    facts: list[str],
+    session: AsyncSession,
+    message: str,
+    history: Sequence[ChatMessage] | None,
+    settings: Settings,
+    llm_provider: LLMProvider | None,
+    embedding_provider: EmbeddingProvider | None,
+    booking: booking_state.BookingState,
+    intent: Intent,
+) -> str:
+    """Refuse to send a reply that claims something the backend did not do."""
+    if appointment is not None or cancelled is not None:
+        return reply
+    visible = booking_service.extract(reply)[0]
+    if not _CLAIMS_A_BOOKING.search(visible):
+        return reply
+
+    logger.error(
+        "reply_claimed_a_booking_that_does_not_exist", extra={"reply": visible[:200]}
+    )
+    second = await generate_answer(
+        session,
+        message,
+        embedding_provider=embedding_provider,
+        llm_provider=llm_provider,
+        settings=settings,
+        history=list(history or []),
+        booking=booking,
+        intent=intent,
+        facts=[
+            *facts,
+            "YOUR LAST REPLY SAID A BOOKING WAS MADE, MOVED OR CANCELLED. "
+            "NOTHING WAS. Nothing has been written, nothing has been changed. "
+            "Say plainly that it could not be done and what the patient can "
+            "have instead. Never use a word that means booked, confirmed, "
+            "moved or cancelled.",
+        ],
+    )
+    if not _CLAIMS_A_BOOKING.search(booking_service.extract(second)[0]):
+        return second
+
+    logger.error("reply_still_claimed_a_booking", extra={"reply": second[:200]})
+    return _COULD_NOT.get(booking.language or "uz-latn", _COULD_NOT["uz-latn"])
 
 
 async def _book_from_state(
@@ -408,6 +511,7 @@ async def _finish_cancellation(
 
 
 async def _advance_booking(
+    session: AsyncSession,
     states: ConversationStateRepository,
     state: ConversationState,
     *,
@@ -415,7 +519,7 @@ async def _advance_booking(
     intent: Intent,
     profile: patient_profile.Profile,
     moment: datetime,
-) -> ConversationState:
+) -> tuple[ConversationState, list[str]]:
     """Record what this message settled, and name what is still open.
 
     The day and the time are resolved once, here, and stored as a real date
@@ -426,12 +530,33 @@ async def _advance_booking(
 
     requested_date = state.requested_date
     requested_time = state.requested_time
+    refused: list[str] = []
     if intent is Intent.BOOK_NEW:
         # A second appointment is a fresh flow: the day they chose for the
         # first one must not be carried into it.
         requested_date, requested_time = None, None
     if found.day is not None:
-        requested_date = found.day
+        # Checked the moment it is said, not at the end. "Ertaga 15:00" on a
+        # Saturday is Sunday, the clinic is closed, and carrying that all the
+        # way to a summary ends with a patient being told they are booked on
+        # a day nobody is there.
+        closed = await days_off(AppointmentRepository(session))
+        today = moment.astimezone(CLINIC_TIMEZONE).date()
+        if found.day < today:
+            refused.append(f"{found.day:%d.%m.%Y} has already passed.")
+        elif found.day.weekday() not in WORK_DAYS:
+            refused.append(
+                f"{found.day:%d.%m.%Y} is a {_WEEKDAY_NAMES[found.day.weekday()]} "
+                "and the clinic is CLOSED that day. Say so and offer the days "
+                "that are free."
+            )
+        elif found.day in closed:
+            refused.append(
+                f"The clinic is CLOSED on {found.day:%d.%m.%Y}. Say so and offer "
+                "another day."
+            )
+        else:
+            requested_date = found.day
     if found.at is not None:
         requested_time = found.at
 
@@ -457,7 +582,7 @@ async def _advance_booking(
         None: FlowStatus.AWAITING_CONFIRMATION,
     }[needed]
 
-    return await states.save(
+    saved = await states.save(
         state,
         status=status,
         intent=FlowIntent.RESCHEDULE
@@ -471,6 +596,7 @@ async def _advance_booking(
         if intent is Intent.BOOK_NEW
         else None,
     )
+    return saved, refused
 
 
 # "Bugun 16:20" agreed, and the confirmation said "ertaga 16:20". The row

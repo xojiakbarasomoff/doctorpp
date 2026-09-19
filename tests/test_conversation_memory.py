@@ -622,3 +622,60 @@ async def test_nothing_is_booked_until_the_patient_confirms(
         assert result.intent is Intent.BOOKING_CONFIRM
         assert result.appointment is not None
         assert "IS NOW IN THE DIARY" in llm.last_prompt
+
+
+async def test_a_day_the_clinic_is_shut_is_refused_when_it_is_named(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """Live: on a Saturday, "ertaga 15:00" is Sunday. It was accepted, read
+    back in a summary, confirmed, and the patient was told they were booked
+    on a day nobody is at the clinic.
+    """
+    from app.models.conversation_state import FlowStatus
+
+    sunday = datetime.now(CLINIC_TIMEZONE).date()
+    while sunday.weekday() != 6:
+        sunday += timedelta(days=1)
+
+    with as_tenant(seed.tenant_a.id):
+        llm.say("Yakshanba dam olish kuni.")
+        await _say(
+            db_session,
+            seed,
+            llm,
+            f"{sunday:%d}-{'sentabr' if sunday.month == 9 else 'oktabr'} 15:00 ga yozing",
+            history=[],
+        )
+
+        state = await ConversationStateRepository(db_session).get(seed.a.conversation.id)
+        assert state is not None
+        assert state.requested_date != sunday, "a closed day must not enter the state"
+        assert FlowStatus(state.status) is not FlowStatus.AWAITING_CONFIRMATION
+        assert "CLOSED" in llm.last_prompt
+
+
+async def test_a_reply_that_claims_a_booking_nobody_made_is_not_sent(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """The failure that ends with somebody at a locked door: the assistant
+    said "tasdiqlayman — yozildingiz" about a row that was never written.
+    """
+    with as_tenant(seed.tenant_a.id):
+        # It claims a booking twice; the second is the rewrite it is given.
+        llm.say(
+            "Tasdiqlayman — ertaga soat 15:00ga yozildingiz.",
+            "Yozib qo'ydim, kutamiz.",
+        )
+        result = await _say(db_session, seed, llm, "ha", history=[])
+
+    assert result.appointment is None
+    assert "yozildingiz" not in result.reply
+    assert "Yozib qo'ydim" not in result.reply
+    # The last resort: a fixed, honest line rather than a false one.
+    assert "yozib bo'lmadi" in result.reply
