@@ -490,6 +490,55 @@ async def test_an_out_of_range_debounce_window_is_rejected(
     assert response.status_code == 422
 
 
+async def test_the_assistants_persona_is_saved_and_can_be_reset(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    csrf = _login_as(client, manager.id)
+
+    saved = await client.patch(
+        "/api/admin/settings",
+        json={"assistant_prompt": "Siz Nigoramisiz.", "assistant_examples": ""},
+        headers={CSRF_HEADER: csrf},
+    )
+    assert saved.json()["assistant_prompt"] == "Siz Nigoramisiz."
+    # An empty examples box is a choice, and is kept as one.
+    assert saved.json()["assistant_examples"] == ""
+
+    reset = await client.patch(
+        "/api/admin/settings",
+        json={"assistant_prompt": None, "assistant_examples": None},
+        headers={CSRF_HEADER: csrf},
+    )
+    assert reset.json()["assistant_prompt"] is None
+    assert reset.json()["assistant_examples"] is None
+
+
+async def test_the_defaults_are_served_for_the_dashboard_to_show(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    _login_as(client, manager.id)
+
+    response = await client.get("/api/admin/assistant-defaults")
+
+    assert response.status_code == 200
+    assert "{klinika_malumotlari}" in response.json()["prompt"]
+    assert "Bemor:" in response.json()["examples"]
+
+
+async def test_an_enormous_persona_is_rejected(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    csrf = _login_as(client, manager.id)
+
+    response = await client.patch(
+        "/api/admin/settings",
+        json={"assistant_prompt": "x" * 20_001},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.status_code == 422
+
+
 # --- appointments and analytics ---
 
 
@@ -737,6 +786,7 @@ async def test_the_front_desk_can_work_a_lead(
         ("post", "/api/admin/doctors", {"name": "Dr. New", "specialty": "Ortodont"}),
         ("post", "/api/admin/knowledge-base", {"question": "Narx?", "answer": "3 000 000"}),
         ("patch", "/api/admin/settings", {"clinic_address": "Yangi manzil"}),
+        ("patch", "/api/admin/settings", {"assistant_prompt": "Boshqa rol"}),
     ],
 )
 async def test_the_front_desk_cannot_change_what_the_clinic_says(

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_manage_clinic, require_patient_access, verify_csrf_header
 from app.api.admin.schemas import (
+    AssistantDefaults,
     DoctorCreate,
     DoctorOut,
     DoctorUpdate,
@@ -35,6 +36,7 @@ from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.lead import LeadRepository
 from app.services.knowledge_base import FAQImport, ingest_faqs
+from app.services.persona import DEFAULT_EXAMPLES, DEFAULT_PROMPT
 
 router = APIRouter(prefix="/api/admin", tags=["Admin — Clinic"])
 
@@ -258,6 +260,18 @@ async def get_settings(
     tenant = await session.get(Tenant, get_current_tenant())
     assert tenant is not None  # the operator's own tenant
     return TenantSettings(**{k: v for k, v in tenant.settings.items() if v is not None})
+
+
+@router.get("/assistant-defaults", response_model=AssistantDefaults)
+async def get_assistant_defaults(
+    operator: Operator = Depends(get_current_operator),
+) -> AssistantDefaults:
+    """The persona and examples the bot uses until the clinic writes its own.
+
+    The dashboard shows these in the boxes while nothing is saved, and offers
+    them back to a clinic that wants to start over.
+    """
+    return AssistantDefaults(prompt=DEFAULT_PROMPT, examples=DEFAULT_EXAMPLES)
 
 
 @router.patch(

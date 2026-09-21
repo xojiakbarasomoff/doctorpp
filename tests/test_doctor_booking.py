@@ -1,16 +1,13 @@
-"""Dr. Temur's week, the booking marker, and the two prompt modes.
+"""Dr. Temur's week and the booking marker.
 
 The rules here are the ones a patient notices when they break: being offered
-a Sunday, being booked into 17:00 when the doctor leaves at five, being told
-they are booked by an assistant that was meant to send them to the telephone,
-or being read the doctor's CV in answer to "salom".
+a Sunday, or being booked into 17:00 when the doctor leaves at five.
 """
 
 from datetime import date, datetime, timedelta
 
 import pytest
 
-from app.services.answer import _build_system_prompt
 from app.services.appointment import CLINIC_TIMEZONE, day_slots, is_within_working_hours
 from app.services.booking import extract, marker_details, render
 from app.services.patient_media import ACKNOWLEDGEMENTS, caption
@@ -80,42 +77,6 @@ def test_placeholder_words_are_not_stored_as_a_phone_or_a_reason() -> None:
 
 def test_the_book_tells_the_model_how_long_an_appointment_is() -> None:
     assert "20 minutes each" in render([_at(FRIDAY, 9, 0)], _at(FRIDAY, 8, 0))
-
-
-# --- the prompt -------------------------------------------------------------------
-
-
-def _prompt(**overrides: object) -> str:
-    values: dict[str, object] = {
-        "default_language": "Uzbek",
-        "clinic_phone_numbers": "+998 70 310 40 40",
-        "clinic_address": None,
-        "doctor_name": "Axmadaliyev Temur",
-        "doctor_specialty": "urolog-androlog",
-    }
-    values.update(overrides)
-    return _build_system_prompt((), **values)  # type: ignore[arg-type]
-
-
-def test_without_a_book_there_is_no_booking_marker() -> None:
-    prompt = _prompt()
-
-    assert "[[BOOK:YYYY" not in prompt
-    assert "THE APPOINTMENT BOOK" not in prompt
-
-
-def test_with_a_book_the_model_can_book() -> None:
-    prompt = _prompt(appointment_book=render([_at(FRIDAY, 9, 0)], _at(FRIDAY, 8, 0)))
-
-    assert "[[BOOK:YYYY-MM-DDTHH:MM|full name|telephone|reason]]" in prompt
-    assert "09:00" in prompt
-
-
-def test_the_doctors_background_is_given_to_the_model() -> None:
-    prompt = _prompt(doctor_background="- Ish tajribasi: 5 yil")
-
-    assert "- Ish tajribasi: 5 yil" in prompt
-    assert "Ish tajribasi" not in _prompt()
 
 
 # --- photos -----------------------------------------------------------------------

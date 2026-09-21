@@ -469,6 +469,18 @@
 
   <section id="tab-faq" hidden>
     <div class="panel">
+      <h2>Bot uslubi va qoidalari</h2>
+      <p class="muted">Bot shu matn bo'yicha yozadi: kim ekani, yozish uslubi, taqiqlangan iboralar, chegaralar. Yangi hodimga yo'riqnoma yozgandek o'zgartiring — keyingi javobdan kuchga kiradi. Manzil, telefon, ish vaqti, shifokorlar, quyidagi bilim bazasi va suhbat holati matnga o'zi qo'shiladi: ular <code>{klinika_malumotlari}</code>, <code>{bilimlar_bazasi}</code>, <code>{suhbat_holati}</code>, <code>{namunalar}</code> o'rniga tushadi (matnda bo'lmasa oxiriga qo'shiladi).</p>
+      <form id="assistantForm" class="grid">
+        <div style="grid-column:1/-1"><label for="aPrompt">Bot ko'rsatmasi</label><textarea id="aPrompt" rows="24" spellcheck="false"></textarea></div>
+        <div style="grid-column:1/-1"><label for="aExamples">Namunaviy yozishmalar (faqat uslub uchun; bo'sh qoldirsangiz namunasiz ishlaydi)</label><textarea id="aExamples" rows="16" spellcheck="false"></textarea></div>
+        <div>
+          <button class="act primary" type="submit">Saqlash</button>
+          <button class="act" type="button" id="assistantReset">Standart matnni qo'yish</button>
+        </div>
+      </form>
+    </div>
+    <div class="panel">
       <h2>Bilim bazasi</h2>
       <p class="muted">Bot faqat shu yerdagi ma'lumotdan javob beradi. Yangi savol qo'shilganda u avtomatik indekslanadi.</p>
       <div class="scroll"><table>
@@ -1140,6 +1152,16 @@ async function removeFaq(id) {
   } catch (err) { toast(err.message, true); }
 }
 
+let ASSISTANT_DEFAULTS = null;
+
+async function loadAssistant() {
+  const [stored, defaults] = await Promise.all([api("/settings"), api("/assistant-defaults")]);
+  ASSISTANT_DEFAULTS = defaults;
+  // Nothing saved means the bot is using the defaults, so that is what is shown.
+  document.getElementById("aPrompt").value = stored.assistant_prompt ?? defaults.prompt;
+  document.getElementById("aExamples").value = stored.assistant_examples ?? defaults.examples;
+}
+
 async function loadSettings() {
   const s = await api("/settings");
   document.getElementById("sAddr").value = s.clinic_address || "";
@@ -1198,6 +1220,31 @@ document.getElementById("faqForm").addEventListener("submit", async (e) => {
     e.target.reset();
     await loadFaqs();
   } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("assistantForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const prompt = document.getElementById("aPrompt").value;
+  const examples = document.getElementById("aExamples").value;
+  const d = ASSISTANT_DEFAULTS;
+  try {
+    // Text identical to the default is saved as "use the default", so a
+    // clinic that never edits it keeps getting improvements to it. An empty
+    // prompt is never saved as empty; an empty examples box is a choice.
+    await api("/settings", { method: "PATCH", body: {
+      assistant_prompt: !prompt.trim() || prompt.trim() === d.prompt.trim() ? null : prompt,
+      assistant_examples: examples.trim() === d.examples.trim() ? null : examples,
+    } });
+    toast("Saqlandi — keyingi javobdan kuchga kiradi");
+    await loadAssistant();
+  } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("assistantReset").addEventListener("click", () => {
+  if (!ASSISTANT_DEFAULTS) return;
+  document.getElementById("aPrompt").value = ASSISTANT_DEFAULTS.prompt;
+  document.getElementById("aExamples").value = ASSISTANT_DEFAULTS.examples;
+  toast("Standart matn qo'yildi — saqlash uchun «Saqlash» ni bosing");
 });
 
 document.getElementById("settingsForm").addEventListener("submit", async (e) => {
@@ -1311,7 +1358,7 @@ async function removeStaff(id, name) {
 // of these again on the request itself.
 function applyPermissions() {
   document.querySelector('#tabs button[data-tab="staff"]').hidden = !can("manage_staff");
-  for (const id of ["doctorForm", "faqForm", "settingsForm"]) {
+  for (const id of ["doctorForm", "faqForm", "settingsForm", "assistantForm"]) {
     const form = document.getElementById(id);
     if (form) form.hidden = !canManageClinic();
   }
@@ -1734,7 +1781,7 @@ const LOADERS = {
   report: loadReport,
   leads: loadLeads,
   doctors: loadDoctors,
-  faq: loadFaqs,
+  faq: () => Promise.all([loadFaqs(), loadAssistant()]),
   settings: loadSettings,
   staff: loadStaff,
 };

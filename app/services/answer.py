@@ -1,148 +1,116 @@
 """Turning a patient's message into a reply.
 
-The model is given who it is, what the clinic has told us about itself, the
-knowledge base rows that match the question, the free appointment slots, and
-the conversation so far -- and writes the reply itself. There are no canned
-answers and no rewriting of what it says; the only thing done to its text
-afterwards is taking the [[BOOK:...]] and [[CALLBACK:...]] markers out, which
-happens in the callers.
+The model is given the clinic's persona (written in the dashboard, see
+app.services.persona), the facts that go with it, and the conversation, and
+writes the reply itself. Nothing it says is checked or rewritten here.
+
+What this module adds to the persona is the part that is not the clinic's to
+edit: the markers the rest of the system reads ([[BOOK:...]], [[CALLBACK:...]])
+and the appointment book they refer to.
 """
 
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.tenant_context import get_current_tenant
-from app.models.doctor import Doctor
+from app.models.tenant import Tenant
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider, get_llm_provider
 from app.rag.retrieval import retrieve_relevant_faqs
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
+from app.services import persona as persona_service
+from app.services.language import conversation_script
+from app.services.patient_profile import Profile
+from app.services.persona import ClinicFacts, PatientState, Persona
 from app.services.tenant_resolution import clinic_rules as clinic_rules_for
 
 logger = logging.getLogger(__name__)
 
-_CLINIC_OPENING = """\
-You answer patients who write to a medical clinic in a direct-message chat, \
-as the clinic's front desk."""
+_CALLBACK_CONTRACT = """\
+If the patient asks to be called and gives a number, end your reply with \
+[[CALLBACK:<their number>|<why they want the call, at most twelve words>]]. \
+The patient never sees it; it puts them on the list of people to ring. Write \
+it once per request."""
 
-_DOCTOR_OPENING = """\
-You answer the direct messages sent to {doctor_name}, {doctor_specialty}, as \
-the doctor's administrator."""
-
-_DOCTOR_BACKGROUND = """
-
-About the doctor:
-{background}"""
-
-_PREAMBLE = """\
-{opening}
-
-Reply in the language and alphabet the patient writes in. When that is \
-unclear, reply in {default_language}.{clinic_facts}"""
-
-_FAQ_BLOCK = """
-
-Clinic information:
-{faq_context}"""
-
-_BOOKING_BLOCK = """
-
-Booking: you can book appointments yourself from THE APPOINTMENT BOOK below. \
-When a patient has agreed to a specific free time, end your reply with \
+_BOOKING_CONTRACT = """\
+You can book appointments yourself, from THE APPOINTMENT BOOK below. Only \
+times listed there exist. When the patient has agreed to one specific listed \
+time and you have their name, telephone number and reason for the visit, \
+confirm it in one short message and end that same message with \
 [[BOOK:YYYY-MM-DDTHH:MM|full name|telephone|reason]], using the date and \
-time exactly as the book lists them. The patient never sees the marker; it \
-is what writes the appointment down."""
+time exactly as the book gives them. The patient never sees the marker; it \
+is what writes the appointment down. Never write it before they have agreed \
+to a time, and never tell a patient they are booked in a message that does \
+not carry it. Say the day the way a person would ("bugun", "ertaga", \
+"1-sentabr"), never as 2026-09-01."""
 
-_CALLBACK_BLOCK = """
-
-If a patient asks to be called and gives a number, end your reply with \
-[[CALLBACK:<their number>|<why they want the call>]]. The patient never sees \
-it; it puts them on the list of people to ring."""
+_LANGUAGE_CONTRACT = "When the patient's language is unclear, reply in {default_language}."
 
 
-def _format_faq_context(matches: Sequence[KnowledgeBaseMatch]) -> str:
-    return "\n\n".join(
-        f"Q: {match.knowledge_base.question}\nA: {match.knowledge_base.answer}" for match in matches
+def _setting(stored: dict[str, Any], key: str, fallback: str | None = None) -> str | None:
+    value = stored.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return fallback
+
+
+def _clinic_facts(
+    tenant: Tenant | None,
+    settings: Settings,
+    doctors: Sequence[Any],
+    rules: Sequence[str],
+) -> ClinicFacts:
+    """The dashboard's own settings first, the deployment's environment second.
+
+    The dashboard has had boxes for the address, the telephone numbers and the
+    hours from the start, and nothing read them: a clinic could type its
+    address, press save, and watch the bot say it did not know.
+    """
+    stored = tenant.settings if tenant is not None else {}
+    lead = (
+        f"{settings.doctor_name}, {settings.doctor_specialty}"
+        if settings.doctor_name and settings.doctor_specialty
+        else None
     )
-
-
-def _doctor_roster(doctors: Sequence[Doctor]) -> str:
-    if not doctors:
-        return ""
-    lines = "\n".join(
-        f"- {doctor.name} — {doctor.specialty} — {doctor.working_hours}" for doctor in doctors
+    return ClinicFacts(
+        name=tenant.name if tenant is not None else None,
+        address=_setting(stored, "clinic_address", settings.clinic_address),
+        landmark=_setting(stored, "clinic_landmark"),
+        phone_numbers=_setting(stored, "clinic_phone_numbers", settings.clinic_phone_numbers),
+        work_hours=_setting(stored, "clinic_work_hours", settings.clinic_work_hours),
+        doctors=[(d.name, d.specialty, d.working_hours) for d in doctors],
+        lead_doctor=lead,
+        lead_doctor_background=settings.doctor_background_text if lead else None,
+        rules=rules,
     )
-    return f"\n\nDoctors:\n{lines}"
-
-
-def _clinic_facts_block(
-    clinic_address: str | None,
-    clinic_phone_numbers: str | None,
-    doctors: Sequence[Doctor] = (),
-    clinic_work_hours: str | None = None,
-) -> str:
-    lines: list[str] = []
-    if clinic_address:
-        lines.append(f"Address: {clinic_address}")
-    if clinic_phone_numbers:
-        lines.append(f"Phone: {clinic_phone_numbers}")
-    if clinic_work_hours:
-        lines.append(f"Open: {clinic_work_hours}")
-    details = "\n\nClinic details:\n" + "\n".join(lines) if lines else ""
-    return details + _doctor_roster(doctors)
-
-
-def _clinic_rules_block(rules: Sequence[str]) -> str:
-    """The clinic's own instructions, as typed into the dashboard."""
-    if not rules:
-        return ""
-    listed = "\n".join(f"- {rule}" for rule in rules)
-    return f"\n\nThe clinic's own instructions:\n{listed}"
-
-
-def _opening(
-    doctor_name: str | None, doctor_specialty: str | None, doctor_background: str | None = None
-) -> str:
-    if doctor_name and doctor_specialty:
-        opening = _DOCTOR_OPENING.format(doctor_name=doctor_name, doctor_specialty=doctor_specialty)
-        if doctor_background:
-            opening += _DOCTOR_BACKGROUND.format(background=doctor_background)
-        return opening
-    return _CLINIC_OPENING
 
 
 def _build_system_prompt(
+    persona: Persona,
+    *,
+    facts: ClinicFacts,
     matches: Sequence[KnowledgeBaseMatch],
+    state: PatientState,
     default_language: str,
-    clinic_phone_numbers: str | None,
-    clinic_address: str | None,
-    doctors: Sequence[Doctor] = (),
-    clinic_work_hours: str | None = None,
-    clinic_rules: Sequence[str] = (),
-    doctor_name: str | None = None,
-    doctor_specialty: str | None = None,
-    doctor_background: str | None = None,
     appointment_book: str | None = None,
 ) -> str:
-    prompt = _PREAMBLE.format(
-        opening=_opening(doctor_name, doctor_specialty, doctor_background),
-        default_language=default_language,
-        clinic_facts=_clinic_facts_block(
-            clinic_address, clinic_phone_numbers, doctors, clinic_work_hours
-        ),
+    prompt = persona_service.render(
+        persona,
+        facts=facts,
+        knowledge=[(m.knowledge_base.question, m.knowledge_base.answer) for m in matches],
+        state=state,
     )
-    if matches:
-        prompt += _FAQ_BLOCK.format(faq_context=_format_faq_context(matches))
-    prompt += _clinic_rules_block(clinic_rules)
-    prompt += _CALLBACK_BLOCK
+    prompt += "\n\n" + _LANGUAGE_CONTRACT.format(default_language=default_language)
+    prompt += "\n\n" + _CALLBACK_CONTRACT
     if appointment_book is not None:
-        prompt += _BOOKING_BLOCK + appointment_book
+        prompt += "\n\n" + _BOOKING_CONTRACT + appointment_book
     return prompt
 
 
@@ -170,6 +138,7 @@ async def generate_answer(
     llm_provider: LLMProvider | None = None,
     settings: Settings | None = None,
     history: Sequence[ChatMessage] | None = None,
+    patient: Profile | None = None,
 ) -> str:
     """Ask the model to answer the patient, with the clinic's facts in hand.
 
@@ -179,27 +148,36 @@ async def generate_answer(
     user_message here cannot repeat them.
     """
     resolved_settings = settings or get_settings()
+    tenant_id = get_current_tenant()
+    tenant = await session.get(Tenant, tenant_id)
 
     matches = await retrieve_relevant_faqs(
         session, user_message, embedding_provider=embedding_provider
     )
     doctors = await DoctorRepository(session).list_active()
+
+    # A language the patient asked for outranks the alphabet their latest
+    # message happens to be in: somebody who said "по-русски" and then typed
+    # "ok" was being answered in Uzbek again.
+    script = (patient.language if patient else None) or conversation_script(history, user_message)
+    state = PatientState(
+        name=patient.name if patient else None,
+        phone=patient.phone if patient else None,
+        script=script,
+    )
     system_prompt = _build_system_prompt(
-        matches,
-        doctors=doctors,
+        persona_service.from_settings(tenant.settings if tenant is not None else None),
+        facts=_clinic_facts(
+            tenant, resolved_settings, doctors, await clinic_rules_for(session, tenant_id)
+        ),
+        matches=matches,
+        state=state,
         default_language=resolved_settings.default_reply_language,
-        clinic_phone_numbers=resolved_settings.clinic_phone_numbers,
-        clinic_address=resolved_settings.clinic_address,
-        clinic_work_hours=resolved_settings.clinic_work_hours,
-        doctor_name=resolved_settings.doctor_name,
-        doctor_specialty=resolved_settings.doctor_specialty,
-        doctor_background=resolved_settings.doctor_background_text,
         appointment_book=(
             await _appointment_book(session, len(doctors))
             if resolved_settings.booking_enabled
             else None
         ),
-        clinic_rules=await clinic_rules_for(session, get_current_tenant()),
     )
     provider = llm_provider or get_llm_provider()
     conversation: list[ChatMessage] = [

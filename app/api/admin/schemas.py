@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.roles import Permission
 from app.models.appointment import AppointmentStatus
 from app.models.lead import LeadStatus
+from app.services.persona import MAX_EXAMPLES_LENGTH, MAX_PROMPT_LENGTH
 
 
 def _not_blank(value: str) -> str:
@@ -228,6 +229,18 @@ class TenantSettings(BaseModel):
     clinic_latitude: float | None = Field(default=None, ge=-90, le=90)
     clinic_longitude: float | None = Field(default=None, ge=-180, le=180)
     strict_rules: list[str] | None = None
+    # The bot's persona and its example conversations, in the clinic's own
+    # words (see app.services.persona). null puts the default back; for the
+    # examples an empty string is a choice -- no examples -- and is kept.
+    assistant_prompt: str | None = Field(default=None, max_length=MAX_PROMPT_LENGTH)
+    assistant_examples: str | None = Field(default=None, max_length=MAX_EXAMPLES_LENGTH)
+
+
+class AssistantDefaults(BaseModel):
+    """What the bot uses until the clinic writes its own."""
+
+    prompt: str
+    examples: str
 
 
 # --- analytics -------------------------------------------------------------

@@ -73,6 +73,7 @@ async def respond(
         llm_provider=llm_provider,
         settings=resolved,
         history=list(history or []),
+        patient=profile,
     )
 
     appointment: Appointment | None = None

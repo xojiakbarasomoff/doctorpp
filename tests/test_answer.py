@@ -10,7 +10,9 @@ from app.models.doctor import Doctor
 from app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.knowledge_base import KnowledgeBaseRepository
-from app.services.answer import _build_system_prompt, generate_answer
+from app.services.answer import generate_answer
+from app.services.patient_profile import Profile
+from app.services.persona import DEFAULT_PROMPT
 from tests.conftest import Seed, isolated_settings
 
 # A fixed, non-zero direction. Distance to itself is 0.0, so any FAQ seeded
@@ -22,10 +24,8 @@ QUERY_VECTOR = [1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1)
 class FakeEmbeddingProvider(EmbeddingProvider):
     def __init__(self, vector: list[float]) -> None:
         self._vector = vector
-        self.calls: list[list[str]] = []
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        self.calls.append(texts)
         return [self._vector for _ in texts]
 
 
@@ -37,12 +37,6 @@ class FakeLLMProvider(LLMProvider):
     async def generate(self, system_prompt: str, messages: list[ChatMessage]) -> str:
         self.calls.append((system_prompt, messages))
         return self._reply
-
-
-async def _make_faq(db_session: AsyncSession, question: str, answer: str) -> None:
-    await KnowledgeBaseRepository(db_session).create(
-        question=question, answer=answer, embedding=QUERY_VECTOR
-    )
 
 
 def _settings(**overrides: object) -> Settings:
@@ -59,12 +53,20 @@ async def _ask(
     with_faq: bool = False,
     doctors: Sequence[tuple[str, str, str]] = (),
     history: Sequence[ChatMessage] | None = None,
+    patient: Profile | None = None,
+    tenant_settings: dict[str, object] | None = None,
     **settings_overrides: object,
 ) -> tuple[str, FakeLLMProvider]:
     llm_provider = FakeLLMProvider(reply=reply)
     with as_tenant(seed.tenant_a.id):
+        if tenant_settings is not None:
+            seed.tenant_a.settings = {**seed.tenant_a.settings, **tenant_settings}
         if with_faq:
-            await _make_faq(db_session, "What are your hours?", "9 to 5, Mon-Sat.")
+            await KnowledgeBaseRepository(db_session).create(
+                question="Konsultatsiya narxi qancha?",
+                answer="Konsultatsiya 150 000 so'm.",
+                embedding=QUERY_VECTOR,
+            )
         for name, specialty, hours in doctors:
             db_session.add(
                 Doctor(
@@ -83,41 +85,22 @@ async def _ask(
             llm_provider=llm_provider,
             settings=_settings(**settings_overrides),
             history=history,
+            patient=patient,
         )
     return result, llm_provider
 
 
-async def test_faq_context_reaches_the_model_and_its_reply_is_returned(
+async def test_the_models_reply_is_returned_exactly_as_written(
     db_session: AsyncSession,
     seed: Seed,
     as_tenant: Callable[[UUID], AbstractContextManager[None]],
 ) -> None:
-    result, llm = await _ask(
-        db_session,
-        seed,
-        as_tenant,
-        "What time do you open?",
-        reply="We're open 9 to 5, Monday to Saturday.",
-        with_faq=True,
-    )
+    written = "Va alaykum assalom! Tushundim. Kuniga 2 mahal ichib turing? " + "Uzun matn. " * 40
 
-    assert result == "We're open 9 to 5, Monday to Saturday."
-    system_prompt, messages = llm.calls[0]
-    assert "Q: What are your hours?" in system_prompt
-    assert "A: 9 to 5, Mon-Sat." in system_prompt
-    assert messages == [{"role": "user", "content": "What time do you open?"}]
+    result, llm = await _ask(db_session, seed, as_tenant, "Salom", reply=written)
 
-
-async def test_the_model_answers_even_when_no_faq_matches(
-    db_session: AsyncSession,
-    seed: Seed,
-    as_tenant: Callable[[UUID], AbstractContextManager[None]],
-) -> None:
-    result, llm = await _ask(db_session, seed, as_tenant, "Do you offer teeth whitening?")
-
-    assert result == "Sure, here's the answer."
+    assert result == written
     assert len(llm.calls) == 1
-    assert "Clinic information:" not in llm.calls[0][0]
 
 
 @pytest.mark.parametrize(
@@ -138,19 +121,166 @@ async def test_every_message_goes_to_the_model(
     assert len(llm.calls) == 1
 
 
-async def test_the_reply_is_sent_exactly_as_the_model_wrote_it(
+async def test_a_matching_knowledge_base_row_is_in_the_prompt(
     db_session: AsyncSession,
     seed: Seed,
     as_tenant: Callable[[UUID], AbstractContextManager[None]],
 ) -> None:
-    written = (
-        "Va alaykum assalom! Tushundim. Kuniga 2 mahal ichib turing? Yana nima? "
-        "Ismingizni yozing? Raqamingizni yozing? " + "Uzun matn. " * 40
-    )
-    result, llm = await _ask(db_session, seed, as_tenant, "Salom", reply=written)
+    _, llm = await _ask(db_session, seed, as_tenant, "Narxi qancha?", with_faq=True)
 
-    assert result == written
-    assert len(llm.calls) == 1
+    prompt, messages = llm.calls[0]
+    assert "# BILIMLAR BAZASI" in prompt
+    assert "Savol: Konsultatsiya narxi qancha?\nJavob: Konsultatsiya 150 000 so'm." in prompt
+    assert messages == [{"role": "user", "content": "Narxi qancha?"}]
+
+
+async def test_with_no_match_the_model_is_told_not_to_guess(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    result, llm = await _ask(db_session, seed, as_tenant, "Implant qilasizmi?")
+
+    assert result == "Sure, here's the answer."
+    assert "Bu savolga mos yozuv topilmadi" in llm.calls[0][0]
+
+
+async def test_the_default_persona_is_used_until_the_clinic_writes_its_own(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(db_session, seed, as_tenant, "Salom")
+
+    assert llm.calls[0][0].startswith(DEFAULT_PROMPT.split("\n")[0])
+    assert "# TAQIQLANGAN IBORALAR" in llm.calls[0][0]
+    assert "# NAMUNA YOZISHMALAR" in llm.calls[0][0]
+
+
+async def test_the_clinics_own_persona_and_examples_from_the_dashboard_are_used(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Salom",
+        tenant_settings={
+            "assistant_prompt": "Siz Nigora ismli administratorsiz.",
+            "assistant_examples": "Bemor: Salom\nAdmin: Salom, eshitaman.",
+        },
+    )
+
+    prompt = llm.calls[0][0]
+    assert prompt.startswith("Siz Nigora ismli administratorsiz.")
+    assert "Admin: Salom, eshitaman." in prompt
+    assert "Madina" not in prompt
+
+
+async def test_one_clinics_persona_is_not_read_by_another(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_b.id):
+        seed.tenant_b.settings = {**seed.tenant_b.settings, "assistant_prompt": "B klinikasi"}
+        await db_session.flush()
+
+    _, llm = await _ask(db_session, seed, as_tenant, "Salom")
+
+    assert "B klinikasi" not in llm.calls[0][0]
+
+
+async def test_the_dashboards_clinic_details_reach_the_model(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Manzilingiz qayerda?",
+        tenant_settings={
+            "clinic_address": "Toshkent, Chilonzor 1",
+            "clinic_landmark": "Metro yonida",
+            "clinic_phone_numbers": "+998 71 200 03 93",
+            "clinic_work_hours": "Du-Sh 09:00-17:00",
+            "strict_rules": ["Shanba kuni ham ishlaymiz"],
+        },
+        doctors=[("Dr. Karimova N.S.", "Urolog", "09:00 - 17:00")],
+    )
+
+    prompt = llm.calls[0][0]
+    assert "Manzil: Toshkent, Chilonzor 1" in prompt
+    assert "Mo'ljal: Metro yonida" in prompt
+    assert "Telefon: +998 71 200 03 93" in prompt
+    assert "Ish vaqti: Du-Sh 09:00-17:00" in prompt
+    assert "- Dr. Karimova N.S. — Urolog — 09:00 - 17:00" in prompt
+    assert "- Shanba kuni ham ishlaymiz" in prompt
+
+
+async def test_the_deployments_environment_fills_what_the_dashboard_left_empty(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Salom",
+        tenant_settings={"clinic_address": "Dashboarddagi manzil", "clinic_phone_numbers": "  "},
+        clinic_address="Env manzil",
+        clinic_phone_numbers="+998 70 310 40 40",
+        doctor_name="Axmadaliyev Temur",
+        doctor_specialty="urolog-androlog",
+        doctor_background="Ish tajribasi: 5 yil",
+    )
+
+    prompt = llm.calls[0][0]
+    assert "Manzil: Dashboarddagi manzil" in prompt
+    assert "Env manzil" not in prompt
+    assert "Telefon: +998 70 310 40 40" in prompt
+    assert "Shifokor: Axmadaliyev Temur, urolog-androlog" in prompt
+    assert "Shifokor haqida:\n- Ish tajribasi: 5 yil" in prompt
+
+
+async def test_what_the_clinic_knows_about_the_patient_is_in_the_prompt(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "16:20",
+        history=[{"role": "user", "content": "буйрагим оғрияпти"}],
+        patient=Profile(name="Asadbek Risqiyev", phone="+998939511111"),
+    )
+
+    assert (
+        "Ism: Asadbek Risqiyev | Telefon: +998939511111 | Til/yozuv: o'zbek, kirill yozuvi"
+    ) in llm.calls[0][0]
+
+
+async def test_a_language_the_patient_asked_for_outranks_the_alphabet_of_their_message(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "ok",
+        patient=Profile(name=None, phone=None, language="ru"),
+    )
+
+    assert "Til/yozuv: rus, kirill yozuvi" in llm.calls[0][0]
 
 
 async def test_history_is_passed_to_the_model(
@@ -162,37 +292,13 @@ async def test_history_is_passed_to_the_model(
         {"role": "user", "content": "Salom"},
         {"role": "assistant", "content": "Va alaykum assalom"},
     ]
+
     _, llm = await _ask(db_session, seed, as_tenant, "Narxi qancha?", history=history)
 
     assert llm.calls[0][1] == [*history, {"role": "user", "content": "Narxi qancha?"}]
 
 
-async def test_clinic_details_and_doctors_are_given_to_the_model(
-    db_session: AsyncSession,
-    seed: Seed,
-    as_tenant: Callable[[UUID], AbstractContextManager[None]],
-) -> None:
-    _, llm = await _ask(
-        db_session,
-        seed,
-        as_tenant,
-        "Salom",
-        doctors=[("Dr. Karimova N.S.", "Urolog", "09:00 - 17:00")],
-        clinic_address="Toshkent, Chilonzor 1",
-        clinic_phone_numbers="+998 71 200 03 93",
-        clinic_work_hours="Du-Sh 09:00-18:00",
-        default_reply_language="Uzbek",
-    )
-
-    prompt = llm.calls[0][0]
-    assert "Address: Toshkent, Chilonzor 1" in prompt
-    assert "Phone: +998 71 200 03 93" in prompt
-    assert "Open: Du-Sh 09:00-18:00" in prompt
-    assert "- Dr. Karimova N.S. — Urolog — 09:00 - 17:00" in prompt
-    assert "reply in Uzbek" in prompt
-
-
-async def test_the_appointment_book_is_given_only_when_booking_is_on(
+async def test_the_booking_contract_and_the_book_appear_only_when_booking_is_on(
     db_session: AsyncSession,
     seed: Seed,
     as_tenant: Callable[[UUID], AbstractContextManager[None]],
@@ -201,43 +307,27 @@ async def test_the_appointment_book_is_given_only_when_booking_is_on(
     _, on = await _ask(db_session, seed, as_tenant, "Salom", booking_enabled=True)
 
     assert "THE APPOINTMENT BOOK" not in off.calls[0][0]
+    assert "[[BOOK:" not in off.calls[0][0]
     assert "THE APPOINTMENT BOOK" in on.calls[0][0]
-    assert "[[BOOK:" in on.calls[0][0]
+    assert "[[BOOK:YYYY-MM-DDTHH:MM|full name|telephone|reason]]" in on.calls[0][0]
 
 
-def _prompt_for(**kwargs: object) -> str:
-    return _build_system_prompt(
-        [],
-        default_language="Uzbek",
-        clinic_phone_numbers=None,
-        clinic_address=None,
-        **kwargs,  # type: ignore[arg-type]
+async def test_a_persona_that_forgets_the_markers_still_gets_them(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """The markers are what writes bookings and callbacks down. They are not
+    the clinic's text to delete."""
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Salom",
+        tenant_settings={"assistant_prompt": "Faqat qisqa yozing."},
+        booking_enabled=True,
     )
 
-
-def test_a_doctors_inbox_speaks_as_that_doctors_administrator() -> None:
-    prompt = _prompt_for(doctor_name="Axmadaliyev Temur", doctor_specialty="urolog-androlog")
-
-    assert "Axmadaliyev Temur, urolog-androlog" in prompt
-    assert "administrator" in prompt
-    assert "front desk" not in prompt
-
-
-@pytest.mark.parametrize(
-    "persona",
-    [{}, {"doctor_name": "Axmadaliyev Temur"}, {"doctor_specialty": "urolog-androlog"}],
-)
-def test_without_a_whole_doctor_the_clinic_voice_is_kept(persona: dict[str, str]) -> None:
-    assert "front desk" in _prompt_for(**persona)
-
-
-def test_a_brace_in_the_doctors_name_is_not_a_template_field() -> None:
-    prompt = _prompt_for(doctor_name="Dr {x}", doctor_specialty="urolog")
-
-    assert "Dr {x}, urolog" in prompt
-
-
-def test_the_clinics_own_instructions_reach_the_prompt() -> None:
-    prompt = _prompt_for(clinic_rules=["Shanba kuni ham ishlaymiz"])
-
-    assert "- Shanba kuni ham ishlaymiz" in prompt
+    prompt = llm.calls[0][0]
+    assert "[[CALLBACK:" in prompt
+    assert "[[BOOK:" in prompt
