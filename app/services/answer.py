@@ -21,10 +21,11 @@ from app.core.tenant_context import get_current_tenant
 from app.models.tenant import Tenant
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider, get_llm_provider
-from app.rag.retrieval import retrieve_relevant_faqs
+from app.rag.retrieval import retrieve_knowledge
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
+from app.repositories.knowledge_document import ChunkMatch
 from app.services import persona as persona_service
 from app.services.language import conversation_script
 from app.services.patient_profile import Profile
@@ -92,6 +93,12 @@ def _clinic_facts(
     )
 
 
+def _source(match: ChunkMatch) -> str:
+    """Where a piece of an uploaded file came from: "narxlar.pdf, 3-bet"."""
+    label = match.chunk.label
+    return f"{match.filename}, {label}" if label else match.filename
+
+
 def _build_system_prompt(
     persona: Persona,
     *,
@@ -100,12 +107,14 @@ def _build_system_prompt(
     state: PatientState,
     default_language: str,
     appointment_book: str | None = None,
+    chunks: Sequence[ChunkMatch] = (),
 ) -> str:
     prompt = persona_service.render(
         persona,
         facts=facts,
         knowledge=[(m.knowledge_base.question, m.knowledge_base.answer) for m in matches],
         state=state,
+        excerpts=[(_source(c), c.chunk.content) for c in chunks],
     )
     prompt += "\n\n" + _LANGUAGE_CONTRACT.format(default_language=default_language)
     prompt += "\n\n" + _CALLBACK_CONTRACT
@@ -151,7 +160,7 @@ async def generate_answer(
     tenant_id = get_current_tenant()
     tenant = await session.get(Tenant, tenant_id)
 
-    matches = await retrieve_relevant_faqs(
+    knowledge = await retrieve_knowledge(
         session, user_message, embedding_provider=embedding_provider
     )
     doctors = await DoctorRepository(session).list_active()
@@ -170,7 +179,8 @@ async def generate_answer(
         facts=_clinic_facts(
             tenant, resolved_settings, doctors, await clinic_rules_for(session, tenant_id)
         ),
-        matches=matches,
+        matches=knowledge.faqs,
+        chunks=knowledge.chunks,
         state=state,
         default_language=resolved_settings.default_reply_language,
         appointment_book=(

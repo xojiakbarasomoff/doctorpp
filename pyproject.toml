@@ -39,6 +39,12 @@ dependencies = [
     # csrf_token, never a secret.
     "itsdangerous>=2.2",
     "bcrypt>=4.2",
+    # Read the files a clinic uploads to its knowledge base
+    # (app.services.documents). All three are pure Python, so the slim image
+    # needs nothing installed beside them.
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +60,8 @@ dev = [
     "ruff==0.16.4",
     "black==26.5.1",
     "mypy==2.3.1",
+    # openpyxl ships no type information; app.services.documents imports it.
+    "types-openpyxl",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",

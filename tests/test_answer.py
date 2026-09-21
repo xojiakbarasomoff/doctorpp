@@ -10,6 +10,10 @@ from app.models.doctor import Doctor
 from app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.knowledge_base import KnowledgeBaseRepository
+from app.repositories.knowledge_document import (
+    KnowledgeChunkRepository,
+    KnowledgeDocumentRepository,
+)
 from app.services.answer import generate_answer
 from app.services.patient_profile import Profile
 from app.services.persona import DEFAULT_PROMPT
@@ -51,6 +55,7 @@ async def _ask(
     *,
     reply: str = "Sure, here's the answer.",
     with_faq: bool = False,
+    files: Sequence[tuple[str, str | None, str]] = (),
     doctors: Sequence[tuple[str, str, str]] = (),
     history: Sequence[ChatMessage] | None = None,
     patient: Profile | None = None,
@@ -66,6 +71,14 @@ async def _ask(
                 question="Konsultatsiya narxi qancha?",
                 answer="Konsultatsiya 150 000 so'm.",
                 embedding=QUERY_VECTOR,
+            )
+        for filename, label, text in files:
+            document = await KnowledgeDocumentRepository(db_session).create(
+                filename=filename, content_type=None, size_bytes=len(text), chunk_count=1
+            )
+            await KnowledgeChunkRepository(db_session).add_many(
+                document.id,
+                [{"ordinal": 0, "label": label, "content": text, "embedding": QUERY_VECTOR}],
             )
         for name, specialty, hours in doctors:
             db_session.add(
@@ -331,3 +344,71 @@ async def test_a_persona_that_forgets_the_markers_still_gets_them(
     prompt = llm.calls[0][0]
     assert "[[CALLBACK:" in prompt
     assert "[[BOOK:" in prompt
+
+
+async def test_a_matching_piece_of_an_uploaded_file_is_in_the_prompt_with_its_source(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "UZI qancha turadi?",
+        files=[("narxlar.pdf", "3-bet", "Xizmat: UZI; Narx: 150000")],
+    )
+
+    prompt = llm.calls[0][0]
+    assert "[narxlar.pdf, 3-bet]\nXizmat: UZI; Narx: 150000" in prompt
+    assert "Bu savolga mos yozuv topilmadi" not in prompt
+
+
+async def test_a_file_without_a_page_is_named_by_its_file_alone(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session, seed, as_tenant, "narxi", files=[("narxlar.csv", None, "UZI: 150000")]
+    )
+
+    assert "[narxlar.csv]\nUZI: 150000" in llm.calls[0][0]
+
+
+async def test_the_bot_answers_from_the_faq_and_the_files_together(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Narxi qancha?",
+        with_faq=True,
+        files=[("narxlar.pdf", None, "Xizmat: EKG; Narx: 80000")],
+    )
+
+    prompt = llm.calls[0][0]
+    assert "Javob: Konsultatsiya 150 000 so'm." in prompt
+    assert "[narxlar.pdf]\nXizmat: EKG; Narx: 80000" in prompt
+
+
+async def test_one_clinics_files_do_not_reach_another_clinics_bot(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_b.id):
+        document = await KnowledgeDocumentRepository(db_session).create(
+            filename="ularniki.pdf", content_type=None, size_bytes=1, chunk_count=1
+        )
+        await KnowledgeChunkRepository(db_session).add_many(
+            document.id,
+            [{"ordinal": 0, "label": None, "content": "MAXFIY", "embedding": QUERY_VECTOR}],
+        )
+
+    _, llm = await _ask(db_session, seed, as_tenant, "narxi")
+
+    assert "MAXFIY" not in llm.calls[0][0]

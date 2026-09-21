@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.services.knowledge_base as knowledge_base_service
+import app.services.knowledge_files as knowledge_files_service
 from app.api.admin.deps import CSRF_HEADER
 from app.core.db import get_db_session
 from app.core.encryption import encrypt
@@ -29,6 +30,7 @@ from app.models.message import MessageSender
 from app.rag.embeddings import EMBEDDING_DIMENSIONS, EmbeddingProvider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
+from app.repositories.knowledge_document import KnowledgeDocumentRepository
 from app.repositories.lead import LeadRepository
 from app.repositories.operator import OperatorRepository
 from app.services.appointment import CLINIC_TIMEZONE, is_within_working_hours
@@ -50,6 +52,7 @@ def _no_real_embeddings(monkeypatch: pytest.MonkeyPatch) -> None:
     itself, which FastAPI's dependency system never sees.
     """
     monkeypatch.setattr(knowledge_base_service, "get_embedding_provider", FakeEmbeddingProvider)
+    monkeypatch.setattr(knowledge_files_service, "get_embedding_provider", FakeEmbeddingProvider)
 
 
 @pytest.fixture
@@ -537,6 +540,167 @@ async def test_an_enormous_persona_is_rejected(
     )
 
     assert response.status_code == 422
+
+
+# --- files in the knowledge base ---
+
+_PRICES = b"Xizmat,Narx\nUZI,150000\nEKG,80000"
+
+
+def _upload_form(name: str = "narxlar.csv", data: bytes = _PRICES) -> dict[str, Any]:
+    return {"files": {"file": (name, data, "text/csv")}}
+
+
+async def test_a_file_is_uploaded_listed_and_deleted(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    csrf = _login_as(client, manager.id)
+
+    uploaded = await client.post(
+        "/api/admin/knowledge-files", headers={CSRF_HEADER: csrf}, **_upload_form()
+    )
+
+    assert uploaded.status_code == 201
+    body = uploaded.json()
+    assert body["filename"] == "narxlar.csv"
+    assert body["chunk_count"] == 1
+    assert body["size_bytes"] == len(_PRICES)
+    listed = (await client.get("/api/admin/knowledge-files")).json()
+    assert [row["id"] for row in listed] == [body["id"]]
+
+    deleted = await client.delete(
+        f"/api/admin/knowledge-files/{body['id']}", headers={CSRF_HEADER: csrf}
+    )
+    assert deleted.status_code == 204
+    assert (await client.get("/api/admin/knowledge-files")).json() == []
+
+
+async def test_uploading_a_name_again_replaces_it(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    csrf = _login_as(client, manager.id)
+
+    await client.post("/api/admin/knowledge-files", headers={CSRF_HEADER: csrf}, **_upload_form())
+    await client.post(
+        "/api/admin/knowledge-files",
+        headers={CSRF_HEADER: csrf},
+        **_upload_form(data=b"Xizmat,Narx\nUZI,1"),
+    )
+
+    listed = (await client.get("/api/admin/knowledge-files")).json()
+    assert len(listed) == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "fragment"),
+    [
+        ("virus.exe", b"MZ", "formati qo'llab-quvvatlanmaydi"),
+        ("bosh.txt", b"", "bo'sh"),
+        ("soxta.pdf", b"bu pdf emas", "PDF emas"),
+    ],
+)
+async def test_an_unusable_file_is_refused_with_a_reason_the_operator_can_read(
+    client: httpx.AsyncClient, seed: Seed, manager: Any, name: str, data: bytes, fragment: str
+) -> None:
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        "/api/admin/knowledge-files", headers={CSRF_HEADER: csrf}, **_upload_form(name, data)
+    )
+
+    assert response.status_code == 422
+    assert fragment in response.json()["detail"]
+    assert (await client.get("/api/admin/knowledge-files")).json() == []
+
+
+async def test_a_file_over_the_limit_is_refused_before_it_is_read(
+    client: httpx.AsyncClient, seed: Seed, manager: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("app.api.admin.knowledge_files.MAX_FILE_BYTES", 10)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        "/api/admin/knowledge-files",
+        headers={CSRF_HEADER: csrf},
+        **_upload_form(data=b"x" * 11),
+    )
+
+    assert response.status_code == 413
+
+
+async def test_an_embedding_outage_is_a_retryable_error_and_stores_nothing(
+    client: httpx.AsyncClient, seed: Seed, manager: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Down(EmbeddingProvider):
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            raise RuntimeError("down")
+
+    monkeypatch.setattr(knowledge_files_service, "get_embedding_provider", Down)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        "/api/admin/knowledge-files", headers={CSRF_HEADER: csrf}, **_upload_form()
+    )
+
+    assert response.status_code == 502
+    assert "qayta urinib" in response.json()["detail"]
+    assert (await client.get("/api/admin/knowledge-files")).json() == []
+
+
+async def test_an_upload_without_the_csrf_header_is_refused(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    _login_as(client, manager.id)
+
+    response = await client.post("/api/admin/knowledge-files", **_upload_form())
+
+    assert response.status_code == 403
+
+
+async def test_the_front_desk_cannot_add_or_remove_what_the_bot_quotes(
+    client: httpx.AsyncClient, seed: Seed, manager: Any, front_desk: Any
+) -> None:
+    manager_csrf = _login_as(client, manager.id)
+    uploaded = await client.post(
+        "/api/admin/knowledge-files", headers={CSRF_HEADER: manager_csrf}, **_upload_form()
+    )
+    csrf = _login_as(client, front_desk.id)
+
+    upload = await client.post(
+        "/api/admin/knowledge-files", headers={CSRF_HEADER: csrf}, **_upload_form("boshqa.csv")
+    )
+    delete = await client.delete(
+        f"/api/admin/knowledge-files/{uploaded.json()['id']}", headers={CSRF_HEADER: csrf}
+    )
+    # ...though they may see what is there.
+    listed = await client.get("/api/admin/knowledge-files")
+
+    assert upload.status_code == 403
+    assert delete.status_code == 403
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+
+
+async def test_another_clinics_file_is_neither_listed_nor_deletable(
+    client: httpx.AsyncClient,
+    seed: Seed,
+    manager: Any,
+    db_session: AsyncSession,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_b.id):
+        theirs = await KnowledgeDocumentRepository(db_session).create(
+            filename="ularniki.pdf", content_type=None, size_bytes=1, chunk_count=1
+        )
+    csrf = _login_as(client, manager.id)
+
+    listed = (await client.get("/api/admin/knowledge-files")).json()
+    deleted = await client.delete(
+        f"/api/admin/knowledge-files/{theirs.id}", headers={CSRF_HEADER: csrf}
+    )
+
+    assert listed == []
+    assert deleted.status_code == 404
 
 
 # --- appointments and analytics ---

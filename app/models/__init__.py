@@ -10,6 +10,7 @@ from app.models.conversation_state import (
 )
 from app.models.doctor import Doctor
 from app.models.knowledge_base import KnowledgeBase
+from app.models.knowledge_document import KnowledgeChunk, KnowledgeDocument
 from app.models.lead import Lead, LeadStatus
 from app.models.message import DeliveryStatus, Message, MessageSender
 from app.models.operator import Operator
@@ -31,6 +32,8 @@ __all__ = [
     "FlowStatus",
     "Doctor",
     "KnowledgeBase",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
     "Lead",
     "LeadStatus",
     "DeliveryStatus",

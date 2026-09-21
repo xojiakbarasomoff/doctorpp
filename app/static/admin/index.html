@@ -481,6 +481,18 @@
       </form>
     </div>
     <div class="panel">
+      <h2>Fayllar</h2>
+      <p class="muted">PDF, Word (.docx), Excel (.xlsx), CSV, TXT yoki MD fayl yuklang (10 MB gacha). Bot bemor savoliga mos joyini topib, shundan javob beradi — masalan narxlar ro'yxati yoki tahlilga tayyorgarlik varag'i. Shu nomdagi fayl qayta yuklansa, eskisi almashadi. Skanerlangan (rasm) PDF o'qilmaydi.</p>
+      <form id="fileForm" class="grid">
+        <div style="grid-column:1/-1"><label for="fFile">Fayl</label><input type="file" id="fFile" accept=".pdf,.docx,.xlsx,.csv,.txt,.md" multiple required></div>
+        <div><button class="act primary" type="submit" id="fileBtn">Yuklash</button></div>
+      </form>
+      <div class="scroll"><table>
+        <thead><tr><th>Fayl</th><th>Hajmi</th><th>Bo'laklar</th><th>Yuklangan</th><th></th></tr></thead>
+        <tbody id="fileRows"></tbody>
+      </table></div>
+    </div>
+    <div class="panel">
       <h2>Bilim bazasi</h2>
       <p class="muted">Bot faqat shu yerdagi ma'lumotdan javob beradi. Yangi savol qo'shilganda u avtomatik indekslanadi.</p>
       <div class="scroll"><table>
@@ -1152,6 +1164,58 @@ async function removeFaq(id) {
   } catch (err) { toast(err.message, true); }
 }
 
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+async function loadFiles() {
+  const rows = await api("/knowledge-files");
+  fill("fileRows", rows.map((f) =>
+    el("tr", {},
+      el("td", {}, f.filename),
+      el("td", {}, fmtBytes(f.size_bytes)),
+      el("td", {}, f.chunk_count),
+      el("td", {}, localDateTime(f.created_at)),
+      el("td", {}, canManageClinic()
+        ? el("button", { class: "act danger", onclick: () => removeFile(f) }, "O'chirish")
+        : null)
+    )
+  ));
+  if (!rows.length) fill("fileRows", [el("tr", {}, el("td", { colspan: "5", class: "muted" }, "Hali fayl yuklanmagan"))]);
+}
+
+async function removeFile(f) {
+  if (!confirm(`«${f.filename}» o'chirilsinmi? Bot undan endi javob bermaydi.`)) return;
+  try {
+    await api(`/knowledge-files/${f.id}`, { method: "DELETE", headers: { "X-CSRF-Token": CSRF } });
+    toast("O'chirildi");
+    await loadFiles();
+  } catch (err) { toast(err.message, true); }
+}
+
+// Not api(): that helper sends JSON, and a file goes as multipart. The
+// browser sets the multipart boundary itself, so no Content-Type here.
+async function uploadKnowledgeFile(file) {
+  const body = new FormData();
+  body.append("file", file);
+  const response = await fetch(API + "/knowledge-files", {
+    method: "POST",
+    headers: { "X-CSRF-Token": CSRF },
+    body,
+  });
+  if (response.redirected && response.url.includes("/login")) {
+    window.location.href = "/login";
+    throw new Error("session expired");
+  }
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error((result && typeof result.detail === "string" && result.detail) || ("Xatolik: " + response.status));
+  }
+  return result;
+}
+
 let ASSISTANT_DEFAULTS = null;
 
 async function loadAssistant() {
@@ -1220,6 +1284,33 @@ document.getElementById("faqForm").addEventListener("submit", async (e) => {
     e.target.reset();
     await loadFaqs();
   } catch (err) { toast(err.message, true); }
+});
+
+document.getElementById("fileForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("fFile");
+  const button = document.getElementById("fileBtn");
+  const files = [...input.files];
+  if (!files.length) return;
+  button.disabled = true;
+  try {
+    // One at a time: each is read, cut up and indexed on the server, and a
+    // failure should name the file it happened to and leave the others alone.
+    for (const [index, file] of files.entries()) {
+      button.textContent = `Yuklanmoqda ${index + 1}/${files.length}…`;
+      try {
+        const saved = await uploadKnowledgeFile(file);
+        toast(`«${saved.filename}» qo'shildi (${saved.chunk_count} bo'lak)`);
+      } catch (err) {
+        toast(`«${file.name}»: ${err.message}`, true);
+      }
+    }
+    input.value = "";
+    await loadFiles();
+  } finally {
+    button.disabled = false;
+    button.textContent = "Yuklash";
+  }
 });
 
 document.getElementById("assistantForm").addEventListener("submit", async (e) => {
@@ -1358,7 +1449,7 @@ async function removeStaff(id, name) {
 // of these again on the request itself.
 function applyPermissions() {
   document.querySelector('#tabs button[data-tab="staff"]').hidden = !can("manage_staff");
-  for (const id of ["doctorForm", "faqForm", "settingsForm", "assistantForm"]) {
+  for (const id of ["doctorForm", "faqForm", "settingsForm", "assistantForm", "fileForm"]) {
     const form = document.getElementById(id);
     if (form) form.hidden = !canManageClinic();
   }
@@ -1781,7 +1872,7 @@ const LOADERS = {
   report: loadReport,
   leads: loadLeads,
   doctors: loadDoctors,
-  faq: () => Promise.all([loadFaqs(), loadAssistant()]),
+  faq: () => Promise.all([loadFaqs(), loadAssistant(), loadFiles()]),
   settings: loadSettings,
   staff: loadStaff,
 };
