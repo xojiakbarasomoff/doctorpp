@@ -7,7 +7,7 @@ reply per comment, which is why it carries the answer and the public line
 carries none of it.
 """
 
-from app.services.guardrail import reply_script
+from app.services.language import reply_script
 
 PUBLIC_REPLIES = {
     "uz-latn": "Assalomu alaykum! Savolingizga Direct orqali javob berdik 🙌",

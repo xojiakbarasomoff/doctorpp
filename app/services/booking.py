@@ -134,10 +134,9 @@ PLACEHOLDER_NAMES = frozenset(
 MALFORMED_MARKER = re.compile(r"\[\[\s*BOOK[^\]]*\]?\]?")
 
 # Said when the slot the patient accepted was taken between the assistant
-# offering it and the row being written. Fixed text, in the same position as
-# app.services.answer.NO_MATCH_RESPONSE and with the same limitation: it
-# cannot mirror the patient's language. Rare enough to be worth that, and
-# far better than a confirmation that is not true.
+# offering it and the row being written. Fixed text, so it cannot mirror the
+# patient's language; rare enough to be worth that, and far better than a
+# confirmation that is not true.
 SLOT_LOST_NOTICE = (
     "\n\nKechirasiz, bu vaqtni hozirgina band qilishdi. Qaysi vaqt sizga qulay bo'lardi?"
 )
@@ -209,33 +208,14 @@ def _day_label(slot: datetime, local_now: datetime) -> str:
 
 
 def render(slots: Sequence[datetime], now: datetime) -> str:
-    """The free slots as a prompt section, in clinic-local time.
-
-    The current time is included because every useful answer here is
-    relative to it: without knowing it is Monday 12:40, "bugun" and "ertaga"
-    are guesses, and a model that guesses them offers appointments in the
-    past.
-    """
+    """The free slots as a prompt section, in clinic-local time."""
     local_now = now.astimezone(CLINIC_TIMEZONE)
-    # Said again here, at the very end of the prompt, on purpose. Rule 7
-    # tells the assistant to come away with a phone number, and against a
-    # bare "qabulga yozing" that instruction kept winning: the patient
-    # asked to be booked and was asked for their number instead, which is
-    # the exact behaviour this feature exists to remove. Repeating it as
-    # the last thing before the conversation is what made it hold.
     header = (
         "\n\nTHE APPOINTMENT BOOK\n"
-        "- A patient who asks to be booked is offered a time from this list, "
-        "in this reply. Not a phone number, not a callback, not the call "
-        "centre \u2014 you can book them yourself, so book them.\n"
         f"- Right now it is {local_now:%A %Y-%m-%d %H:%M} in the clinic's own time zone."
     )
     if not slots:
-        return (
-            f"{header}\n- There is nothing free in the next {HORIZON_DAYS + 1} days. "
-            "Do not offer a time. Say you will check with the team and ask when "
-            "would suit them."
-        )
+        return f"{header}\n- There is nothing free in the next {HORIZON_DAYS + 1} days."
 
     by_day: dict[str, list[str]] = {}
     for slot in slots:
@@ -243,21 +223,7 @@ def render(slots: Sequence[datetime], now: datetime) -> str:
         by_day.setdefault(_day_label(local, local_now), []).append(f"{local:%H:%M}")
 
     lines = [f"- {day}: {', '.join(times)}" for day, times in by_day.items()]
-    return (
-        f"{header}\n- These slots are free, and only these. Each lasts {SLOT_MINUTES} minutes.\n"
-        + "\n".join(lines)
-        + "\n- Offer the nearest two or three times, not the whole list. A "
-        "patient who names a day or a time of their own is answered from "
-        "that day first: if what they asked for is in the list, take it and "
-        "book it; if it is not, say what is free on that same day before "
-        "offering another.\n"
-        + '- Say the day the way a person would — "bugun", "ertaga", '
-        '"1-sentabr". Never read a date out in 2026-09-01 form: a patient '
-        'being told to come on "ertaga 2026-08-31" is being handed a '
-        "machine's notes. This is about the sentence the patient reads; the "
-        "[[BOOK:...]] marker still carries the exact 2026-09-01T13:00 date "
-        "from the list, because it is machinery the patient never sees."
-    )
+    return f"{header}\n- Free slots, {SLOT_MINUTES} minutes each:\n" + "\n".join(lines)
 
 
 def extract(reply: str) -> tuple[str, datetime | None, str | None]:
@@ -426,9 +392,8 @@ async def settle(
     # a time it has already booked a turn later, when the patient answers
     # "my name is ...", and creating a row for that leaves somebody holding
     # two bookings for one visit. So a second row is written only when the
-    # patient actually asked for another appointment, which the intent
-    # router decides (app.services.intent.Intent.BOOK_NEW) and the caller
-    # passes in. Everything else moves the booking they already have.
+    # caller says so (allow_second). Everything else moves the booking they
+    # already have.
     existing = None if allow_second else await _active_for_conversation(
         session_repo, conversation_id
     )

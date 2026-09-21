@@ -163,10 +163,8 @@ Then load the FAQs. Set `SEED_FAQS_FROM=data/faqs.json` on `web`, redeploy,
 watch for `seeded_faqs tenant_id=… rows=…`, then **remove the variable
 again** — left set, every redeploy re-embeds the whole file.
 
-Until the knowledge base has rows in it, the assistant answers every question
-with a fixed refusal. That is `ANSWER_WITHOUT_FAQ=false` doing its job: a
-clinic assistant that improvises will state opening hours and prices a
-patient then acts on.
+Until the knowledge base has rows in it, the assistant answers from the clinic
+details in the settings and its own general knowledge.
 
 ## Step 7 — Telegram
 

@@ -170,23 +170,10 @@ def test_today_and_tomorrow_are_named_rather_than_left_to_be_worked_out() -> Non
     assert "TODAY — Wednesday" not in rendered
 
 
-def test_the_patient_is_not_read_a_machine_readable_date() -> None:
-    """ "ertaga 2026-09-01 kuni soat 09:00" is what the model wrote unprompted,
-    and it reads as notes rather than as somebody typing.
-    """
-    rendered = render([_local(2026, 9, 7, 18, 0)], _local(2026, 9, 7, 12, 40))
-
-    assert "Never read a date out" in rendered
-
-
-def test_an_empty_diary_tells_the_model_not_to_offer_anything() -> None:
-    """Without this the model has an empty list and a rule telling it to
-    offer a time, which is the shape that produces an invented one.
-    """
+def test_an_empty_diary_says_nothing_is_free() -> None:
     rendered = render([], _local(2026, 9, 7, 12, 40))
 
     assert "nothing free" in rendered
-    assert "Do not offer a time" in rendered
     assert str(HORIZON_DAYS + 1) in rendered
 
 

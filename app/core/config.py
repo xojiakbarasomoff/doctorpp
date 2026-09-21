@@ -60,14 +60,6 @@ class Settings(BaseSettings):
     # that wants them is developing against it and can say so.
     api_docs_enabled: bool = Field(default=False, alias="API_DOCS_ENABLED")
 
-    # With no FAQ match, whether the LLM may answer from its own knowledge
-    # instead of returning app.services.answer.NO_MATCH_RESPONSE. Defaults to
-    # false: a clinic assistant that improvises will state opening hours and
-    # prices a patient then acts on. Enabled for a deployment whose knowledge
-    # base is not populated yet, where a general reply beats a fixed refusal
-    # to every message -- app.services.answer._NO_FAQ_SYSTEM_PROMPT still
-    # forbids clinic specifics and medical advice on that path.
-    answer_without_faq: bool = Field(default=False, alias="ANSWER_WITHOUT_FAQ")
     # The language to reply in when the patient's own is unclear. Patients
     # open with "Salom", "Alik", "Nmagap" -- too short and too transliterated
     # for a model to place, and it falls back to English, which reads as the
@@ -75,47 +67,29 @@ class Settings(BaseSettings):
     # it goes into an English system prompt.
     default_reply_language: str = Field(default="English", alias="DEFAULT_REPLY_LANGUAGE")
 
-    # The clinic's street address, stated verbatim to a patient who asks where
-    # it is. Configuration rather than a knowledge-base row because the
-    # assistant is otherwise forbidden from giving out an address at all (see
-    # app.services.answer, rule 1 on both paths), and a clinic whose knowledge
-    # base is not populated yet would have no way to answer "qayerdasiz?".
-    # Free-form, including any landmark worth reading back.
+    # The clinic's street address, given to the model as a fact. Free-form,
+    # including any landmark worth reading back.
     clinic_address: str | None = Field(default=None, alias="CLINIC_ADDRESS")
 
-    # The clinic's own reception numbers, quoted verbatim to a patient whose
-    # price question the knowledge base cannot answer (see
-    # app.services.answer -- the pricing rule). Free-form, because "+998 90
-    # 123 45 67 or +998 71 200 00 00" is what a clinic actually wants read
-    # back. Unset (the default) is a supported state, not a broken one: the
-    # assistant then only offers a callback and never invents a number to
-    # read out, which is the failure this being configuration rather than
-    # prompt text exists to prevent.
+    # The clinic's own reception numbers, given to the model as a fact.
+    # Free-form, because "+998 90 123 45 67 or +998 71 200 00 00" is what a
+    # clinic actually wants read back.
     clinic_phone_numbers: str | None = Field(default=None, alias="CLINIC_PHONE_NUMBERS")
 
     # When the clinic is open, as one sentence in the clinic's own words --
-    # "Dushanbadan shanbagacha 09:00 dan 18:00 gacha", say. Configuration for
-    # the same reason as the address: the assistant may not state an opening
-    # time it was not given.
-    #
-    # It exists because the only other place the hours appeared was the
-    # doctors table, one row at a time. A patient who asked about the clinic
-    # got six clinicians each with "09:00 - 18:00" after their name and no
-    # mention of which days -- the hours repeated until they looked like part
-    # of every doctor's title, and the one fact actually being asked for, the
-    # working week, was not in the prompt at all.
+    # "Dushanbadan shanbagacha 09:00 dan 18:00 gacha", say.
     clinic_work_hours: str | None = Field(default=None, alias="CLINIC_WORK_HOURS")
 
     # Whose inbox this is, when the deployment answers one doctor's own
     # Instagram rather than the clinic's -- "Axmadaliyev Temur G'iyosiddin
     # o'g'li" and "urolog-androlog", say. Both set switches the assistant from
     # the clinic's front desk to the person who runs that doctor's inbox (see
-    # app.services.answer._doctor_opening). Unset keeps the clinic voice.
+    # app.services.answer._opening). Unset keeps the clinic voice.
     doctor_name: str | None = Field(default=None, alias="DOCTOR_NAME")
     doctor_specialty: str | None = Field(default=None, alias="DOCTOR_SPECIALTY")
 
-    # The doctor's experience and training, told to a patient only when they
-    # ask (see app.services.answer._DOCTOR_BACKGROUND). One line per fact,
+    # The doctor's experience and training, given to the model as a fact
+    # (see app.services.answer._DOCTOR_BACKGROUND). One line per fact,
     # separated by " | " because an environment variable is one line.
     doctor_background: str | None = Field(default=None, alias="DOCTOR_BACKGROUND")
 
@@ -199,7 +173,7 @@ class Settings(BaseSettings):
     # TODO(IGB-?): move onto Tenant/per-tenant settings once the admin panel
     # (TZ 4.2) exists, so each clinic can tune its own debounce window
     # instead of every tenant sharing this one value — same pattern as
-    # guardrail.EMERGENCY_RESPONSE / answer.NO_MATCH_RESPONSE.
+    # the other per-deployment settings here.
     debounce_window_seconds: int = Field(default=5, ge=0, alias="DEBOUNCE_WINDOW_SECONDS")
 
     # The Instagram access token this deployment's channel should carry. Read

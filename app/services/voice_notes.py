@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.message import MessageSender
 from app.repositories.message import MessageRepository
-from app.services.guardrail import reply_script
+from app.services.language import reply_script
 
 REPLIES = {
     "uz-latn": (

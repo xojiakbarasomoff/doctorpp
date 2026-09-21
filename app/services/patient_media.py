@@ -34,7 +34,7 @@ from app.repositories.channel import ChannelRepository
 from app.repositories.message import MessageRepository
 from app.services.conversation import record_outbound_message, reply_context_for
 from app.services.delivery import send_reply
-from app.services.guardrail import reply_script
+from app.services.language import reply_script
 
 logger = logging.getLogger(__name__)
 

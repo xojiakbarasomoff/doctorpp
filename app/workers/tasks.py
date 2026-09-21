@@ -3,7 +3,7 @@
 Platform-neutral. The job arguments carry a channel id rather than anything
 Instagram-shaped, the reply goes out through app.services.delivery (which
 dispatches on the channel's type), and every step in between — retrieval,
-guardrails, the answer prompt, the transcript — is shared business logic.
+the answer prompt, the transcript — is shared business logic.
 The Telegram bot's inbound edge enqueues these same two jobs.
 """
 
@@ -183,10 +183,8 @@ async def process_inbound_message(
                 logger.error("conversation_missing", extra={"conversation_id": conversation_id})
                 return
 
-            # One turn: the conversation is locked, the patient's record and
-            # their real appointments are read, the intent is classified, the
-            # deterministic part of the flow runs, and only then is the model
-            # asked for a sentence. See app.services.turn.
+            # One turn: the model writes the reply and any booking it made is
+            # written down. See app.services.turn.
             turn_result = await turn.respond(
                 session,
                 conversation_id=conversation_uuid,
@@ -202,7 +200,7 @@ async def process_inbound_message(
             )
             reply = turn_result.reply
             appointment = turn_result.appointment
-            if appointment is not None or turn_result.cancelled is not None:
+            if appointment is not None:
                 await session.commit()
 
             # A patient who asked to be rung. Taken from the assistant's
@@ -403,7 +401,7 @@ async def fire_debounce_window(
 ) -> None:
     """ARQ job: fires once a patient's debounce window has elapsed with no
     further messages. Scheduled (deferred) by
-    app.services.debounce.handle_inbound_message for every non-emergency
+    app.services.debounce.handle_inbound_message for every
     message; most scheduled calls for a burst of messages from the same
     patient are stale by the time they run (a later message reset the
     window) and no-op here via pop_batch_if_current_generation — only the

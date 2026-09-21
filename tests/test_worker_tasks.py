@@ -20,12 +20,12 @@ from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
 from app.repositories.tenant import TenantRepository
 from app.repositories.user import UserRepository
-from app.services.guardrail import EMERGENCY_RESPONSES
 from app.workers.tasks import fire_debounce_window, process_inbound_message
 from tests.conftest import Seed
 
 QUERY_VECTOR = [1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1)
 SENDER = "sender-1"
+MODEL_REPLY = "Model reply"
 
 
 class FakeEmbeddingProvider(EmbeddingProvider):
@@ -167,8 +167,10 @@ async def test_process_inbound_message_records_the_reply_in_the_transcript(
         str(seed.a.channel.id),
         str(seed.a.conversation.id),
         SENDER,
-        "I have severe chest pain",  # emergency — fixed reply, no LLM needed
+        "I have severe chest pain",
         session_factory=_session_factory(db_session),
+        embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+        llm_provider=FakeLLMProvider(reply=MODEL_REPLY),
         adapter=adapter,
     )
 
@@ -176,7 +178,7 @@ async def test_process_inbound_message_records_the_reply_in_the_transcript(
         messages = await MessageRepository(db_session).list_recent(seed.a.conversation.id, 10)
 
     bot_messages = [m for m in messages if m.sender == MessageSender.BOT]
-    assert [m.content for m in bot_messages] == [EMERGENCY_RESPONSES["uz-latn"]]
+    assert [m.content for m in bot_messages] == [MODEL_REPLY]
     assert bot_messages[0].channel == "instagram"
 
 
@@ -309,12 +311,14 @@ async def test_reply_uses_the_named_channels_token_not_whichever_comes_first(
         str(second_channel.id),
         str(conversation.id),
         SENDER,
-        "chest pain",  # emergency — fixed reply, no LLM needed
+        "chest pain",
         session_factory=_session_factory(db_session),
+        embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+        llm_provider=FakeLLMProvider(reply=MODEL_REPLY),
         adapter=adapter,
     )
 
-    assert client.calls == [("second-account-token", SENDER, EMERGENCY_RESPONSES["uz-latn"])]
+    assert client.calls == [("second-account-token", SENDER, MODEL_REPLY)]
 
 
 # --- fire_debounce_window: window fires once after quiet period ---
@@ -484,6 +488,8 @@ async def test_skipped_reply_is_not_recorded_in_the_transcript(
         SENDER,
         "chest pain",
         session_factory=_session_factory(db_session),
+        embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+        llm_provider=FakeLLMProvider(reply=MODEL_REPLY),
         adapter=adapter,
     )
 
@@ -528,7 +534,7 @@ async def test_process_inbound_message_without_configured_token_skips_send_and_l
             str(channel.id),
             str(conversation.id),
             SENDER,
-            "chest pain",  # emergency keyword — skips retrieval/LLM entirely
+            "chest pain",
             session_factory=_session_factory(db_session),
             embedding_provider=embedding_provider,
             llm_provider=llm_provider,
@@ -572,8 +578,10 @@ async def test_process_inbound_message_undecryptable_credentials_raises_not_skip
             str(channel.id),
             str(conversation.id),
             SENDER,
-            "chest pain",  # emergency keyword — skips retrieval/LLM entirely
+            "chest pain",
             session_factory=_session_factory(db_session),
+            embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+            llm_provider=FakeLLMProvider(reply=MODEL_REPLY),
             adapter=adapter,
         )
 
@@ -604,6 +612,8 @@ async def test_process_inbound_message_deactivated_channel_skips_send(
             SENDER,
             "chest pain",
             session_factory=_session_factory(db_session),
+            embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+            llm_provider=FakeLLMProvider(reply=MODEL_REPLY),
             adapter=adapter,
         )
 
@@ -611,10 +621,10 @@ async def test_process_inbound_message_deactivated_channel_skips_send(
     assert any(r.message == "reply_skipped_channel_unavailable" for r in caplog.records)
 
 
-# --- Instagram send: emergency replies are sent too ---
+# --- Instagram send: the model's reply is sent ---
 
 
-async def test_process_inbound_message_emergency_reply_is_sent_via_client(
+async def test_process_inbound_message_reply_is_sent_via_client(
     db_session: AsyncSession,
     seed: Seed,
 ) -> None:
@@ -628,11 +638,9 @@ async def test_process_inbound_message_emergency_reply_is_sent_via_client(
         SENDER,
         "I have severe chest pain",
         session_factory=_session_factory(db_session),
+        embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+        llm_provider=FakeLLMProvider(reply=MODEL_REPLY),
         adapter=adapter,
     )
 
-    # generate_answer short-circuits emergencies before touching
-    # embedding/LLM providers (see app.services.answer.generate_answer), so
-    # none were injected above — the fixed emergency line is what must
-    # have been sent.
-    assert client.calls == [("token", SENDER, EMERGENCY_RESPONSES["uz-latn"])]
+    assert client.calls == [("token", SENDER, MODEL_REPLY)]

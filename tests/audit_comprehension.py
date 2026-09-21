@@ -1,7 +1,6 @@
 """Does the reply answer the message the patient actually sent?
 
-The other audit (tests/audit_live.py) checks form: the alphabet, the
-greeting, the length, the machinery. This one checks the thing the clinic
+This checks the thing the clinic
 actually complained about -- replies that are well-formed and beside the
 point. A patient writes "aka narxi qancha bulad va ertaga ishlesizmi" and
 is asked for their full name; a patient corrects the day and is confirmed
@@ -30,15 +29,87 @@ from uuid import UUID
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, OpenAILLMProvider
 from app.services import booking, callbacks
 from app.services import turn as turn_service
-from tests.audit_live import _NoEmbeddings, _settings, prepare_tenant
-from tests.conftest import Seed
+from tests.conftest import Seed, isolated_settings
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("AUDIT_LIVE") != "1", reason="live audit: costs OpenAI credit"
 )
+
+
+# What the clinic has actually told the assistant, from the live
+# deployment's own settings. Without these the audit measures a clinic that
+# knows nothing -- and duly reports that it answers "bizda ma'lumot yo'q".
+CLINIC_RULES = [
+    "UZI ni shifokorning o'zi qiladi (buyrak, siydik pufagi, prostata). "
+    "Bemor \"UZI qilasizmi?\" deb so'rasa, aniq \"ha, shifokorning o'zi qiladi\" deb javob bering.",
+    "Shifokor kattalarni qabul qiladi — erkaklarni ham, ayollarni ham, urologik "
+    "muammolar bilan. Bolalar uchun bolalar urologiga murojaat qilish kerakligini "
+    "ayting va klinika raqamini bering.",
+    "To'lovni karta bilan ham qilish mumkin.",
+    "Yozilmasdan kelish ham mumkin, lekin navbat kutishga to'g'ri kelishi mumkin; "
+    "vaqtga yozilgan bemor o'z vaqtida kiradi.",
+    "Klinika yonida mashina qo'yish joyi bor.",
+    "Narx, UZI ga tayyorgarlik va shunga o'xshash aniq savollar telefon orqali hal "
+    "qilinadi: +998 70 310 40 40. Hech qachon \"tekshirib beraman\", \"aniqlab beraman\" "
+    "deb va'da bermang — buni qila olmaysiz.",
+]
+
+
+async def prepare_tenant(session: object, tenant: object) -> None:
+    """Make the fixture tenant look like the live one: the clinic's standing
+    rules, and one doctor rather than the fixture's placeholder dentist."""
+    from sqlalchemy import update
+
+    from app.models.doctor import Doctor
+    from app.models.tenant import Tenant
+
+    tenant.settings = {**dict(tenant.settings or {}), "strict_rules": CLINIC_RULES}
+    await session.execute(
+        update(Doctor)
+        .where(Doctor.tenant_id == tenant.id)
+        .values(name="Axmadaliyev Temur G'iyosiddin o'g'li", specialty="urolog-androlog")
+    )
+    await session.flush()
+    assert Tenant  # imported for the reader; the row above is already loaded
+
+
+class _NoEmbeddings(EmbeddingProvider):
+    """The knowledge base is empty in this deployment, so retrieval is a
+    query that returns nothing; it still needs a vector."""
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return [[0.0] * 1536 for _ in texts]
+
+
+def _settings() -> object:
+    return isolated_settings(
+        database_url=os.environ["DATABASE_URL"],
+        redis_url=os.environ["REDIS_URL"],
+        webhook_verify_token="audit",
+        meta_app_secret="audit",
+        encryption_key=os.environ["ENCRYPTION_KEY"],
+        session_secret_key="audit-audit-audit",
+        openai_api_key=os.environ["OPENAI_API_KEY"],
+        openai_model=os.environ.get("OPENAI_MODEL", "gpt-5-mini"),
+        openai_reasoning_effort=os.environ.get("OPENAI_REASONING_EFFORT", "low"),
+        booking_enabled=True,
+        default_reply_language="Uzbek",
+        clinic_phone_numbers="+998 70 310 40 40",
+        clinic_address="Toshkent shahri, Yunusobod tumani, 6-mavze, Moyqo'rg'on 11A",
+        clinic_work_hours="Dushanbadan shanbagacha 09:00 dan 17:00 gacha, yakshanba dam olish",
+        doctor_name="Axmadaliyev Temur G'iyosiddin o'g'li",
+        doctor_specialty="urolog-androlog",
+        doctor_background=(
+            "Ish tajribasi: 5 yil | 2015-2021: Toshkent Tibbiyot akademiyasi, Davolash "
+            "fakulteti | 2021-2025: Respublika urologiya markazi, magistratura | "
+            "2025-2026: Respublika Malaka oshirish instituti, UZI sertifikat"
+        ),
+    )
+
 
 # The grader. A stronger model than the one being graded, on purpose: asking
 # gpt-5-mini whether gpt-5-mini understood the message grades the same
@@ -299,17 +370,11 @@ _JSON = re.compile(r"\{.*\}", re.DOTALL)
 
 async def _reset_patient(session: AsyncSession, seed: Seed) -> None:
     """Start each scenario as a stranger with an empty diary."""
-    from sqlalchemy import delete, update
+    from sqlalchemy import update
 
     from app.models.appointment import Appointment, AppointmentStatus
-    from app.models.conversation_state import ConversationState
     from app.models.user import User
 
-    await session.execute(
-        delete(ConversationState).where(
-            ConversationState.conversation_id == seed.a.conversation.id
-        )
-    )
     await session.execute(
         update(Appointment)
         .where(Appointment.user_id == seed.a.user.id)
