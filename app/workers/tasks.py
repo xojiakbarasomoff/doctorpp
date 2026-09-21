@@ -37,7 +37,7 @@ from app.models.conversation import Conversation
 from app.models.message import DeliveryStatus
 from app.models.user import User
 from app.rag.embeddings import EmbeddingProvider
-from app.rag.llm import LLMProvider
+from app.rag.llm import LLMProvider, get_llm_provider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
 from app.services import (
@@ -48,7 +48,7 @@ from app.services import (
     patient_media,
     voice_notes,
 )
-from app.services.admin_commands import add_rule, is_admin, parse_rule
+from app.services.admin_commands import handle_instruction, is_admin, parse_rule
 from app.services.answer import generate_answer
 from app.services.appointment import CLINIC_TIMEZONE
 from app.services.complaints import patient_words
@@ -66,7 +66,6 @@ from app.services.debounce import (
     restore_batch,
 )
 from app.services.delivery import send_reply
-from app.services.knowledge_base import record_rule_in_knowledge_base
 from app.services.profile import ensure_instagram_username
 from app.services.reminders import send_due_reminders
 from app.services.sheets import (
@@ -555,8 +554,10 @@ async def apply_admin_rule(
     *,
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
     adapter: ChannelAdapter | None = None,
+    llm_provider: LLMProvider | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> None:
-    """ARQ job: store a rule the clinic's admin sent by direct message.
+    """ARQ job: understand and store an instruction the clinic's admin sent by DM.
 
     The webhook decides only that this *looks* like an admin command -- the
     message starts with the keyword -- and everything that costs anything
@@ -594,31 +595,27 @@ async def apply_admin_rule(
                 )
                 return
 
-            rules = await add_rule(session, tenant_id=tenant_uuid, rule=rule)
-            # The rule is also written into the knowledge base, inactive, so
-            # that it is visible on the screen the clinic reads -- and never
-            # retrieved. An instruction sitting among the answers is an
-            # instruction a patient's question can land on, and "never say we
-            # do IVF" read out to somebody asking about IVF is worse than not
-            # showing it at all.
-            await record_rule_in_knowledge_base(session, rule=rule, position=len(rules))
+            # Understood, not copied: see app.services.rule_interpreter. What
+            # the admin is told is what was actually stored.
+            confirmation = await handle_instruction(
+                session,
+                tenant_id=tenant_uuid,
+                instruction=rule,
+                provider=llm_provider or get_llm_provider(),
+                embedding_provider=embedding_provider,
+            )
             await session.commit()
 
             await send_reply(
                 session,
                 channel_id=uuid.UUID(channel_id),
                 recipient_external_id=sender_external_id,
-                text=(
-                    f"Qabul qilindi. Endi shu qoidaga amal qilaman:\n«{rule}»\n\n"
-                    f"Jami {len(rules)} ta qoida. Ularni dashboard → Sozlamalar "
-                    f"bo'limida ko'rish, tahrirlash yoki o'chirish mumkin."
-                ),
+                text=confirmation,
                 last_user_message_at=datetime.now(UTC),
                 adapter=adapter,
             )
             logger.info(
-                "admin_rule_applied",
-                extra={"tenant_id": tenant_id, "username": username, "rule_count": len(rules)},
+                "admin_instruction_handled", extra={"tenant_id": tenant_id, "username": username}
             )
     finally:
         reset_current_tenant(token)
@@ -634,8 +631,10 @@ async def apply_owner_rule(
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
     client: InstagramClient | None = None,
     adapter: ChannelAdapter | None = None,
+    llm_provider: LLMProvider | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> None:
-    """ARQ job: store a rule the account's own owner typed from that account.
+    """ARQ job: understand and store an instruction the account's own owner typed.
 
     The doctor's inbox is the doctor's own Instagram, and nobody can message
     themselves -- so the rule arrives as an echo of a message the owner sent
@@ -677,24 +676,24 @@ async def apply_owner_rule(
                 )
                 return
 
-            rules = await add_rule(session, tenant_id=tenant_uuid, rule=rule)
-            await record_rule_in_knowledge_base(session, rule=rule, position=len(rules))
+            confirmation = await handle_instruction(
+                session,
+                tenant_id=tenant_uuid,
+                instruction=rule,
+                provider=llm_provider or get_llm_provider(),
+                embedding_provider=embedding_provider,
+            )
             await session.commit()
             await send_reply(
                 session,
                 channel_id=channel.id,
                 recipient_external_id=recipient_external_id,
-                text=(
-                    f"Qabul qilindi. Endi shu qoidaga amal qilaman:\n«{rule}»\n\n"
-                    f"Jami {len(rules)} ta qoida. Ularni dashboard → Sozlamalar "
-                    f"bo'limida ko'rish, tahrirlash yoki o'chirish mumkin."
-                ),
+                text=confirmation,
                 last_user_message_at=datetime.now(UTC),
                 adapter=adapter,
             )
             logger.info(
-                "owner_rule_applied",
-                extra={"tenant_id": tenant_id, "username": username, "rule_count": len(rules)},
+                "owner_instruction_handled", extra={"tenant_id": tenant_id, "username": username}
             )
     finally:
         reset_current_tenant(token)

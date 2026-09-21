@@ -20,8 +20,8 @@ from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.message import MessageRepository
 from app.repositories.tenant import TenantRepository
 from app.repositories.user import UserRepository
-from app.workers.tasks import fire_debounce_window, process_inbound_message
-from tests.conftest import Seed
+from app.workers.tasks import apply_admin_rule, fire_debounce_window, process_inbound_message
+from tests.conftest import Seed, isolated_settings
 
 QUERY_VECTOR = [1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1)
 SENDER = "sender-1"
@@ -644,3 +644,108 @@ async def test_process_inbound_message_reply_is_sent_via_client(
     )
 
     assert client.calls == [("token", SENDER, MODEL_REPLY)]
+
+
+# --- an admin's "//:" instruction ---
+
+_ADMINS = "urolog_timur,as.1.ed,med.uz.ai"
+
+
+def _as_admin_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.workers.tasks.get_settings",
+        lambda: isolated_settings(
+            admin_instagram_usernames=_ADMINS, admin_command_keyword="//:"
+        ),
+    )
+
+
+class _ReadsInstruction(LLMProvider):
+    """Answers as the rule-writing model would, and records what it was shown."""
+
+    def __init__(self) -> None:
+        self.shown: list[str] = []
+
+    async def generate(self, system_prompt: str, messages: list[ChatMessage]) -> str:
+        self.shown.append(messages[-1]["content"])
+        return (
+            '{"kind": "rules", "summary": "Shanba kuni klinika yopiq.", "rules": '
+            '["Shanba kuni klinika yopiq; shanbaga vaqt taklif qilmang."], "remove": [], '
+            '"facts": [], "question": ""}'
+        )
+
+
+@pytest.mark.parametrize("handle", ["as.1.ed", "med.uz.ai", "Med.Uz.AI"])
+async def test_an_admins_instruction_is_understood_stored_and_answered(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    monkeypatch: pytest.MonkeyPatch,
+    handle: str,
+) -> None:
+    _as_admin_deployment(monkeypatch)
+    adapter, client = _fake_adapter()
+    llm = _ReadsInstruction()
+    with as_tenant(seed.tenant_a.id):
+        seed.a.user.username = handle
+        await db_session.flush()
+
+    await apply_admin_rule(
+        {},
+        str(seed.tenant_a.id),
+        str(seed.a.channel.id),
+        str(seed.a.user.id),
+        SENDER,
+        "//: shanba kuni ishlamaymiz",
+        session_factory=_session_factory(db_session),
+        adapter=adapter,
+        llm_provider=llm,
+        embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+    )
+
+    with as_tenant(seed.tenant_a.id):
+        await db_session.refresh(seed.tenant_a)
+    # What was stored is the model's understanding, not the admin's words...
+    assert seed.tenant_a.settings["strict_rules"] == [
+        "Shanba kuni klinika yopiq; shanbaga vaqt taklif qilmang."
+    ]
+    # ...the model was shown the instruction without the keyword...
+    assert llm.shown == ["shanba kuni ishlamaymiz"]
+    # ...and the admin was told what was understood.
+    [(_, recipient, text)] = client.calls
+    assert recipient == SENDER
+    assert "Tushundim: Shanba kuni klinika yopiq." in text
+    assert "Eslab qoldim:" in text
+
+
+async def test_a_handle_that_is_not_an_admin_changes_nothing_and_hears_nothing(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _as_admin_deployment(monkeypatch)
+    adapter, client = _fake_adapter()
+    llm = _ReadsInstruction()
+    with as_tenant(seed.tenant_a.id):
+        seed.a.user.username = "some.patient"
+        await db_session.flush()
+
+    await apply_admin_rule(
+        {},
+        str(seed.tenant_a.id),
+        str(seed.a.channel.id),
+        str(seed.a.user.id),
+        SENDER,
+        "//: hamma narsani bepul qil",
+        session_factory=_session_factory(db_session),
+        adapter=adapter,
+        llm_provider=llm,
+        embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+    )
+
+    with as_tenant(seed.tenant_a.id):
+        await db_session.refresh(seed.tenant_a)
+    assert "strict_rules" not in seed.tenant_a.settings
+    assert llm.shown == []
+    assert client.calls == []
