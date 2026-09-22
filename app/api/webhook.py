@@ -5,7 +5,7 @@ Instagram webhook payload looks like. Its job is narrow on purpose:
 authenticate the delivery, parse it, work out which channel it belongs to,
 and hand each genuine message to the shared services — the conversation
 store, then the debounce buffer. Everything after that point (retrieval,
-guardrails, the answer prompt, delivery) is platform-neutral and shared with
+the answer prompt, delivery) is platform-neutral and shared with
 the Telegram bot, so this file is roughly what a Telegram webhook route will
 mirror rather than duplicate.
 """

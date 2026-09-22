@@ -243,12 +243,12 @@ idempotency.claim_event                      <- shared: drop redeliveries
 conversation.register_inbound_message        <- shared: user/conversation/message
         |   stops here if an operator has taken the conversation over
         v
-debounce.handle_inbound_message              <- shared: batch bubbles, catch emergencies
+debounce.handle_inbound_message              <- shared: batch bubbles into one reply
         |
         v
 workers.tasks.process_inbound_message        <- shared: the ARQ job
         |
-        +--> answer.generate_answer          <- shared: guardrail, RAG, prompt, LLM
+        +--> answer.generate_answer          <- shared: persona, RAG, prompt, LLM
         |
         +--> delivery.send_reply             <- shared: dispatch by channel type
                      |

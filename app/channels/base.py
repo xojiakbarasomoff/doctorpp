@@ -63,7 +63,7 @@ class ChannelAdapter(ABC):
 
     Deliberately narrow: an adapter knows how to hand text to a platform and
     what that platform's own policy forbids. It knows nothing about
-    retrieval, guardrails, tenants, or the database — those are shared
+    retrieval, tenants, or the database — those are shared
     business logic and live in app/services, where both bots reach them.
     """
 

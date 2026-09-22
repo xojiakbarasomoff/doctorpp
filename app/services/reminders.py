@@ -58,10 +58,9 @@ class ReminderWindow:
 
 # Ordered longest lead first — see _due_windows for why the order matters.
 #
-# TODO(IGB-?): the wording is one fixed Uzbek string per window, the same
-# limitation EMERGENCY_RESPONSE and NO_MATCH_RESPONSE have. It should come
-# from tenants.settings, and be written in the language the patient has been
-# using, once there is somewhere to put a translation.
+# TODO(IGB-?): the wording is one fixed Uzbek string per window. It should
+# come from tenants.settings, and be written in the language the patient has
+# been using, once there is somewhere to put a translation.
 REMINDER_WINDOWS: tuple[ReminderWindow, ...] = (
     ReminderWindow(
         lead_time=timedelta(hours=24),

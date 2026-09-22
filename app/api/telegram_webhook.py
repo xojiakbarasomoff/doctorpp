@@ -3,7 +3,7 @@
 The mirror of app.api.webhook, and deliberately the same shape: authenticate
 the delivery, parse it, work out which channel it belongs to, and hand each
 genuine message to the shared services. Everything after that point —
-deduplication, the conversation store, debouncing, retrieval, guardrails, the
+deduplication, the conversation store, debouncing, retrieval, the
 answer prompt, delivery — is the same code the Instagram bot runs.
 
 The route carries the bot's own id so one deployment can serve many clinics'

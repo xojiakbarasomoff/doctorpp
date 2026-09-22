@@ -1,7 +1,7 @@
 """Transport for the Telegram Bot API.
 
 Deliberately dumb, the same way app.channels.instagram.client is: it knows
-how to make the HTTP call and nothing about tenants, retrieval or guardrails.
+how to make the HTTP call and nothing about tenants or retrieval.
 Anything that is a business rule lives in app/services, where both bots reach
 it.
 """
