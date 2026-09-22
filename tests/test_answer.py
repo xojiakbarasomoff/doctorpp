@@ -34,13 +34,20 @@ class FakeEmbeddingProvider(EmbeddingProvider):
 
 
 class FakeLLMProvider(LLMProvider):
-    def __init__(self, reply: str = "Sure, here's the answer.") -> None:
-        self._reply = reply
+    """Returns `reply`, or -- given a sequence -- one reply per call, in
+    order, holding on the last one for any call past the end. The second
+    shape is what a test of a retry (app.services.answer._enforce) needs:
+    a first reply that gets rejected, a second that does not.
+    """
+
+    def __init__(self, reply: str | Sequence[str] = "Sure, here's the answer.") -> None:
+        self._replies = [reply] if isinstance(reply, str) else list(reply)
         self.calls: list[tuple[str, list[ChatMessage]]] = []
 
     async def generate(self, system_prompt: str, messages: list[ChatMessage]) -> str:
         self.calls.append((system_prompt, messages))
-        return self._reply
+        index = min(len(self.calls) - 1, len(self._replies) - 1)
+        return self._replies[index]
 
 
 def _settings(**overrides: object) -> Settings:
@@ -53,7 +60,7 @@ async def _ask(
     as_tenant: Callable[[UUID], AbstractContextManager[None]],
     message: str,
     *,
-    reply: str = "Sure, here's the answer.",
+    reply: str | Sequence[str] = "Sure, here's the answer.",
     with_faq: bool = False,
     files: Sequence[tuple[str, str | None, str]] = (),
     doctors: Sequence[tuple[str, str, str]] = (),
@@ -108,7 +115,7 @@ async def test_the_models_reply_is_returned_exactly_as_written(
     seed: Seed,
     as_tenant: Callable[[UUID], AbstractContextManager[None]],
 ) -> None:
-    written = "Va alaykum assalom! Tushundim. Kuniga 2 mahal ichib turing? " + "Uzun matn. " * 40
+    written = "Va alaykum assalom! Tushundim, aytavering. " + "Uzun matn. " * 40
 
     result, llm = await _ask(db_session, seed, as_tenant, "Salom", reply=written)
 
@@ -412,3 +419,114 @@ async def test_one_clinics_files_do_not_reach_another_clinics_bot(
     _, llm = await _ask(db_session, seed, as_tenant, "narxi")
 
     assert "MAXFIY" not in llm.calls[0][0]
+
+
+# --- the medical-safety check (app.services.medical_safety) ----------------
+
+
+async def test_a_reply_that_prescribes_is_rewritten_before_it_is_sent(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    unsafe = "Amoksitsillin kuniga 2 mahal iching."
+    safe = "Buni ko'rmasdan aytolmayman, qabulga yozib qo'yaymi?"
+
+    result, llm = await _ask(
+        db_session, seed, as_tenant, "Nima ichsam bo'ladi?", reply=[unsafe, safe]
+    )
+
+    assert result == safe
+    assert len(llm.calls) == 2
+
+
+async def test_the_second_try_is_told_plainly_what_the_first_one_did(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    unsafe = "Sizda prostatit bor."
+    safe = "Buni ko'rmasdan aytolmayman."
+
+    _, llm = await _ask(db_session, seed, as_tenant, "Menda nima?", reply=[unsafe, safe])
+
+    second_prompt = llm.calls[1][0]
+    assert "YOUR LAST REPLY WAS REJECTED" in second_prompt
+    assert "told the patient what condition they have" in second_prompt
+    # The first prompt did not carry the rejection -- only the second call did.
+    assert "YOUR LAST REPLY WAS REJECTED" not in llm.calls[0][0]
+
+
+async def test_a_reply_that_still_prescribes_after_one_retry_gets_the_fixed_safe_line(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    from app.services.medical_safety import SAFE_REPLIES
+
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Nima ichsam bo'ladi?",
+        reply=["500 mg iching.", "Kuniga 2 marta iching."],
+    )
+
+    assert result == SAFE_REPLIES["uz-latn"]
+    assert len(llm.calls) == 2
+
+
+async def test_the_safe_line_is_in_the_patients_own_script(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    from app.services.medical_safety import SAFE_REPLIES
+
+    result, _ = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "буйрагим оғрияпти, нима ичсам бўлади?",
+        reply=["Дорини ичинг.", "Кунига 2 марта ичинг."],
+    )
+
+    assert result == SAFE_REPLIES["uz-cyrl"]
+
+
+async def test_an_ordinary_reply_costs_exactly_one_call(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """The common case: nothing is wrong, and the check adds no second call."""
+    _, llm = await _ask(db_session, seed, as_tenant, "Salom", reply="Va alaykum assalom!")
+
+    assert len(llm.calls) == 1
+
+
+async def test_a_provider_failure_on_the_retry_still_returns_a_safe_line(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    from app.services.medical_safety import SAFE_REPLIES
+
+    class FailsOnSecondCall(FakeLLMProvider):
+        async def generate(self, system_prompt: str, messages: list[ChatMessage]) -> str:
+            if self.calls:
+                raise RuntimeError("provider is down")
+            return await super().generate(system_prompt, messages)
+
+    llm = FailsOnSecondCall(reply="500 mg iching.")
+    with as_tenant(seed.tenant_a.id):
+        await db_session.flush()
+        result = await generate_answer(
+            db_session,
+            "Nima ichsam bo'ladi?",
+            embedding_provider=FakeEmbeddingProvider(QUERY_VECTOR),
+            llm_provider=llm,
+            settings=_settings(),
+        )
+
+    assert result == SAFE_REPLIES["uz-latn"]

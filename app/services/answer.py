@@ -26,6 +26,7 @@ from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
 from app.repositories.knowledge_document import ChunkMatch
+from app.services import medical_safety
 from app.services import persona as persona_service
 from app.services.language import conversation_script
 from app.services.patient_profile import Profile
@@ -140,6 +141,61 @@ async def _appointment_book(session: AsyncSession, doctor_count: int) -> str:
     return render(slots, now)
 
 
+_CORRECTION = """
+
+YOUR LAST REPLY WAS REJECTED
+It {what} — rule 3 above says you are not a medical professional and must \
+never do that, whatever the patient asked and however they insisted. Write \
+the same answer again, correctly: warmly decline the medical part, in the \
+patient's own language, and point them to an appointment. Everything else \
+about the reply -- what else it answered, any [[BOOK:...]] or \
+[[CALLBACK:...]] marker it carried -- stays the same. Send only the \
+corrected reply."""
+
+
+async def _enforce(
+    reply: str,
+    *,
+    provider: LLMProvider,
+    system_prompt: str,
+    conversation: Sequence[ChatMessage],
+    script: str,
+) -> str:
+    """The reply, or a safe line in its place if it prescribes or diagnoses.
+
+    Checked by pattern, not by asking the model to grade itself -- see
+    app.services.medical_safety for why. Two tries at most: the first is
+    free in the common case where nothing was wrong, and the second costs
+    one call only when the pattern actually fired. A reply that fails
+    twice is replaced rather than sent, and both attempts are logged at
+    ERROR so the clinic can see what its assistant tried to say.
+    """
+    violation = medical_safety.check(reply)
+    if violation is None:
+        return reply
+
+    logger.error(
+        "medical_safety_rewriting",
+        extra={"category": violation.category, "matched": violation.matched, "reply": reply[:300]},
+    )
+    instruction = _CORRECTION.format(what=medical_safety.DESCRIPTIONS[violation.category])
+    try:
+        second = await provider.generate(system_prompt + instruction, list(conversation))
+    except Exception:
+        logger.exception("medical_safety_rewrite_failed")
+        return medical_safety.SAFE_REPLIES[script]
+
+    remaining = medical_safety.check(second)
+    if remaining is None:
+        return second
+
+    logger.error(
+        "medical_safety_unfixable",
+        extra={"category": remaining.category, "matched": remaining.matched, "reply": second[:300]},
+    )
+    return medical_safety.SAFE_REPLIES[script]
+
+
 async def generate_answer(
     session: AsyncSession,
     user_message: str,
@@ -194,4 +250,11 @@ async def generate_answer(
         *(history or []),
         ChatMessage(role="user", content=user_message),
     ]
-    return await provider.generate(system_prompt, conversation)
+    reply = await provider.generate(system_prompt, conversation)
+    return await _enforce(
+        reply,
+        provider=provider,
+        system_prompt=system_prompt,
+        conversation=conversation,
+        script=script,
+    )
