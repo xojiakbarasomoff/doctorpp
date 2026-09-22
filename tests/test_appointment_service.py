@@ -10,15 +10,19 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.channels.instagram.adapter import InstagramAdapter
+from app.channels.instagram.client import InstagramClient
 from app.core.config import get_settings
 from app.core.encryption import encrypt
 from app.core.tenant_context import reset_current_tenant, set_current_tenant
 from app.models.appointment import Appointment
 from app.models.channel import Channel
+from app.models.message import MessageSender
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
+from app.repositories.message import MessageRepository
 from app.repositories.tenant import TenantRepository
 from app.repositories.user import UserRepository
 from app.services.appointment import (
@@ -34,9 +38,10 @@ from app.services.appointment import (
     create_appointment,
     find_next_free_slot,
     first_free_doctor,
+    notify_patient_of_cancellation,
     slot_capacity,
 )
-from tests.conftest import Seed
+from tests.conftest import Seed, isolated_settings
 
 # A fixed future date, arbitrary but deterministic — avoids "today" flakiness.
 BASE_DATE = date(2026, 9, 1)
@@ -325,3 +330,100 @@ def test_the_first_doctor_with_nothing_at_that_time_takes_it() -> None:
     assert first_free_doctor([first, second], [first.id]) is second
     assert first_free_doctor([first, second], [first.id, second.id]) is None
     assert first_free_doctor([], []) is None
+
+
+# --- telling the patient their appointment is cancelled -----------------
+
+
+class _FakeInstagramClient(InstagramClient):
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def send_text(self, *, access_token: str, recipient_igsid: str, text: str) -> None:
+        self.calls.append((recipient_igsid, text))
+
+    async def fetch_username(self, *, access_token: str, igsid: str) -> str | None:
+        return None
+
+    async def reply_to_comment(self, *, access_token: str, comment_id: str, text: str) -> None:
+        raise NotImplementedError
+
+    async def send_private_reply(self, *, access_token: str, comment_id: str, text: str) -> None:
+        raise NotImplementedError
+
+
+async def test_a_patient_who_booked_through_instagram_is_told_the_visit_is_off(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    client = _FakeInstagramClient()
+    adapter = InstagramAdapter(client=client)
+    with as_tenant(seed.tenant_a.id):
+        # Within the messaging window: the patient has to have written
+        # recently for the platform to let a reply through at all.
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender=MessageSender.PATIENT,
+            content="Assalomu alaykum",
+            channel="instagram",
+        )
+        slot = _tashkent(BASE_DATE, 15, 0)
+        appointment = await create_appointment(
+            AppointmentRepository(db_session),
+            scheduled_at=slot,
+            source="instagram",
+            user_id=seed.a.user.id,
+            conversation_id=seed.a.conversation.id,
+            patient_name="Asadbek Risqiyev",
+            doctor_name="Dr. Smith",
+        )
+        await db_session.flush()
+
+        told = await notify_patient_of_cancellation(
+            db_session,
+            appointment,
+            settings=isolated_settings(clinic_phone_numbers="+998 70 310 40 40"),
+            adapter=adapter,
+        )
+
+        transcript = await MessageRepository(db_session).list_recent(seed.a.conversation.id, 10)
+
+    assert told is True
+    [(recipient, text)] = client.calls
+    assert recipient == seed.a.user.external_id
+    assert "bekor qilindi" in text
+    assert "+998 70 310 40 40" in text
+    local = slot.astimezone(CLINIC_TIMEZONE)
+    assert f"{local:%H:%M}" in text
+    # Kept in the transcript, the same as any other reply the patient got.
+    assert any(m.content == text for m in transcript)
+
+
+async def test_a_phone_only_booking_has_nobody_to_tell_and_that_is_not_a_failure(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    client = _FakeInstagramClient()
+    with as_tenant(seed.tenant_a.id):
+        slot = _tashkent(BASE_DATE, 16, 0)
+        appointment = await create_appointment(
+            AppointmentRepository(db_session),
+            scheduled_at=slot,
+            source="operator",
+            patient_name="Telefonda yozilgan bemor",
+            patient_phone="+998901112233",
+            doctor_name="Dr. Smith",
+        )
+        await db_session.flush()
+
+        told = await notify_patient_of_cancellation(
+            db_session,
+            appointment,
+            settings=isolated_settings(),
+            adapter=InstagramAdapter(client=client),
+        )
+
+    assert told is False
+    assert client.calls == []

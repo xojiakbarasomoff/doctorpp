@@ -1,16 +1,25 @@
+import logging
 import uuid
 from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
 from datetime import UTC, date, datetime, time, timedelta
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.exc import IntegrityError
+if TYPE_CHECKING:
+    from app.channels.base import ChannelAdapter
 
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import Settings
 from app.core.tenant_context import get_current_tenant
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import Doctor
 from app.models.tenant import Tenant
 from app.repositories.appointment import AppointmentRepository
+
+logger = logging.getLogger(__name__)
 
 # TODO(IGB-?): move onto Tenant.settings once the admin/dashboard panel
 # exists, so each clinic can tune its own hours/slot length instead of every
@@ -341,3 +350,82 @@ async def confirm_appointment(repo: AppointmentRepository, appointment: Appointm
     booked for.
     """
     return await repo.update(appointment, status=AppointmentStatus.CONFIRMED)
+
+
+async def notify_patient_of_cancellation(
+    session: AsyncSession,
+    appointment: Appointment,
+    *,
+    settings: Settings,
+    adapter: "ChannelAdapter | None" = None,
+) -> bool:
+    """Tell the patient their appointment is cancelled, over whichever
+    channel they booked through. Returns whether it actually reached them.
+
+    Written for the dashboard's own cancel button (app.api.admin.schedule),
+    which used to change the row and nothing else -- a patient whose
+    appointment a member of staff cancelled from the browser never heard
+    about it, and found out by arriving. app.services.doctor_telegram has
+    its own version of this for the doctor's own cancel flow, which also
+    closes a whole day at once and needs that day's wording; this one is
+    the plainer, single-slot case.
+
+    Silently does nothing, rather than failing, when there is nobody to
+    tell: a phone-only booking (operator source, no user_id) has no
+    Instagram/Telegram thread to send into -- see Appointment.user_id's own
+    comment for why that is a normal booking, not a broken one.
+    """
+    from app.models.message import MessageSender
+    from app.models.user import User
+    from app.services.conversation import (
+        last_inbound_at,
+        record_outbound_message,
+        reply_context_for,
+    )
+    from app.services.delivery import send_reply
+
+    if appointment.user_id is None or appointment.conversation_id is None:
+        return False
+    user = await session.get(User, appointment.user_id)
+    if user is None:
+        return False
+
+    local = appointment.scheduled_at.astimezone(CLINIC_TIMEZONE)
+    phone = settings.clinic_phone_numbers
+    rebook = (
+        f" Boshqa vaqtga yozilish uchun {phone} raqamiga qo'ng'iroq qiling."
+        if phone
+        else " Boshqa vaqtga yozilish uchun biz bilan bog'laning."
+    )
+    text = (
+        f"Assalomu alaykum! {local:%d.%m.%Y} kuni soat {local:%H:%M} dagi "
+        f"qabulingiz bekor qilindi.{rebook} Noqulaylik uchun uzr so'raymiz."
+    )
+
+    conversation_id = appointment.conversation_id
+    last_seen = await last_inbound_at(session, conversation_id)
+    try:
+        delivered = await send_reply(
+            session,
+            channel_id=user.channel_id,
+            recipient_external_id=user.external_id,
+            text=text,
+            last_user_message_at=last_seen or appointment.created_at,
+            reply_context=await reply_context_for(session, conversation_id),
+            adapter=adapter,
+        )
+    except Exception:  # noqa: BLE001 - the cancellation itself is already saved
+        logger.exception(
+            "cancellation_notice_failed", extra={"appointment_id": str(appointment.id)}
+        )
+        return False
+
+    if delivered is not None:
+        await record_outbound_message(
+            session,
+            conversation_id=conversation_id,
+            channel_type=delivered,
+            text=text,
+            sender=MessageSender.BOT,
+        )
+    return delivered is not None

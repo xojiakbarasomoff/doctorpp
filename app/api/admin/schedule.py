@@ -16,6 +16,7 @@ from app.api.admin.schemas import (
     DayCount,
 )
 from app.api.auth import get_current_operator
+from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.tenant_context import get_current_tenant
 from app.models.appointment import ACTIVE_STATUSES, Appointment
@@ -35,6 +36,7 @@ from app.services.appointment import (
     cancel_appointment,
     confirm_appointment,
     create_appointment,
+    notify_patient_of_cancellation,
 )
 from app.services.sheets import AppointmentRow, mirror_appointment
 
@@ -191,12 +193,33 @@ async def cancel(
     appointment_id: uuid.UUID,
     operator: Operator = Depends(require_patient_access),
     session: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
 ) -> AppointmentOut:
+    """Cancel a booking, and tell the patient -- this button used to change
+    only the row, so a patient whose appointment staff cancelled here found
+    out by arriving to a locked door.
+
+    The cancellation is saved first and stands regardless of whether the
+    patient could be reached: notify_patient_of_cancellation is best-effort
+    and never raises, so a closed messaging window or a phone-only booking
+    frees the slot the same as any other cancel. Whether it reached them is
+    written onto the row itself, not guessed at as "the patient cancelled
+    it" -- the dashboard has no way to know who actually asked for this.
+    """
     repo = AppointmentRepository(session)
     appointment = await _load(session, appointment_id)
     await cancel_appointment(repo, appointment)
     await session.commit()
-    await _mirror(appointment, reason="Mijoz bekor qildi")
+
+    told = await notify_patient_of_cancellation(session, appointment, settings=settings)
+    note = "Bemorga bekor qilingani haqida xabar yuborildi." if told else (
+        "Bemorga xabar yetkazilmadi (yozishma yopiq yoki telefon orqali yozilgan) "
+        "-- qo'ng'iroq qiling."
+    )
+    appointment.notes = f"{appointment.notes}\n{note}" if appointment.notes else note
+    await session.commit()
+
+    await _mirror(appointment, reason="Bekor qilindi")
     return _out(appointment)
 
 
