@@ -49,6 +49,13 @@ def test_the_default_persona_is_the_clinics_and_carries_all_four_sections() -> N
     assert "{" not in prompt
 
 
+def test_the_default_persona_never_states_a_price_and_asks_for_variety() -> None:
+    prompt = _render()
+
+    assert "hech qachon aniq raqam aytmang" in prompt
+    assert "aynan bir xil so'zlar bilan ikki marta yozmang" in prompt
+
+
 def test_facts_reach_the_model() -> None:
     prompt = _render()
 
