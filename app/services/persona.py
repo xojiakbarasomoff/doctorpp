@@ -54,7 +54,9 @@ shifokorga yo'naltirish. Siz shifokor emassiz.
 - Bemor qaysi yozuvda yozsa (lotin yoki kirill), ayni shu yozuvda javob bering.
   Rus tilida yozsa - rus tilida.
 - Bir xabarda faqat bitta savol bering.
-- Salomlashuvni faqat birinchi xabarda ayting, keyin hech qachon takrorlamang.
+- Salomlashuvni faqat birinchi xabarda ayting, keyin takrorlamang -- SUHBAT
+  HOLATIda boshqacha ko'rsatma bo'lmasa (masalan, bemor bilan uzoq vaqtdan
+  beri yozishmagan bo'lsangiz).
 - Bemor aytgan ma'lumotni (ism, yosh, shikoyat, kun) qayta so'ramang.
 - Ro'yxat, sarlavha, qalin shrift ishlatmang. Emoji va "!" ni kam ishlating.
 - Bemorning savolini qaytarib aytmang, to'g'ridan-to'g'ri javob bering.
@@ -258,6 +260,15 @@ class PatientState:
     showing it what it actually just said is a stronger one, because it no
     longer has to recall its own last few lines from further up the same
     scrollback it is also reading for everything else.
+
+    `long_gap` narrows what `continuing` means. `continuing` alone would
+    keep a conversation from a week ago permanently past its hello -- a
+    person at a front desk does the opposite: they say "Assalomu alaykum"
+    to somebody who wrote yesterday and stop doing that only within one
+    sitting. `long_gap` is true when it has been 24 hours or more since
+    anything was last said here, and it asks for the greeting back even
+    though `continuing` is also true -- the name, the number and the rest
+    of what is already known are still not asked for again.
     """
 
     name: str | None = None
@@ -265,6 +276,7 @@ class PatientState:
     script: str | None = None
     continuing: bool = False
     recent_replies: Sequence[str] = ()
+    long_gap: bool = False
 
 
 def from_settings(settings: dict[str, Any] | None) -> Persona:
@@ -379,7 +391,18 @@ def state_section(state: PatientState) -> str:
         if value
     ]
     lines = [" | ".join(known)] if known else []
-    if state.continuing:
+    if state.long_gap:
+        # Not gated on `continuing`: `long_gap` is its own fact, worked out
+        # independently in app.services.turn straight from the transcript's
+        # own timestamps, and it should say what it says regardless of
+        # whatever `history` a particular caller passed alongside it.
+        lines.append(
+            "Bu bemor bilan oxirgi marta 24 soatdan ko'proq oldin "
+            "yozishilgan -- bu amalda yangi suhbat, birinchi xabaridagidek "
+            "salomlashing. Lekin ism, telefon yoki qabulni yana boshidan "
+            "so'ramang, agar ular yuqorida allaqachon berilgan bo'lsa."
+        )
+    elif state.continuing:
         lines.append(
             "Bu suhbat davom etmoqda, bu birinchi xabar emas: qayta "
             "salomlashmang. Bemor hozir nima yozgan bo'lsa, avvalo o'shanga "

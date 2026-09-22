@@ -13,9 +13,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.message import MessageSender
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.appointment import AppointmentRepository
+from app.repositories.message import MessageRepository
 from app.services import turn
 from app.services.appointment import CLINIC_TIMEZONE, day_slots
 from tests.conftest import Seed, isolated_settings
@@ -95,6 +97,50 @@ async def test_the_models_reply_is_what_the_patient_gets(
 
     assert result.reply == "Va alaykum assalom! Qanday yordam bera olaman?"
     assert result.appointment is None
+
+
+async def test_a_patient_back_after_a_real_gap_is_told_to_greet_them_again(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    """The gap is read from the real transcript, not from whatever `history`
+    a caller happens to pass -- so a patient back after two days gets
+    greeted again even though this call passes none."""
+    llm.say("Sizlarda UZI bor.")
+    with as_tenant(seed.tenant_a.id):
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender=MessageSender.BOT,
+            content="Marhamat, yana savolingiz bo'lsa yozing.",
+            channel="instagram",
+            created_at=datetime.now(UTC) - timedelta(hours=50),
+        )
+
+        await _say(db_session, seed, llm, "Sizlarda UZI bormi?")
+
+    assert "24 soatdan ko'proq" in llm.prompts[-1]
+
+
+async def test_a_patient_back_a_few_minutes_later_is_not_greeted_again(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    llm: ScriptedLLM,
+) -> None:
+    llm.say("Sizlarda UZI bor.")
+    with as_tenant(seed.tenant_a.id):
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender=MessageSender.BOT,
+            content="Marhamat, yana savolingiz bo'lsa yozing.",
+            channel="instagram",
+        )
+
+        await _say(db_session, seed, llm, "Sizlarda UZI bormi?")
+
+    assert "24 soatdan ko'proq" not in llm.prompts[-1]
 
 
 async def test_a_booking_marker_writes_the_appointment_and_is_hidden(

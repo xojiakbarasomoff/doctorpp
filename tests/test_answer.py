@@ -66,6 +66,7 @@ async def _ask(
     doctors: Sequence[tuple[str, str, str]] = (),
     history: Sequence[ChatMessage] | None = None,
     patient: Profile | None = None,
+    long_gap: bool = False,
     tenant_settings: dict[str, object] | None = None,
     **settings_overrides: object,
 ) -> tuple[str, FakeLLMProvider]:
@@ -106,6 +107,7 @@ async def _ask(
             settings=_settings(**settings_overrides),
             history=history,
             patient=patient,
+            long_gap=long_gap,
         )
     return result, llm_provider
 
@@ -320,6 +322,25 @@ async def test_the_bots_own_recent_replies_are_shown_back_to_it(
     prompt = llm.calls[0][0]
     assert "1. Marhamat." in prompt
     assert "2. Albatta, aytavering." in prompt
+
+
+async def test_a_returning_patient_after_a_real_gap_is_greeted_again(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    history: list[ChatMessage] = [
+        {"role": "user", "content": "Salom, Asadbek Risqiyev, 93 444 44 44"},
+        {"role": "assistant", "content": "Va alaykum assalom, qaysi kun qulay?"},
+    ]
+
+    _, llm = await _ask(
+        db_session, seed, as_tenant, "Sizlarda UZI ham bormi?", history=history, long_gap=True
+    )
+
+    prompt = llm.calls[0][0]
+    assert "24 soatdan ko'proq" in prompt
+    assert "birinchi xabar emas: qayta" not in prompt
 
 
 async def test_a_conversation_with_history_is_told_not_to_restart(

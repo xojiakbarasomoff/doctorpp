@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -14,6 +15,7 @@ from app.repositories.message import MessageRepository
 from app.repositories.user import UserRepository
 from app.services.conversation import (
     context_for_reply,
+    hours_since_last_contact,
     last_inbound_at,
     recent_history,
     record_outbound_message,
@@ -321,3 +323,73 @@ async def test_last_inbound_at_is_none_for_a_conversation_with_no_patient_messag
         )
 
         assert await last_inbound_at(db_session, conversation.id) is None
+
+
+# --- how long since anyone last said anything here -----------------------
+
+
+async def test_hours_since_last_contact_is_none_on_the_first_message(
+    db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
+) -> None:
+    """Only the seeded patient message exists, and it is the batch about to
+    be answered -- trimmed the same way context_for_reply trims it, so
+    there is nothing left to measure from."""
+    with as_tenant(seed.tenant_a.id):
+        gap = await hours_since_last_contact(
+            db_session, seed.a.conversation.id, now=datetime.now(UTC)
+        )
+
+    assert gap is None
+
+
+async def test_hours_since_last_contact_measures_from_the_clinics_own_last_word(
+    db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender=MessageSender.BOT,
+            content="Va alaykum assalom!",
+            channel="instagram",
+            created_at=datetime.now(UTC) - timedelta(hours=30),
+        )
+
+        recent = await hours_since_last_contact(
+            db_session, seed.a.conversation.id, now=datetime.now(UTC)
+        )
+        long_ago = await hours_since_last_contact(
+            db_session,
+            seed.a.conversation.id,
+            now=datetime.now(UTC) + timedelta(hours=2),
+        )
+
+    assert recent == pytest.approx(30, abs=0.1)
+    assert long_ago == pytest.approx(32, abs=0.1)
+
+
+async def test_hours_since_last_contact_ignores_the_trailing_batch_being_answered(
+    db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
+) -> None:
+    """A patient's own follow-up bubbles, sent long after the clinic's last
+    reply, must not make the gap measure as zero -- they are the message
+    about to be answered, not something already spoken into."""
+    with as_tenant(seed.tenant_a.id):
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender=MessageSender.BOT,
+            content="Va alaykum assalom!",
+            channel="instagram",
+            created_at=datetime.now(UTC) - timedelta(hours=48),
+        )
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender=MessageSender.PATIENT,
+            content="Yana bir savolim bor edi",
+            channel="instagram",
+        )
+
+        gap = await hours_since_last_contact(
+            db_session, seed.a.conversation.id, now=datetime.now(UTC)
+        )
+
+    assert gap == pytest.approx(48, abs=0.1)

@@ -221,6 +221,7 @@ async def generate_answer(
     settings: Settings | None = None,
     history: Sequence[ChatMessage] | None = None,
     patient: Profile | None = None,
+    long_gap: bool = False,
 ) -> str:
     """Ask the model to answer the patient, with the clinic's facts in hand.
 
@@ -228,6 +229,10 @@ async def generate_answer(
     it from app.services.conversation.context_for_reply, which already
     excludes the messages being answered right now, so appending
     user_message here cannot repeat them.
+
+    `long_gap` is whether it has been 24+ hours since anything was last said
+    in this conversation (app.services.conversation.hours_since_last_contact)
+    -- see PatientState.long_gap for what it changes.
     """
     resolved_settings = settings or get_settings()
     tenant_id = get_current_tenant()
@@ -252,6 +257,7 @@ async def generate_answer(
         # the first thing this patient has ever said.
         continuing=bool(history),
         recent_replies=_recent_replies(history),
+        long_gap=long_gap,
     )
     system_prompt = _build_system_prompt(
         persona_service.from_settings(tenant.settings if tenant is not None else None),

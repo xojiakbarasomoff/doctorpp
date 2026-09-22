@@ -99,6 +99,39 @@ def test_a_continuing_conversation_is_told_not_to_restart() -> None:
     assert "Ism: Ali Valiyev | Telefon: +998901234567 | Til/yozuv: o'zbek, lotin yozuvi" in prompt
 
 
+def test_a_conversation_gone_quiet_for_a_day_is_told_to_greet_again() -> None:
+    state = PatientState(
+        name="Ali Valiyev", phone="+998901234567", continuing=True, long_gap=True
+    )
+
+    prompt = _render(state=state)
+
+    assert "24 soatdan ko'proq" in prompt
+    assert "salomlashing" in prompt
+    # The don't-restart note for an ordinary continuing conversation is
+    # replaced, not stacked alongside it -- one instruction about greeting.
+    assert "qayta salomlashmang" not in prompt
+    # Still not re-collected.
+    assert "ism, telefon yoki qabulni yana boshidan" in prompt
+    assert "Ism: Ali Valiyev" in prompt
+
+
+def test_neither_note_appears_without_history() -> None:
+    """The ordinary, unremarkable case: nothing has happened here yet, so
+    there is nothing to say about greeting again or not restarting.
+
+    long_gap is trusted at face value here -- the guard that it can only
+    ever be true when there was a previous message to measure from lives
+    upstream, in app.services.turn (hours_since_last_contact returns None
+    on an opening message, and turn.respond folds that into long_gap
+    itself, before this module ever sees it).
+    """
+    prompt = _render(state=PatientState())
+
+    assert "24 soatdan ko'proq" not in prompt
+    assert "birinchi xabar emas: qayta" not in prompt
+
+
 def test_the_opening_message_gets_no_dont_restart_note() -> None:
     prompt = _render(state=PatientState(script="uz-latn", continuing=False))
 

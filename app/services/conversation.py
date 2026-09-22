@@ -241,6 +241,33 @@ async def context_for_reply(
     return turns
 
 
+async def hours_since_last_contact(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    now: datetime,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+) -> float | None:
+    """How long ago this conversation last had anything in it, before the
+    batch about to be answered -- the same trimming context_for_reply does,
+    so "how long since we last spoke" agrees with what the model is shown as
+    history. None on the conversation's first message, where the question
+    does not apply.
+
+    This is what tells the persona a patient is not walking back into the
+    middle of an exchange, but starting a new one after a real gap: a front
+    desk says "Assalomu alaykum" to somebody who wrote yesterday and did not
+    say it themselves today, and only stops doing that within one sitting.
+    """
+    messages = await MessageRepository(session).list_recent(conversation_id, limit)
+    kept = list(messages)
+    while kept and kept[-1].sender == MessageSender.PATIENT:
+        kept.pop()
+    if not kept:
+        return None
+    return (now - kept[-1].created_at).total_seconds() / 3600
+
+
 async def reply_context_for(
     session: AsyncSession, conversation_id: uuid.UUID
 ) -> dict[str, Any] | None:

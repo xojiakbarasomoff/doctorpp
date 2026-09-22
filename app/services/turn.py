@@ -11,6 +11,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,7 @@ from app.services import patient_profile
 from app.services.answer import generate_answer
 from app.services.booking import extract as extract_booking
 from app.services.booking import settle as settle_booking
+from app.services.conversation import hours_since_last_contact
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,9 @@ async def respond(
 
     await patient_profile.remember(session, user_id=user_id, message=message, history=history)
     profile = await patient_profile.load(session, user_id)
+    gap_hours = await hours_since_last_contact(
+        session, conversation_id, now=datetime.now(UTC)
+    )
 
     reply = await generate_answer(
         session,
@@ -74,6 +79,11 @@ async def respond(
         settings=resolved,
         history=list(history or []),
         patient=profile,
+        # A gap this long is a new conversation in every way that matters
+        # for how it opens, even though there is history to read: a front
+        # desk greets somebody back who wrote yesterday, and stops doing
+        # that only within one sitting. See PatientState.long_gap.
+        long_gap=gap_hours is not None and gap_hours >= 24,
     )
 
     appointment: Appointment | None = None
