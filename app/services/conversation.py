@@ -32,12 +32,25 @@ from app.repositories.conversation import OPEN_STATUS, ConversationRepository
 from app.repositories.message import MessageRepository
 from app.repositories.user import UserRepository
 
-# How much of a conversation is replayed to the LLM. Enough for a patient to
-# refer back to what they just asked ("va narxi qancha?" after a treatment
-# question), short enough that a long-running chat cannot push the system
-# prompt's rules out of the model's attention or grow the per-reply cost
-# without bound. Counted in messages, both sides included.
-DEFAULT_HISTORY_LIMIT = 10
+# How much of a conversation is replayed to the LLM. Counted in messages,
+# both sides included.
+#
+# Was 10, and a real booking -- greeting, the day, the time, the name, the
+# phone, the reason, the confirmation -- is already most of that on its own.
+# A patient who came back ten minutes later with an unrelated question
+# ("sizlarda UZI ham bormi?") pushed their own name and number clean out of
+# the window, and the model, holding nothing that said otherwise, answered
+# as though meeting them for the first time: greeted again, asked again.
+#
+# 30 comfortably holds one full booking and the question that follows it.
+# The ceiling is not the token cost -- a few dozen short chat lines is
+# nothing against a modern context window -- it is that a very long chat
+# could in principle crowd the system prompt's own rules out of what the
+# model attends to most; 30 is nowhere near that, and PatientState (see
+# app.services.persona) also carries the name, the phone and whether this is
+# the conversation's first message as facts the model does not have to
+# recover from scrollback at all.
+DEFAULT_HISTORY_LIMIT = 30
 
 
 @dataclass(frozen=True)

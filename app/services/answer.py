@@ -229,6 +229,11 @@ async def generate_answer(
         name=patient.name if patient else None,
         phone=patient.phone if patient else None,
         script=script,
+        # Whether there was anything to send as history: context_for_reply
+        # has already dropped the trailing patient turns being answered
+        # right now, so an empty list here means, reliably, that this is
+        # the first thing this patient has ever said.
+        continuing=bool(history),
     )
     system_prompt = _build_system_prompt(
         persona_service.from_settings(tenant.settings if tenant is not None else None),

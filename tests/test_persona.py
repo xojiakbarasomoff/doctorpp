@@ -63,6 +63,33 @@ def test_facts_reach_the_model() -> None:
     assert "Ism: Ali Valiyev | Telefon: +998901234567 | Til/yozuv: o'zbek, lotin yozuvi" in prompt
 
 
+def test_a_continuing_conversation_is_told_not_to_restart() -> None:
+    state = PatientState(
+        name="Ali Valiyev", phone="+998901234567", script="uz-latn", continuing=True
+    )
+    prompt = _render(state=state)
+
+    assert "birinchi xabar emas" in prompt
+    assert "qayta salomlashmang" in prompt
+    # The known facts are still there, on their own line above the note.
+    assert "Ism: Ali Valiyev | Telefon: +998901234567 | Til/yozuv: o'zbek, lotin yozuvi" in prompt
+
+
+def test_the_opening_message_gets_no_dont_restart_note() -> None:
+    prompt = _render(state=PatientState(script="uz-latn", continuing=False))
+
+    assert "birinchi xabar emas" not in prompt
+
+
+def test_continuing_alone_with_nothing_else_known_still_renders_the_section() -> None:
+    """A patient the backend knows nothing about yet, five messages into an
+    exchange, still must not be greeted twice."""
+    prompt = _render(state=PatientState(continuing=True))
+
+    assert "# SUHBAT HOLATI" in prompt
+    assert "qayta salomlashmang" in prompt
+
+
 def test_the_examples_are_labelled_as_style_not_as_facts() -> None:
     prompt = _render()
 

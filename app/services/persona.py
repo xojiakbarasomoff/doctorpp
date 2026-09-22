@@ -217,11 +217,21 @@ class PatientState:
     Only what is stored and reliable. Age, complaint and the day they want
     are said in the conversation, which the model reads in full; a field
     here that was usually "unknown" would only invite it to ask again.
+
+    `continuing` exists for the same reason `name` and `phone` do: whether
+    this is the conversation's first message is a fact the backend already
+    knows -- it is exactly "was there any history to send" -- so it is
+    stated rather than left for the model to work out from scrollback that
+    a longer conversation can push most of the way out of view. A patient
+    who gave their name and number, then came back later with an unrelated
+    question, was greeted again and asked to start booking again: nothing
+    told the model this was not the first hello.
     """
 
     name: str | None = None
     phone: str | None = None
     script: str | None = None
+    continuing: bool = False
 
 
 def from_settings(settings: dict[str, Any] | None) -> Persona:
@@ -335,9 +345,17 @@ def state_section(state: PatientState) -> str:
         )
         if value
     ]
-    if not known:
+    lines = [" | ".join(known)] if known else []
+    if state.continuing:
+        lines.append(
+            "Bu suhbat davom etmoqda, bu birinchi xabar emas: qayta "
+            "salomlashmang. Bemor hozir nima yozgan bo'lsa, avvalo o'shanga "
+            "javob bering -- ism, telefon yoki qabulni yana boshidan "
+            "so'ramang, agar ular yuqorida allaqachon berilgan bo'lsa."
+        )
+    if not lines:
         return ""
-    return "# SUHBAT HOLATI (tizim to'ldirgan)\n" + " | ".join(known)
+    return "# SUHBAT HOLATI (tizim to'ldirgan)\n" + "\n".join(lines)
 
 
 def examples_section(examples: str) -> str:

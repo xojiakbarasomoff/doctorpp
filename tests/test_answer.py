@@ -303,6 +303,37 @@ async def test_a_language_the_patient_asked_for_outranks_the_alphabet_of_their_m
     assert "Til/yozuv: rus, kirill yozuvi" in llm.calls[0][0]
 
 
+async def test_a_conversation_with_history_is_told_not_to_restart(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """The bug this exists for: a patient who gave their name and number,
+    then came back later with an unrelated question, was greeted again and
+    asked to start booking from scratch."""
+    history: list[ChatMessage] = [
+        {"role": "user", "content": "Salom, Asadbek Risqiyev, 93 444 44 44"},
+        {"role": "assistant", "content": "Va alaykum assalom, qaysi kun qulay?"},
+    ]
+
+    _, llm = await _ask(
+        db_session, seed, as_tenant, "Sizlarda UZI ham bormi?", history=history
+    )
+
+    assert "birinchi xabar emas" in llm.calls[0][0]
+    assert "qayta salomlashmang" in llm.calls[0][0]
+
+
+async def test_the_opening_message_carries_no_dont_restart_note(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(db_session, seed, as_tenant, "Salom", history=None)
+
+    assert "birinchi xabar emas" not in llm.calls[0][0]
+
+
 async def test_history_is_passed_to_the_model(
     db_session: AsyncSession,
     seed: Seed,
