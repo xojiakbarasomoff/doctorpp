@@ -70,6 +70,23 @@ def test_facts_reach_the_model() -> None:
     assert "Ism: Ali Valiyev | Telefon: +998901234567 | Til/yozuv: o'zbek, lotin yozuvi" in prompt
 
 
+def test_recent_replies_are_shown_so_the_model_does_not_repeat_itself() -> None:
+    state = PatientState(recent_replies=("Marhamat.", "Arzimaydi, salomat bo'ling."))
+
+    prompt = _render(state=state)
+
+    assert "# SUHBAT HOLATI" in prompt
+    assert "1. Marhamat." in prompt
+    assert "2. Arzimaydi, salomat bo'ling." in prompt
+    assert "takrorlamang" in prompt
+
+
+def test_no_recent_replies_means_no_extra_note() -> None:
+    prompt = _render(state=PatientState(script="uz-latn"))
+
+    assert "so'nggi javoblaringiz" not in prompt
+
+
 def test_a_continuing_conversation_is_told_not_to_restart() -> None:
     state = PatientState(
         name="Ali Valiyev", phone="+998901234567", script="uz-latn", continuing=True

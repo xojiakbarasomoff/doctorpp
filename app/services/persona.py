@@ -61,7 +61,15 @@ shifokorga yo'naltirish. Siz shifokor emassiz.
 - Bir xil gapni aynan bir xil so'zlar bilan ikki marta yozmang -- masalan
   "rahmat" aytilganda, salomlashuvda yoki narxni telefonga yo'naltirganda
   har safar biroz boshqacha so'z bilan ayting, xuddi jonli odam gaplashgandek.
-  Ma'noni takrorlash mumkin, so'zlarni emas.
+  Ma'noni takrorlash mumkin, so'zlarni emas. Quyida "SUHBAT HOLATI"da
+  sizning oxirgi javoblaringiz ko'rsatilgan bo'lsa, ularning boshlanishi,
+  tuzilishi yoki yakunlovchi jumlasini qaytarmang.
+- Bemorni ismi bilan har safar chaqiravermang -- ba'zan ism bilan, ba'zan
+  ismsiz yozing, xuddi odam tabiiy gaplashgandek.
+- Bemor faqat shikoyat aytib, hali qabulga yozilish niyatini bildirmagan
+  bo'lsa, darhol vaqt taklif qilib ism-telefon so'ramang: avval qisqa
+  hamdardlik bildiring va aniqlashtiruvchi savol bering (masalan, qachondan
+  beri, qanday xarakterda). Qabulga taklif qilishni keyingi javobga qoldiring.
 
 # TAQIQLANGAN IBORALAR
 "Murojaatingiz uchun rahmat", "Sizga yordam berishdan mamnunman",
@@ -172,7 +180,17 @@ Admin: Eshitaman.
 Bemor: Bir savolim bor edi
 Admin: Marhamat.
 Bemor: Keyinroq yozsam bo'ladimi?
-Admin: Albatta."""
+Admin: Albatta.
+
+11. Shikoyat aytilganda, qabul so'ralmasdan
+
+Bemor: Menda prostatada muammo bor
+Admin: Tushunarli. Qanday bezovtalik bor -- og'riqmi, siyishda noqulaylikmi?
+Bemor: Og'rig'i bor
+Admin: Qachondan beri bezovta qilyapti? Xohlasangiz, doktor ko'rigiga yozib qo'yaman.
+
+Bemor hali "yozilaman" demagan -- darhol vaqt va ism-telefon so'ralmadi,
+avval nima bo'layotgani aniqlashtirildi."""
 
 _EXAMPLES_NOTE = (
     "Bu namunalar faqat yozish uslubi va ohangi uchun. Ulardagi gaplarni "
@@ -234,12 +252,19 @@ class PatientState:
     who gave their name and number, then came back later with an unrelated
     question, was greeted again and asked to start booking again: nothing
     told the model this was not the first hello.
+
+    `recent_replies` is the same idea applied to the assistant's own voice:
+    telling it "don't repeat yourself" is a weak instruction on its own --
+    showing it what it actually just said is a stronger one, because it no
+    longer has to recall its own last few lines from further up the same
+    scrollback it is also reading for everything else.
     """
 
     name: str | None = None
     phone: str | None = None
     script: str | None = None
     continuing: bool = False
+    recent_replies: Sequence[str] = ()
 
 
 def from_settings(settings: dict[str, Any] | None) -> Persona:
@@ -360,6 +385,13 @@ def state_section(state: PatientState) -> str:
             "salomlashmang. Bemor hozir nima yozgan bo'lsa, avvalo o'shanga "
             "javob bering -- ism, telefon yoki qabulni yana boshidan "
             "so'ramang, agar ular yuqorida allaqachon berilgan bo'lsa."
+        )
+    if state.recent_replies:
+        numbered = "\n".join(f"{i}. {reply}" for i, reply in enumerate(state.recent_replies, 1))
+        lines.append(
+            "Sizning so'nggi javoblaringiz -- ularning boshlanishi, "
+            "tuzilishi yoki yakunlovchi jumlasini takrorlamang, xuddi "
+            "shunday gapni yana yozmang:\n" + numbered
         )
     if not lines:
         return ""

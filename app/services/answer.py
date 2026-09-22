@@ -196,6 +196,23 @@ async def _enforce(
     return medical_safety.SAFE_REPLIES[script]
 
 
+# How many of the assistant's own last replies are shown back to it, and how
+# much of each. Two is enough to catch "rahmat" answered the same way twice
+# running; the whole conversation is already in `history` for anything more,
+# and this is only meant to save the model recalling its own voice from
+# further up the same scrollback.
+_MAX_RECENT_REPLIES = 2
+_MAX_RECENT_REPLY_CHARS = 220
+
+
+def _recent_replies(history: Sequence[ChatMessage] | None) -> tuple[str, ...]:
+    """The assistant's own last couple of turns, oldest first."""
+    if not history:
+        return ()
+    own = [turn["content"] for turn in history if turn.get("role") == "assistant"]
+    return tuple(text[:_MAX_RECENT_REPLY_CHARS] for text in own[-_MAX_RECENT_REPLIES:])
+
+
 async def generate_answer(
     session: AsyncSession,
     user_message: str,
@@ -234,6 +251,7 @@ async def generate_answer(
         # right now, so an empty list here means, reliably, that this is
         # the first thing this patient has ever said.
         continuing=bool(history),
+        recent_replies=_recent_replies(history),
     )
     system_prompt = _build_system_prompt(
         persona_service.from_settings(tenant.settings if tenant is not None else None),

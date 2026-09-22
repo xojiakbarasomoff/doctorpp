@@ -303,6 +303,25 @@ async def test_a_language_the_patient_asked_for_outranks_the_alphabet_of_their_m
     assert "Til/yozuv: rus, kirill yozuvi" in llm.calls[0][0]
 
 
+async def test_the_bots_own_recent_replies_are_shown_back_to_it(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    history: list[ChatMessage] = [
+        {"role": "user", "content": "Rahmat"},
+        {"role": "assistant", "content": "Marhamat."},
+        {"role": "user", "content": "Yana bir savol bor edi"},
+        {"role": "assistant", "content": "Albatta, aytavering."},
+    ]
+
+    _, llm = await _ask(db_session, seed, as_tenant, "Ish vaqtingiz qanday?", history=history)
+
+    prompt = llm.calls[0][0]
+    assert "1. Marhamat." in prompt
+    assert "2. Albatta, aytavering." in prompt
+
+
 async def test_a_conversation_with_history_is_told_not_to_restart(
     db_session: AsyncSession,
     seed: Seed,
