@@ -1057,6 +1057,14 @@ class SheetsMirror:
             if existing is not None:
                 await self._label_weekdays(client, [(existing, row.day)])
 
+    async def relabel_weekdays(self) -> None:
+        """Put the day's name in front of every date in the appointment book."""
+        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+            if not self._appointments_ready:
+                await self._ensure_appointment_sheet(client)
+                return
+            await self._label_all_weekdays(client)
+
     async def upsert(self, row: LeadRow) -> None:
         """Put this lead on the list, once."""
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
@@ -1136,6 +1144,17 @@ async def mirror_appointment(row: AppointmentRow) -> None:
         logger.error("sheets_appointment_failed error=%s", exc)
     except Exception:
         logger.exception("sheets_appointment_failed")
+
+
+async def label_appointment_weekdays() -> None:
+    """Refresh the weekday names in the appointment book. Never raises."""
+    mirror = get_mirror()
+    if mirror is None:
+        return
+    try:
+        await mirror.relabel_weekdays()
+    except Exception:
+        logger.exception("sheets_weekday_refresh_failed")
 
 
 # Openings, acknowledgements and bare numbers — the messages that say

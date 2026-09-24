@@ -71,6 +71,7 @@ from app.services.reminders import send_due_reminders
 from app.services.sheets import (
     AppointmentRow,
     LeadRow,
+    label_appointment_weekdays,
     mirror_appointment,
     mirror_lead,
     summarise_problem,
@@ -739,6 +740,11 @@ async def resolve_username(
 configure_logging()
 
 
+async def label_booking_weekdays(ctx: dict[str, Any]) -> None:
+    """ARQ cron: the weekday in front of each date in the appointment book."""
+    await label_appointment_weekdays()
+
+
 async def _start_doctor_telegram(ctx: dict[str, Any]) -> None:
     """Start the doctor's Telegram bot beside the queue, if it is configured."""
     stop = asyncio.Event()
@@ -1007,5 +1013,8 @@ class WorkerSettings:
         # channel, so the interval is really the worst case a patient
         # waits before the bot can hear them again.
         cron(verify_channel_webhooks, minute=set(range(0, 60, 10))),
+        # At startup, so a deploy shows the weekdays without waiting for a
+        # booking, and hourly, so a date someone changed by hand catches up.
+        cron(label_booking_weekdays, minute={15}, run_at_startup=True),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
