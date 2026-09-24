@@ -179,6 +179,53 @@
   dialog.sheet h2 { margin-bottom: 18px; }
   dialog.sheet .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   dialog.sheet .grid .full { grid-column: 1 / -1; }
+  /* Bosh sahifa */
+  .home-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin: 20px 0 28px; }
+  .home-clock-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+  .home-clock { font-size: clamp(48px, 6vw, 76px); font-weight: 300; letter-spacing: -.05em; line-height: .9; font-variant-numeric: tabular-nums; }
+  .home-grid { display: grid; gap: 20px; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); align-items: start; margin-bottom: 20px; }
+  @media (max-width: 1000px) { .home-grid { grid-template-columns: minmax(0, 1fr); } .home-clock-wrap { align-items: flex-start; } }
+  .home-grid .panel, .home-side .panel { margin: 0; }
+  .home-side { display: flex; flex-direction: column; gap: 20px; }
+  .attn-list { display: flex; flex-direction: column; gap: 10px; }
+  .attn { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); }
+  .attn:hover { border-color: var(--accent); }
+  .attn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .attn .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--ink-3); }
+  .attn.doctor .dot { background: var(--danger); box-shadow: 0 0 0 4px var(--danger-soft); }
+  .attn.lead .dot { background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+  .attn.media .dot { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .attn .body { flex: 1; min-width: 0; }
+  .attn .body b { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .attn .body span { display: block; font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .attn .kind { font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .attn.doctor .kind { color: var(--danger); }
+  .attn.lead .kind { color: var(--warn); }
+  .attn.media .kind { color: var(--accent); }
+  .attn .when { font-size: 12px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+  .all-clear { padding: 40px 16px; text-align: center; }
+  .all-clear b { display: block; font-size: 18px; margin-bottom: 4px; }
+  .all-clear span { color: var(--ink-3); font-size: 14px; }
+  .next-card { display: flex; flex-direction: column; gap: 10px; }
+  .next-card .label { font-size: 14px; font-weight: 600; color: var(--ink-3); display: flex; justify-content: space-between; gap: 10px; }
+  .next-card .label em { font-style: normal; color: var(--accent); font-weight: 700; }
+  .next-card .name { font-size: 26px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; }
+  .next-card .meta { font-size: 14px; color: var(--ink-3); }
+  .more-link.inline { margin-top: 0; }
+  .day-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .day-strip div { padding: 12px; border-radius: 16px; background: var(--panel-solid); border: 1px solid var(--glass-border); }
+  .day-strip b { display: block; font-size: 28px; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .day-strip span { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+  .tiles { display: grid; gap: 16px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .tile { font: inherit; color: inherit; text-align: left; cursor: pointer; margin: 0; padding: 20px; display: flex; flex-direction: column; gap: 4px; border-radius: 24px; }
+  .tile:hover { border-color: var(--accent); }
+  .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tile[hidden] { display: none; }
+  .tile svg { width: 26px; height: 26px; fill: none; stroke: var(--accent); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; margin-bottom: 10px; }
+  .tile-name { font-size: 16px; font-weight: 800; }
+  .tile-meta { font-size: 13px; color: var(--ink-3); min-height: 1.5em; }
+  .tile-meta.hot { color: var(--danger); font-weight: 700; }
   dialog.sheet .actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
   /* The conversations screen is two columns: the list, and the thread beside
      it. The thread used to sit under the table, so opening one meant
@@ -359,7 +406,8 @@
   <div class="pillbar">
     <span class="brand">Dr. Temur</span>
     <nav id="tabs" aria-label="Bo'limlar">
-      <button data-tab="today" aria-selected="true">Bugun</button>
+      <button data-tab="home" aria-selected="true">Bosh sahifa</button>
+      <button data-tab="today" aria-selected="false">Kun tartibi</button>
       <button data-tab="chats" aria-selected="false">Suhbatlar</button>
       <button data-tab="report" aria-selected="false">Hisobot</button>
       <button data-tab="media" aria-selected="false">Rasmlar<span class="tab-badge" id="mediaBadge" hidden></span></button>
@@ -378,7 +426,73 @@
 
 <main>
 
-  <section id="tab-today">
+  <section id="tab-home">
+    <div class="home-hero">
+      <div>
+        <span class="hero-date" id="homeDate"></span>
+        <h1 class="hero-title" id="homeGreeting">&nbsp;</h1>
+      </div>
+      <div class="home-clock-wrap">
+        <span class="home-clock" id="homeClock" aria-live="off"></span>
+        <span class="pill" id="homeBot"></span>
+      </div>
+    </div>
+
+    <div class="home-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Diqqat talab qiladi</h2>
+          <span class="count-badge" id="attnCount" hidden></span>
+        </div>
+        <div class="attn-list" id="attnList"></div>
+      </div>
+
+      <div class="home-side">
+        <div class="panel next-card" id="homeNext"></div>
+        <div class="panel">
+          <div class="panel-head"><h2>Bugun</h2><a class="more-link inline" href="#today" data-go="today">Kun tartibi →</a></div>
+          <div class="day-strip" id="homeDay"></div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="tiles" aria-label="Bo'limlar">
+      <button class="panel tile" type="button" data-go="chats">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+        <span class="tile-name">Suhbatlar</span><span class="tile-meta" id="tileChats"></span>
+      </button>
+      <button class="panel tile" type="button" data-go="today">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18M5 4h14a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM8 2v4M16 2v4"/></svg>
+        <span class="tile-name">Kun tartibi</span><span class="tile-meta" id="tileToday"></span>
+      </button>
+      <button class="panel tile" type="button" data-go="leads">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>
+        <span class="tile-name">Nomerlar</span><span class="tile-meta" id="tileLeads"></span>
+      </button>
+      <button class="panel tile" type="button" data-go="media">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v13H3zM8 7l1.5-3h5L16 7M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/></svg>
+        <span class="tile-name">Rasmlar</span><span class="tile-meta" id="tileMedia"></span>
+      </button>
+      <button class="panel tile" type="button" data-go="report">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+        <span class="tile-name">Hisobot</span><span class="tile-meta">30 kunlik tahlil</span>
+      </button>
+      <button class="panel tile" type="button" data-go="doctors">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0"/></svg>
+        <span class="tile-name">Shifokorlar</span><span class="tile-meta">jadval va ish vaqti</span>
+      </button>
+      <button class="panel tile" type="button" data-go="faq">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 19a2 2 0 0 0 2 2h13"/></svg>
+        <span class="tile-name">Bilim bazasi</span><span class="tile-meta">bot nimani biladi</span>
+      </button>
+      <button class="panel tile" type="button" data-go="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12l2-1.6-2-3.4-2.4 1-2-1.2L14 3h-4l-.5 2.6-2 1.2-2.4-1-2 3.4L5 12l-2 1.6 2 3.4 2.4-1 2 1.2L10 21h4l.5-2.6 2-1.2 2.4 1 2-3.4z"/></svg>
+        <span class="tile-name">Sozlamalar</span><span class="tile-meta">klinika va parol</span>
+      </button>
+    </nav>
+  </section>
+
+  <section id="tab-today" hidden>
     <div class="hero">
       <div>
         <span class="hero-date" id="heroDate"></span>
@@ -1031,6 +1145,144 @@ document.getElementById("newAppt").addEventListener("click", () => {
   document.getElementById("nName").focus();
 });
 document.getElementById("apptCancel").addEventListener("click", () => document.getElementById("apptDialog").close());
+
+// --- bosh sahifa ------------------------------------------------------------
+//
+// Where the dashboard opens: the state of the whole clinic at a glance, and
+// every piece of work waiting on somebody in one list, most urgent first.
+
+let ME_NAME = "";
+let HOME_CLOCK_TIMER = null;
+
+function greeting(hour) {
+  if (hour < 5) return "Xayrli tun";
+  if (hour < 11) return "Xayrli tong";
+  if (hour < 17) return "Xayrli kun";
+  return "Xayrli kech";
+}
+
+function paintClock() {
+  const now = new Date();
+  document.getElementById("homeClock").textContent =
+    now.toLocaleTimeString("uz-UZ", { hour: "2-digit", minute: "2-digit", hour12: false });
+  document.getElementById("homeDate").textContent = longDay(now);
+  const first = (ME_NAME || "").trim().split(/\s+/)[0];
+  document.getElementById("homeGreeting").textContent = greeting(now.getHours()) + (first ? `, ${first}` : "");
+}
+
+function startHomeClock() {
+  paintClock();
+  clearInterval(HOME_CLOCK_TIMER);
+  HOME_CLOCK_TIMER = setInterval(() => {
+    if (document.getElementById("tab-home").hidden) return;
+    paintClock();
+  }, 15000);
+}
+
+// Settled one at a time rather than with Promise.all: a role that may not
+// read one of these still gets the rest of the page.
+async function settle(promise, fallback) {
+  try { return await promise; } catch (_) { return fallback; }
+}
+
+function attentionItem(kind, label, title, detail, when, onclick) {
+  return el("button", { class: "attn " + kind, type: "button", onclick },
+    el("span", { class: "dot", "aria-hidden": "true" }),
+    el("span", { class: "body" }, el("b", {}, title), el("span", {}, detail)),
+    el("span", { class: "kind" }, label),
+    el("span", { class: "when" }, when));
+}
+
+function renderNext(next) {
+  const card = document.getElementById("homeNext");
+  if (!next) {
+    card.replaceChildren(
+      el("span", { class: "label" }, "Keyingi bemor"),
+      el("span", { class: "name" }, "Bugun boshqa qabul yo'q"),
+      el("span", { class: "meta" }, "Yangi qabul \"Kun tartibi\"dan qo'shiladi"));
+    return;
+  }
+  const minutes = Math.round((new Date(next.scheduled_at) - Date.now()) / 60000);
+  const inWords = minutes <= 0 ? "hozir" : minutes < 60 ? `${minutes} daqiqadan keyin` : `${Math.floor(minutes / 60)} soat ${minutes % 60} daqiqadan keyin`;
+  card.replaceChildren(
+    el("span", { class: "label" }, "Keyingi bemor", el("em", {}, inWords)),
+    el("span", { class: "name" }, next.patient_name || "Ismi ko'rsatilmagan"),
+    el("span", { class: "meta" }, [localTime(next.scheduled_at), SOURCE_LABELS[next.source] || next.source, next.notes].filter(Boolean).join(" · ")));
+}
+
+async function loadHome() {
+  startHomeClock();
+  const now = new Date();
+  const [stats, todayRows, waiting, leads, media, settings] = await Promise.all([
+    settle(api("/analytics"), null),
+    settle(api(`/appointments?date=${isoDay(now)}&days=1`), []),
+    settle(api("/conversations?needs_doctor=true&limit=20"), []),
+    settle(api("/leads?status=new"), []),
+    settle(api("/media?only_unseen=true"), []),
+    settle(api("/settings"), null),
+  ]);
+
+  const bot = document.getElementById("homeBot");
+  const botOn = !settings || settings.bot_replies_enabled !== false;
+  bot.textContent = botOn ? "Bot javob beryapti" : "Bot o'chirilgan";
+  bot.className = "pill " + (botOn ? "ok" : "bad");
+
+  const newLeads = leads.filter((l) => l.status === "new");
+  const unseenPeople = media.filter((p) => p.unseen > 0);
+  const unseenPhotos = unseenPeople.reduce((n, p) => n + p.unseen, 0);
+  updateMediaBadge(unseenPhotos);
+  const leadsBadge = document.getElementById("leadsBadge");
+  leadsBadge.textContent = String(newLeads.length);
+  leadsBadge.hidden = !newLeads.length;
+
+  // Most urgent first: a patient waiting on the doctor, then somebody who
+  // asked to be rung, then photos nobody has looked at.
+  const items = [
+    ...waiting.map((c) => attentionItem("doctor", "Doktor javobi kerak", patientLabel(c),
+      c.last_message_preview || "—", relativeWhen(c.needs_doctor_since || c.updated_at), () => openPatientChat(c.id))),
+    ...newLeads.map((l) => attentionItem("lead", "Qo'ng'iroq qiling", l.patient_name || (l.username ? "@" + l.username : l.phone || "—"),
+      [l.phone, l.topic].filter(Boolean).join(" · ") || "—", relativeWhen(l.created_at), () => showTab("leads").catch((e) => toast(e.message, true)))),
+    ...unseenPeople.map((p) => attentionItem("media", "Rasm ko'rilmagan", patientTitle(p),
+      `${p.unseen} ta yangi rasm`, p.last_at ? relativeWhen(p.last_at) : "", () => showTab("media").catch((e) => toast(e.message, true)))),
+  ];
+  const count = document.getElementById("attnCount");
+  count.textContent = String(items.length);
+  count.hidden = !items.length;
+  fill("attnList", items.length ? items : [el("div", { class: "all-clear" },
+    el("b", {}, "Hammasi joyida"), el("span", {}, "Hozircha hech kim javob yoki qo'ng'iroq kutmayapti"))]);
+
+  const booked = todayRows.filter((a) => a.status !== "cancelled");
+  const came = todayRows.filter((a) => a.status === "completed").length;
+  const ahead = todayRows.filter((a) => ACTIVE_STATUSES.has(a.status) && new Date(a.scheduled_at) >= now).length;
+  fill("homeDay", [
+    el("div", {}, el("b", {}, booked.length), el("span", {}, "qabul")),
+    el("div", {}, el("b", {}, came), el("span", {}, "keldi")),
+    el("div", {}, el("b", {}, ahead), el("span", {}, "oldinda")),
+  ]);
+  renderNext(nextAppointment(todayRows));
+
+  const setMeta = (id, text, hot) => {
+    const node = document.getElementById(id);
+    node.textContent = text;
+    node.classList.toggle("hot", !!hot);
+  };
+  setMeta("tileChats", waiting.length ? `${waiting.length} tasi javob kutmoqda` : stats ? `${stats.conversations_open} ta ochiq suhbat` : "", waiting.length);
+  setMeta("tileToday", booked.length ? `bugun ${booked.length} ta qabul` : "bugun qabul yo'q");
+  setMeta("tileLeads", newLeads.length ? `${newLeads.length} tasiga qo'ng'iroq qilinmagan` : "hammasi bilan gaplashildi", newLeads.length);
+  setMeta("tileMedia", unseenPhotos ? `${unseenPhotos} ta ko'rilmagan rasm` : "hammasi ko'rilgan", unseenPhotos);
+
+  // A tile for a screen this role cannot open would lead nowhere.
+  for (const tile of document.querySelectorAll("#tab-home [data-go]")) {
+    tile.hidden = !tabButton(tile.dataset.go);
+  }
+}
+
+document.getElementById("tab-home").addEventListener("click", (e) => {
+  const target = e.target.closest("[data-go]");
+  if (!target) return;
+  e.preventDefault();
+  showTab(target.dataset.go).catch((err) => toast(err.message, true));
+});
 
 // --- conversations -------------------------------------------------------
 
@@ -2179,6 +2431,7 @@ document.querySelector("#tab-report .report-range").addEventListener("click", (e
 document.getElementById("reportPrint").addEventListener("click", () => window.print());
 
 const LOADERS = {
+  home: loadHome,
   today: () => Promise.all([loadStats(), loadAppointments(), loadDoctors(), loadViews()]),
   chats: loadChats,
   media: loadMedia,
@@ -2218,7 +2471,7 @@ function tabButton(tab) {
 }
 
 function showTab(tab) {
-  const button = tabButton(tab) || tabButton("today");
+  const button = tabButton(tab) || tabButton("home");
   const name = button.dataset.tab;
   for (const b of document.querySelectorAll("#tabs button")) {
     b.setAttribute("aria-selected", String(b === button));
@@ -2269,11 +2522,12 @@ document.getElementById("staffForm").addEventListener("submit", async (e) => {
     PERMISSIONS = new Set(me.permissions || []);
     applyPermissions();
     await loadViews();
+    ME_NAME = me.name || "";
     const who = document.getElementById("whoami");
     who.textContent = nameInitials(me.name);
     who.title = `${me.name} · ${ROLE_LABELS[me.role] || me.role} · ${me.tenant_name}`;
     // Back where the operator was before the reload. Permissions are applied
-    // first, so a link to a tab this role cannot open lands on "Bugun" rather
+    // first, so a link to a tab this role cannot open lands on the home page rather
     // than on a screen it would only be refused.
     const where = readLocation();
     await showTab(where.tab);
