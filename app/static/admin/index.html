@@ -8,73 +8,178 @@
   /* No CDN: the dashboard is served from the same origin as the API and has
      to keep working on a clinic's patchy connection, so the chart is drawn
      with plain elements rather than a charting library fetched at load. */
+  /* Manrope, served from here rather than a font CDN: the CSP allows nothing
+     from elsewhere, and the clinic's connection is patchy. */
+  @font-face { font-family: "Manrope"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("fonts/manrope-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+  @font-face { font-family: "Manrope"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("fonts/manrope-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+  @font-face { font-family: "Manrope"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("fonts/manrope-cyrillic.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
   :root {
-    --bg: #f4f5f3;
-    --panel: #ffffff;
-    --panel-2: #ebeeea;
-    --ink: #16181a;
-    --ink-2: #4a524e;
-    --ink-3: #7c8681;
-    --rule: #d9ddd7;
-    --accent: #1f6f5c;
-    --accent-soft: #e2efea;
-    --danger: #a83a2b;
-    --danger-soft: #f6e4e0;
-    --warn: #96682a;
-    --ig: #b4426e;
-    --tg: #2c6e9b;
-    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --bg: #f1eef4;
+    --bg-solid: #ffffff;
+    --panel: rgba(255, 255, 255, .58);
+    --panel-solid: #ffffff;
+    --panel-2: rgba(26, 28, 42, .05);
+    --ink: #1a1c2a;
+    --ink-2: #3a3d52;
+    --ink-3: #5b5e73;
+    --rule: rgba(26, 28, 42, .10);
+    --glass-border: rgba(255, 255, 255, .85);
+    --shadow: 0 10px 40px rgba(60, 40, 90, .08);
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, .10);
+    --good: #047857;
+    --good-soft: rgba(16, 185, 129, .14);
+    --warn: #92400e;
+    --warn-soft: rgba(245, 158, 11, .16);
+    --danger: #c2263d;
+    --danger-soft: rgba(194, 38, 61, .10);
+    --ig: #b4235a;
+    --tg: #1d7fb8;
+    --blob-1: rgba(253, 186, 116, .75);
+    --blob-2: rgba(196, 181, 253, .8);
+    --blob-3: rgba(125, 211, 252, .6);
+    --font: "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #131614; --panel: #1a1e1b; --panel-2: #232825;
-      --ink: #e9ebe8; --ink-2: #a3ada7; --ink-3: #7a847e; --rule: #2e3531;
-      --accent: #58bca2; --accent-soft: #14302a;
-      --danger: #e5897a; --danger-soft: #331f1b; --warn: #dcae64;
-      --ig: #e288ac; --tg: #7fb2d6;
+      --bg: #0f1020; --bg-solid: #15162a; --panel: rgba(34, 36, 60, .55); --panel-solid: #1b1d33;
+      --panel-2: rgba(255, 255, 255, .06);
+      --ink: #ecedf5; --ink-2: #c3c5d6; --ink-3: #9a9db2; --rule: rgba(255, 255, 255, .10);
+      --glass-border: rgba(255, 255, 255, .10); --shadow: 0 10px 40px rgba(0, 0, 0, .35);
+      --accent: #8b85ff; --accent-soft: rgba(139, 133, 255, .16);
+      --good: #6ee7b7; --good-soft: rgba(110, 231, 183, .14);
+      --warn: #f5c26b; --warn-soft: rgba(245, 194, 107, .14);
+      --danger: #ff8a9b; --danger-soft: rgba(255, 138, 155, .14);
+      --ig: #f28ab8; --tg: #7cc4f0;
+      --blob-1: rgba(180, 83, 9, .30); --blob-2: rgba(109, 40, 217, .35); --blob-3: rgba(14, 116, 144, .30);
     }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5; }
-  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--rule); position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header .who { margin-left: auto; font-size: 13px; color: var(--ink-3); display: flex; align-items: center; gap: 12px; }
-  nav { display: flex; gap: 4px; flex-wrap: wrap; padding: 10px 20px 0; }
-  nav button { font: inherit; font-size: 14px; padding: 8px 14px; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; background: none; color: var(--ink-2); cursor: pointer; }
-  nav button[aria-selected="true"] { background: var(--panel); border-color: var(--rule); color: var(--ink); font-weight: 600; }
-  main { padding: 0 20px 60px; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  /* The coloured light the glass panels sit on. Fixed, so it stays put while
+     the page scrolls, and behind everything so it never takes a click. */
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(38vw 38vw at 4% 2%, var(--blob-1), transparent 70%),
+      radial-gradient(42vw 42vw at 96% 12%, var(--blob-2), transparent 70%),
+      radial-gradient(40vw 40vw at 45% 110%, var(--blob-3), transparent 70%); }
+  .topbar { position: sticky; top: 0; z-index: 10; display: flex; justify-content: center; padding: 16px 20px 8px; }
+  .pillbar { display: flex; align-items: center; gap: 4px; max-width: 100%; padding: 6px; border-radius: 999px;
+    background: var(--panel); -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--glass-border); box-shadow: var(--shadow); }
+  .pillbar .brand { padding: 0 14px 0 12px; font-weight: 800; font-size: 15px; white-space: nowrap; }
+  nav#tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+  nav#tabs::-webkit-scrollbar { display: none; }
+  nav#tabs button { font: inherit; font-size: 14px; font-weight: 600; height: 40px; padding: 0 16px; border: 0; border-radius: 20px; background: transparent; color: var(--ink-3); cursor: pointer; white-space: nowrap; }
+  nav#tabs button:hover { color: var(--ink); }
+  nav#tabs button[aria-selected="true"] { background: var(--panel-solid); color: var(--ink); font-weight: 700; box-shadow: 0 2px 8px rgba(60, 40, 90, .10); }
+  nav#tabs button:focus-visible, .pillbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .who { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
+  .who .me { width: 40px; height: 40px; border-radius: 20px; background: var(--ink); color: var(--bg-solid); font-weight: 700; font-size: 13px; display: grid; place-items: center; flex-shrink: 0; }
+  .who button.act { height: 40px; border-radius: 20px; }
+  main { padding: 12px 40px 60px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 700px) { main { padding: 8px 14px 48px; } .topbar { padding: 10px 10px 6px; } .pillbar .brand { display: none; } }
   section[hidden] { display: none; }
-  .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: 0 4px 4px 4px; padding: 18px; margin-bottom: 18px; }
-  h2 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+  .panel { background: var(--panel); -webkit-backdrop-filter: blur(24px) saturate(180%); backdrop-filter: blur(24px) saturate(180%);
+    border: 1px solid var(--glass-border); border-radius: 28px; box-shadow: var(--shadow); padding: 24px; margin-bottom: 20px; }
+  h2 { font-size: 20px; margin: 0 0 16px; font-weight: 800; letter-spacing: -.02em; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding: 8px 10px; border-bottom: 1px solid var(--rule); font-weight: 600; }
-  td { padding: 9px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { text-align: left; font-size: 12px; color: var(--ink-3); padding: 10px 12px; border-bottom: 1px solid var(--rule); font-weight: 700; }
+  td { padding: 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
   tr:last-child td { border-bottom: none; }
   .scroll { overflow-x: auto; }
-  button.act { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid var(--rule); border-radius: 3px; background: var(--panel-2); color: var(--ink); cursor: pointer; }
-  button.act:hover { border-color: var(--accent); color: var(--accent); }
+  button.act, a.act { font: inherit; font-size: 13px; font-weight: 700; height: 36px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--rule); border-radius: 12px; background: var(--panel-solid); color: var(--ink); cursor: pointer; text-decoration: none; white-space: nowrap; }
+  button.act:hover, a.act:hover { border-color: var(--accent); color: var(--accent); }
   button.act.danger:hover { border-color: var(--danger); color: var(--danger); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  input, select, textarea { font: inherit; font-size: 14px; padding: 7px 9px; border: 1px solid var(--rule); border-radius: 3px; background: var(--bg); color: var(--ink); width: 100%; }
-  label { display: block; font-size: 12px; color: var(--ink-3); margin-bottom: 4px; }
-  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
-  .pill { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 2px; background: var(--panel-2); color: var(--ink-2); white-space: nowrap; }
-  .pill.ok { background: var(--accent-soft); color: var(--accent); }
+  button.primary, button.act.primary { background: var(--ink); border-color: var(--ink); color: var(--bg-solid); }
+  button.act.primary:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select, textarea { font: inherit; font-size: 14px; padding: 9px 12px; border: 1px solid var(--rule); border-radius: 12px; background: var(--panel-solid); color: var(--ink); width: 100%; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  label { display: block; font-size: 12px; font-weight: 700; color: var(--ink-3); margin-bottom: 6px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+  .pill { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--panel-2); color: var(--ink-2); white-space: nowrap; }
+  .pill.ok { background: var(--good-soft); color: var(--good); }
   .pill.bad { background: var(--danger-soft); color: var(--danger); }
-  .pill.instagram { background: var(--accent-soft); color: var(--ig); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.next { background: var(--accent); color: #fff; }
+  .pill.instagram { background: var(--danger-soft); color: var(--ig); }
   .pill.telegram { background: var(--accent-soft); color: var(--tg); }
-  .stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
-  .stat { background: var(--panel-2); border-radius: 3px; padding: 12px 14px; }
-  .stat b { display: block; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat span { font-size: 12px; color: var(--ink-3); }
-  .chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; margin-top: 14px; }
-  .chart div { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 2px; position: relative; }
-  .chart div span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--ink-3); }
   .muted { color: var(--ink-3); font-size: 13px; }
-  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 4px; font-size: 14px; z-index: 50; }
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg-solid); padding: 12px 18px; border-radius: 14px; font-size: 14px; font-weight: 600; z-index: 50; box-shadow: var(--shadow); }
   #toast[hidden] { display: none; }
   #toast.bad { background: var(--danger); color: #fff; }
+  /* Bugun */
+  .hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin: 20px 0 28px; }
+  .hero-date { font-size: 15px; font-weight: 600; color: var(--ink-3); }
+  .hero-title { margin: 8px 0 0; font-size: clamp(34px, 4.2vw, 52px); font-weight: 800; letter-spacing: -.04em; line-height: 1.02; }
+  .hero-title span { color: var(--accent); }
+  .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn-lg { font: inherit; font-size: 15px; font-weight: 700; height: 52px; padding: 0 24px; border-radius: 26px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; text-decoration: none; white-space: nowrap; }
+  .btn-lg.glass { border: 1px solid var(--glass-border); background: var(--panel); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); color: var(--ink); }
+  .btn-lg.glass:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-lg.dark { border: 0; background: var(--ink); color: var(--bg-solid); }
+  .btn-lg.dark:hover { background: var(--accent); color: #fff; }
+  .kpi-row { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); margin-bottom: 20px; }
+  .kcard { font: inherit; color: inherit; text-align: left; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 22px 24px; }
+  .kcard:hover { border-color: var(--accent); }
+  .kcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .kcard span.k-label { display: block; font-size: 14px; font-weight: 600; color: var(--ink-3); }
+  .kcard b { display: block; font-size: 44px; font-weight: 800; letter-spacing: -.04em; line-height: 1.05; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .kchip { height: 30px; padding: 0 12px; border-radius: 15px; font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; white-space: nowrap; background: var(--panel-2); color: var(--ink-2); }
+  .kchip.good { background: var(--good-soft); color: var(--good); }
+  .kchip.warn { background: var(--warn-soft); color: var(--warn); }
+  .kchip.accent { background: var(--accent-soft); color: var(--accent); }
+  .today-grid { display: grid; gap: 20px; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); align-items: start; }
+  @media (max-width: 1000px) { .today-grid { grid-template-columns: minmax(0, 1fr); } }
+  .today-grid .panel { margin: 0; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .panel-head h2 { margin: 0; }
+  .seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--panel-2); }
+  .seg button { font: inherit; height: 32px; padding: 0 14px; border: 0; border-radius: 16px; background: transparent; font-size: 13px; font-weight: 600; color: var(--ink-3); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--panel-solid); color: var(--ink); font-weight: 700; box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+  details.filters { margin-bottom: 10px; }
+  details.filters summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--ink-3); list-style: none; display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; }
+  details.filters summary::-webkit-details-marker { display: none; }
+  details.filters summary::before { content: "+"; font-weight: 800; }
+  details.filters[open] summary::before { content: "\2212"; }
+  details.filters .row { margin-top: 10px; }
+  details.filters .row > input, details.filters .row > select { width: auto; }
+  .agenda-day { font-size: 13px; font-weight: 800; color: var(--ink-3); padding: 14px 14px 4px; }
+  .appt { display: flex; align-items: center; gap: 16px; padding: 10px 14px; border-radius: 20px; }
+  .appt.next { background: var(--panel-solid); box-shadow: 0 6px 20px rgba(60, 40, 90, .10); }
+  .appt.gone { opacity: .6; }
+  .appt .t { width: 56px; flex-shrink: 0; font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .appt .av { width: 40px; height: 40px; flex-shrink: 0; border-radius: 20px; display: grid; place-items: center; font-size: 13px; font-weight: 800; color: #1a1c2a; }
+  .appt .who-col { flex: 1; min-width: 0; }
+  .appt .who-col b { display: block; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .appt .who-col span { display: block; font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .appt .src { width: 88px; flex-shrink: 0; font-size: 13px; font-weight: 600; color: var(--ink-3); }
+  .appt .pill { width: 112px; justify-content: center; flex-shrink: 0; }
+  .appt .acts { display: flex; gap: 4px; flex-shrink: 0; width: 76px; justify-content: flex-end; }
+  .appt .acts button { width: 36px; height: 36px; padding: 0; border-radius: 12px; }
+  @media (hover: hover) { .appt .acts button { opacity: 0; } .appt:hover .acts button, .appt:focus-within .acts button { opacity: 1; } }
+  @media (max-width: 700px) { .appt { flex-wrap: wrap; gap: 10px; } .appt .src { display: none; } .appt .acts { width: auto; } }
+  .agenda-empty { padding: 36px 14px; text-align: center; color: var(--ink-3); }
+  .count-badge { min-width: 28px; height: 28px; padding: 0 9px; border-radius: 14px; background: var(--accent); color: #fff; font-size: 13px; font-weight: 800; display: inline-grid; place-items: center; }
+  .wait-list { display: flex; flex-direction: column; gap: 12px; }
+  .wait-item { font: inherit; color: inherit; text-align: left; cursor: pointer; width: 100%; padding: 14px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 6px; }
+  .wait-item:hover { border-color: var(--accent); }
+  .wait-item .top { display: flex; justify-content: space-between; gap: 10px; }
+  .wait-item .top b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wait-item .top span { font-size: 12px; font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+  .wait-item p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .wait-item small { font-size: 12px; font-weight: 700; color: var(--ig); }
+  .wait-item small.telegram { color: var(--tg); }
+  .more-link { display: inline-block; margin-top: 16px; font-size: 14px; font-weight: 700; color: var(--accent); text-decoration: none; }
+  dialog.sheet { border: 1px solid var(--glass-border); border-radius: 28px; padding: 28px; width: min(560px, calc(100vw - 32px)); background: var(--panel-solid); color: var(--ink); box-shadow: 0 30px 80px rgba(20, 10, 40, .25); }
+  dialog.sheet::backdrop { background: rgba(26, 28, 42, .35); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+  dialog.sheet h2 { margin-bottom: 18px; }
+  dialog.sheet .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  dialog.sheet .grid .full { grid-column: 1 / -1; }
+  dialog.sheet .actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
   /* The conversations screen is two columns: the list, and the thread beside
      it. The thread used to sit under the table, so opening one meant
      scrolling past every other conversation to read it and scrolling back to
@@ -84,15 +189,15 @@
      holds the thread still: with nothing left for the page to scroll,
      running down the patient list cannot move the conversation being read.
      Sticky was not enough -- sticky still drifts until it reaches its offset.
-     122px is the sticky header plus the tab strip above this. */
-  .chat-workspace.open { grid-template-columns: minmax(0, 1fr) minmax(0, 480px); height: calc(100vh - 122px); }
+     100px is the floating menu above this. */
+  .chat-workspace.open { grid-template-columns: minmax(0, 1fr) minmax(0, 480px); height: calc(100vh - 100px); }
   .chat-workspace.open > .panel { height: 100%; min-height: 0; margin-bottom: 0; display: flex; flex-direction: column; }
   /* Only the table scrolls; the heading, the search box and the saved views
      stay where the operator left them. */
   .chat-workspace.open > .panel > .scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   /* The column heads stay put inside the scrolling list -- a table scrolled
      a hundred rows down with no header is a table of unlabelled columns. */
-  .chat-workspace.open > .panel > .scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+  .chat-workspace.open > .panel > .scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-solid); }
   /* main's 60px bottom padding is 60px the page can still scroll, and the
      thread would ride up all 60 of them. Trimmed only while a conversation
      is open, which is the only time it is in the way. */
@@ -229,7 +334,7 @@
   .complaint { border-left: 3px solid var(--series-1); padding: 6px 10px; background: var(--panel-2); border-radius: 0 4px 4px 0; font-size: 13px; }
   .complaint small { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
   .report-empty { color: var(--ink-3); font-size: 13px; padding: 24px 0; text-align: center; }
-  @media print { header, nav, .report-range, #toast { display: none !important; } .panel { break-inside: avoid; } }
+  @media print { .topbar, nav, .report-range, #toast { display: none !important; } .panel { break-inside: avoid; } }
   .leads-table td { vertical-align: middle; }
   .leads-table tr.is-new td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
   .lead-who b { display: block; }
@@ -243,75 +348,118 @@
 </head>
 <body>
 
-<header>
-  <h1>Dr. Temur — boshqaruv</h1>
-  <div class="who">
-    <span id="whoami">…</span>
-    <button class="act" id="logout">Chiqish</button>
+<header class="topbar">
+  <div class="pillbar">
+    <span class="brand">Dr. Temur</span>
+    <nav id="tabs" aria-label="Bo'limlar">
+      <button data-tab="today" aria-selected="true">Bugun</button>
+      <button data-tab="chats" aria-selected="false">Suhbatlar</button>
+      <button data-tab="report" aria-selected="false">Hisobot</button>
+      <button data-tab="media" aria-selected="false">Rasmlar<span class="tab-badge" id="mediaBadge" hidden></span></button>
+      <button data-tab="leads" aria-selected="false">Nomerlar<span class="tab-badge" id="leadsBadge" hidden></span></button>
+      <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
+      <button data-tab="faq" aria-selected="false">Bilim bazasi</button>
+      <button data-tab="settings" aria-selected="false">Sozlamalar</button>
+      <button data-tab="staff" aria-selected="false" hidden>Xodimlar</button>
+    </nav>
+    <div class="who">
+      <span class="me" id="whoami" title="">…</span>
+      <button class="act" id="logout">Chiqish</button>
+    </div>
   </div>
 </header>
-
-<nav id="tabs">
-  <button data-tab="today" aria-selected="true">Bugun</button>
-  <button data-tab="chats" aria-selected="false">Suhbatlar</button>
-  <button data-tab="report" aria-selected="false">📊 Hisobot</button>
-  <button data-tab="media" aria-selected="false">📷 Rasm yuborganlar<span class="tab-badge" id="mediaBadge" hidden></span></button>
-  <button data-tab="leads" aria-selected="false">📞 Nomer<span class="tab-badge" id="leadsBadge" hidden></span></button>
-  <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
-  <button data-tab="faq" aria-selected="false">Bilim bazasi</button>
-  <button data-tab="settings" aria-selected="false">Sozlamalar</button>
-  <button data-tab="staff" aria-selected="false" hidden>Xodimlar</button>
-</nav>
 
 <main>
 
   <section id="tab-today">
-    <div class="panel">
-      <h2>Ko'rsatkichlar</h2>
-      <div class="stats" id="stats"></div>
-      <div class="chart" id="chart"></div>
-      <p class="muted" style="margin-top:26px">So'nggi 2 haftadagi qabullar</p>
+    <div class="hero">
+      <div>
+        <span class="hero-date" id="heroDate"></span>
+        <h1 class="hero-title" id="heroTitle">&nbsp;</h1>
+      </div>
+      <div class="hero-actions">
+        <a class="btn-lg glass" id="apptExport">CSV yuklab olish</a>
+        <button class="btn-lg dark" id="newAppt" type="button">+ Yangi qabul</button>
+      </div>
     </div>
 
-    <div class="panel">
-      <h2>Qabullar</h2>
-      <div class="row" id="views-appointments" style="margin-bottom:10px;gap:6px;flex-wrap:wrap"></div>
-      <div class="row" style="margin-bottom:14px">
-        <input type="date" id="apptDate" style="width:auto">
-        <select id="apptDays" style="width:auto">
-          <option value="1">Shu kun</option>
-          <option value="7">7 kun</option>
-          <option value="30">30 kun</option>
-        </select>
-        <select id="apptSource" style="width:auto">
-          <option value="">Barcha manbalar</option>
-          <option value="telegram">Telegram</option>
-          <option value="instagram">Instagram</option>
-          <option value="operator">Operator</option>
-        </select>
-        <select id="apptStatus" style="width:auto">
-          <option value="">Barcha holatlar</option>
-          <option value="scheduled">Rejalashtirilgan</option>
-          <option value="confirmed">Tasdiqlangan</option>
-          <option value="cancelled">Bekor qilingan</option>
-        </select>
-        <button class="act" id="apptReload">Ko'rsatish</button>
-        <a class="act" id="apptExport" style="text-decoration:none;padding:6px 10px">CSV yuklab olish</a>
+    <div class="kpi-row">
+      <button class="panel kcard" type="button" data-go="chats">
+        <span><span class="k-label">Ochiq suhbatlar</span><b id="kOpen">—</b></span>
+        <span class="kchip" id="kOpenHint"></span>
+      </button>
+      <button class="panel kcard" type="button" data-go="leads">
+        <span><span class="k-label">Nomer qoldirdi</span><b id="kLeads">—</b></span>
+        <span class="kchip" id="kLeadsHint"></span>
+      </button>
+      <button class="panel kcard" type="button" data-go="media">
+        <span><span class="k-label">Rasm yubordi</span><b id="kMedia">—</b></span>
+        <span class="kchip" id="kMediaHint"></span>
+      </button>
+    </div>
+
+    <div class="today-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Kun tartibi</h2>
+          <div class="seg" role="group" aria-label="Davr" id="apptRange">
+            <button type="button" data-range="today" aria-pressed="true">Bugun</button>
+            <button type="button" data-range="tomorrow" aria-pressed="false">Ertaga</button>
+            <button type="button" data-range="week" aria-pressed="false">Hafta</button>
+          </div>
+        </div>
+        <details class="filters">
+          <summary>Filtrlar va saqlangan ko'rinishlar</summary>
+          <div class="row" id="views-appointments" style="gap:6px;flex-wrap:wrap"></div>
+          <div class="row">
+            <input type="date" id="apptDate" aria-label="Sana">
+            <select id="apptDays" aria-label="Necha kun">
+              <option value="1">Shu kun</option>
+              <option value="7">7 kun</option>
+              <option value="30">30 kun</option>
+            </select>
+            <select id="apptSource" aria-label="Manba">
+              <option value="">Barcha manbalar</option>
+              <option value="telegram">Telegram</option>
+              <option value="instagram">Instagram</option>
+              <option value="operator">Operator</option>
+            </select>
+            <select id="apptStatus" aria-label="Holat">
+              <option value="">Barcha holatlar</option>
+              <option value="scheduled">Kutilmoqda</option>
+              <option value="confirmed">Tasdiqlangan</option>
+              <option value="cancelled">Bekor qilingan</option>
+            </select>
+            <button class="act" id="apptReload">Ko'rsatish</button>
+          </div>
+        </details>
+        <div id="apptRows"></div>
       </div>
-      <div class="scroll"><table>
-        <thead><tr><th>Vaqt</th><th>Bemor</th><th>Telefon</th><th>Shifokor</th><th>Holat</th><th>Manba</th><th></th></tr></thead>
-        <tbody id="apptRows"></tbody>
-      </table></div>
-      <h2 style="margin-top:22px">Yangi qabul</h2>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Javob kutmoqda</h2>
+          <span class="count-badge" id="waitCount" hidden></span>
+        </div>
+        <div class="wait-list" id="waitList"></div>
+        <a class="more-link" href="#chats" id="waitAll">Barcha suhbatlar →</a>
+      </div>
+    </div>
+
+    <dialog class="sheet" id="apptDialog" aria-labelledby="apptDialogTitle">
+      <h2 id="apptDialogTitle">Yangi qabul</h2>
       <form id="apptForm" class="grid">
         <div><label for="nDate">Sana</label><input type="date" id="nDate" required></div>
         <div><label for="nTime">Vaqt</label><input type="time" id="nTime" step="1200" min="09:00" max="16:40" required></div>
-        <div><label for="nName">Bemor</label><input id="nName" required></div>
+        <div class="full"><label for="nName">Bemor</label><input id="nName" required></div>
         <div><label for="nPhone">Telefon</label><input id="nPhone" placeholder="+998 90 123 45 67"></div>
         <div><label for="nDoctor">Shifokor</label><select id="nDoctor"></select></div>
-        <div><button class="act primary" type="submit">Qo'shish</button></div>
+        <div class="actions">
+          <button class="act" type="button" id="apptCancel">Bekor qilish</button>
+          <button class="act primary" type="submit">Qo'shish</button>
+        </div>
       </form>
-    </div>
+    </dialog>
   </section>
 
   <section id="tab-chats" hidden>
@@ -354,7 +502,7 @@
 
   <section id="tab-media" hidden>
     <div class="panel">
-      <h2>📷 Rasm yuborganlar</h2>
+      <h2>Rasm yuborganlar</h2>
       <div class="media-toolbar">
         <input type="search" id="mediaSearch" placeholder="Ism, @username yoki telefon bo'yicha qidirish" aria-label="Qidirish">
         <label class="check"><input type="checkbox" id="mediaUnseen"> Faqat ko'rilmaganlar</label>
@@ -374,13 +522,13 @@
 
   <section id="tab-report" class="viz" hidden>
     <div class="report-head">
-      <h2>📊 Hisobot</h2>
+      <h2>Hisobot</h2>
       <div class="report-range" role="group" aria-label="Davr">
         <button class="chip" data-days="7" aria-pressed="false">7 kun</button>
         <button class="chip" data-days="30" aria-pressed="true">30 kun</button>
         <button class="chip" data-days="90" aria-pressed="false">90 kun</button>
         <button class="chip" data-days="365" aria-pressed="false">1 yil</button>
-        <button class="chip" id="reportPrint" aria-pressed="false">🖨 Chop etish</button>
+        <button class="chip" id="reportPrint" aria-pressed="false">Chop etish</button>
       </div>
       <div class="report-period" id="reportPeriod"></div>
     </div>
@@ -433,7 +581,7 @@
   <section id="tab-leads" hidden>
     <div class="panel">
       <div class="report-head" style="margin-bottom:12px">
-        <h2 style="margin:0">📞 Nomer qoldirganlar</h2>
+        <h2 style="margin:0">Nomer qoldirganlar</h2>
         <span class="media-summary" id="leadSummary"></span>
       </div>
       <p class="muted" style="margin:0 0 12px">Qo'ng'iroq qilishni so'ragan bemorlar: kim, qaysi raqamga va nima uchun.</p>
@@ -633,7 +781,8 @@ function localDateTime(iso) {
   return new Date(iso).toLocaleString("uz-UZ", { dateStyle: "short", timeStyle: "short" });
 }
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 }
 // The server sends this account's permissions with the session (see
 // app.api.admin.session), so the rules live in one place. Deriving them here
@@ -653,25 +802,98 @@ function canManageClinic() {
 
 // --- today ---------------------------------------------------------------
 
-async function loadStats() {
-  const s = await api("/analytics");
-  const cards = [
-    ["Suhbatlar", s.conversations_total],
-    ["Ochiq", s.conversations_open],
-    ["Operatorda", s.conversations_with_operator],
-    ["Qabullar", s.appointments_active],
-    ["Lidlar", s.leads_new],
-    ["FAQ", s.faqs_active],
-  ].map(([label, value]) => el("div", { class: "stat" }, el("b", {}, value), el("span", {}, label)));
-  fill("stats", cards);
+const WEEKDAYS_LONG = ["Yakshanba", "Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"];
+const MONTHS_LONG = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+const ACTIVE_STATUSES = new Set(["scheduled", "confirmed"]);
+const STATUS_VIEW = {
+  scheduled: ["Kutilmoqda", ""],
+  confirmed: ["Tasdiqlangan", "ok"],
+  completed: ["Keldi", "ok"],
+  no_show: ["Kelmadi", "bad"],
+  cancelled: ["Bekor qilindi", "bad"],
+};
+const SOURCE_LABELS = { instagram: "Instagram", telegram: "Telegram", operator: "Operator", web: "Web" };
+const AVATAR_TINTS = ["#fed7aa", "#ddd6fe", "#bae6fd", "#fbcfe8", "#bbf7d0", "#fde68a"];
 
-  const max = Math.max(1, ...s.appointments_by_day.map((d) => d.count));
-  document.getElementById("chart").replaceChildren(
-    ...s.appointments_by_day.map((d) =>
-      el("div", { style: `height:${Math.round((d.count / max) * 100)}%`, title: `${d.day}: ${d.count}` },
-         el("span", {}, d.day.slice(5)))
-    )
-  );
+function isoDay(date) {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function longDay(date) {
+  return `${WEEKDAYS_LONG[date.getDay()]}, ${date.getDate()}-${MONTHS_LONG[date.getMonth()]}`;
+}
+
+function nameInitials(name) {
+  const words = (name || "?").replace(/^@/, "").trim().split(/\s+/).slice(0, 2);
+  return words.map((w) => w[0] || "").join("").toUpperCase() || "?";
+}
+
+function tintFor(text) {
+  let h = 0;
+  for (const ch of text || "") h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return AVATAR_TINTS[h % AVATAR_TINTS.length];
+}
+
+// The next booking still to come today, or null.
+function nextAppointment(rows) {
+  const now = Date.now();
+  return rows
+    .filter((a) => ACTIVE_STATUSES.has(a.status) && new Date(a.scheduled_at).getTime() >= now - 10 * 60000)
+    .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at))[0] || null;
+}
+
+async function loadHero() {
+  const now = new Date();
+  document.getElementById("heroDate").textContent = longDay(now);
+  const rows = await api(`/appointments?date=${isoDay(now)}&days=1`);
+  const booked = rows.filter((a) => a.status !== "cancelled");
+  const next = nextAppointment(rows);
+  const title = document.getElementById("heroTitle");
+  if (!booked.length) {
+    title.replaceChildren("Bugun qabul yo'q,", el("br"), el("span", {}, "bo'sh kun"));
+  } else if (next) {
+    title.replaceChildren(`Bugun ${booked.length} ta qabul,`, el("br"), el("span", {}, `keyingisi ${localTime(next.scheduled_at)} da`));
+  } else {
+    title.replaceChildren(`Bugun ${booked.length} ta qabul,`, el("br"), el("span", {}, "hammasi o'tdi"));
+  }
+}
+
+function setChip(id, text, tone) {
+  const chip = document.getElementById(id);
+  chip.textContent = text;
+  chip.className = "kchip" + (tone ? " " + tone : "");
+  chip.hidden = !text;
+}
+
+async function loadStats() {
+  const [s] = await Promise.all([api("/analytics"), loadHero(), loadWaiting()]);
+  document.getElementById("kOpen").textContent = s.conversations_open;
+  setChip("kOpenHint", s.conversations_with_operator ? `${s.conversations_with_operator} tasi operatorda` : "bot javob beryapti", s.conversations_with_operator ? "warn" : "good");
+  document.getElementById("kLeads").textContent = s.leads_new;
+  setChip("kLeadsHint", s.leads_new ? "qo'ng'iroq qiling" : "hammasi bilan gaplashildi", s.leads_new ? "warn" : "good");
+  refreshMediaBadge();
+}
+
+// Conversations the bot has stepped back from: an operator has to answer them.
+async function loadWaiting() {
+  const rows = await api("/conversations?only_taken_over=true&limit=5");
+  const count = document.getElementById("waitCount");
+  count.textContent = rows.length >= 5 ? "5+" : String(rows.length);
+  count.hidden = !rows.length;
+  if (!rows.length) {
+    fill("waitList", [el("p", { class: "agenda-empty" }, "Hammasiga javob berilgan")]);
+    return;
+  }
+  fill("waitList", rows.map((c) => {
+    const channel = (c.channel || "").toLowerCase();
+    return el("button", { class: "wait-item", type: "button", onclick: () => openPatientChat(c.id) },
+      el("span", { class: "top" },
+        el("b", {}, patientLabel(c)),
+        el("span", {}, c.last_message_at ? relativeWhen(c.last_message_at) : "")),
+      el("p", {}, c.last_message_preview || "—"),
+      el("small", { class: channel }, SOURCE_LABELS[channel] || c.channel));
+  }));
 }
 
 // The controls a list is showing right now, in the shape the API takes —
@@ -703,29 +925,69 @@ function applyParams(resource, params) {
   }
 }
 
+function rangeParams(range) {
+  const day = new Date();
+  if (range === "tomorrow") day.setDate(day.getDate() + 1);
+  return { date: isoDay(day), days: range === "week" ? "7" : "1" };
+}
+
+// Which of Bugun / Ertaga / Hafta the filters amount to, if any.
+function markRange() {
+  const date = document.getElementById("apptDate").value;
+  const days = document.getElementById("apptDays").value;
+  for (const b of document.querySelectorAll("#apptRange button")) {
+    const p = rangeParams(b.dataset.range);
+    b.setAttribute("aria-pressed", String(p.date === date && p.days === days));
+  }
+}
+
+function appointmentRow(a, next) {
+  const [label, tone] = STATUS_VIEW[a.status] || [a.status, ""];
+  const isNext = next && next.id === a.id;
+  const past = !isNext && new Date(a.scheduled_at).getTime() < Date.now() && ACTIVE_STATUSES.has(a.status);
+  const name = a.patient_name || "Ismi ko'rsatilmagan";
+  const detail = [a.notes, a.patient_phone].filter(Boolean).join(" · ") || a.doctor_name;
+  const actions = canManage() && ACTIVE_STATUSES.has(a.status)
+    ? [
+        a.status === "scheduled"
+          ? el("button", { class: "act", type: "button", title: "Tasdiqlash", "aria-label": `${name}: tasdiqlash`, onclick: () => act(`/appointments/${a.id}/confirm`, "Tasdiqlandi") }, "✓")
+          : null,
+        el("button", { class: "act danger", type: "button", title: "Bekor qilish", "aria-label": `${name}: bekor qilish`, onclick: () => act(`/appointments/${a.id}/cancel`, "Bekor qilindi") }, "✕"),
+      ]
+    : [];
+  return el("div", { class: "appt" + (isNext ? " next" : "") + (past ? " gone" : "") },
+    el("span", { class: "t" }, localTime(a.scheduled_at)),
+    el("span", { class: "av", style: `background:${tintFor(name)}`, "aria-hidden": "true" }, nameInitials(name)),
+    el("span", { class: "who-col" }, el("b", {}, name), el("span", {}, detail)),
+    el("span", { class: "src" }, SOURCE_LABELS[a.source] || a.source),
+    el("span", { class: "pill " + (isNext ? "next" : tone) }, isNext ? "Keyingi" : label),
+    el("span", { class: "acts" }, actions));
+}
+
 async function loadAppointments() {
   const params = currentParams("appointments");
   const query = new URLSearchParams(params).toString();
   document.getElementById("apptExport").href = `${API}/export/appointments.csv?date=${params.date}`;
+  markRange();
   const rows = await api(`/appointments?${query}`);
-  fill("apptRows", rows.map((a) =>
-    el("tr", {},
-      el("td", {}, localTime(a.scheduled_at)),
-      el("td", {}, a.patient_name || "—"),
-      el("td", {}, a.patient_phone || "—"),
-      el("td", {}, a.doctor_name),
-      el("td", {}, el("span", { class: "pill " + (a.status === "cancelled" ? "bad" : "ok") }, a.status)),
-      el("td", {}, el("span", { class: "pill" }, a.source)),
-      el("td", {}, canManage() && a.status !== "cancelled"
-        ? el("span", { class: "row" },
-            a.status === "scheduled"
-              ? el("button", { class: "act", onclick: () => act(`/appointments/${a.id}/confirm`, "Tasdiqlandi") }, "Tasdiqlash")
-              : null,
-            el("button", { class: "act danger", onclick: () => act(`/appointments/${a.id}/cancel`, "Bekor qilindi") }, "Bekor qilish"))
-        : null)
-    )
-  ));
-  if (!rows.length) fill("apptRows", [el("tr", {}, el("td", { colspan: "7", class: "muted" }, "Bu kunga qabul yo'q"))]);
+  if (!rows.length) {
+    fill("apptRows", [el("p", { class: "agenda-empty" }, "Bu davrda qabul yo'q")]);
+    return;
+  }
+  const next = nextAppointment(rows);
+  const multiDay = Number(params.days || 1) > 1;
+  const items = [];
+  let lastDay = "";
+  for (const a of rows) {
+    const when = new Date(a.scheduled_at);
+    const day = isoDay(when);
+    if (multiDay && day !== lastDay) {
+      items.push(el("div", { class: "agenda-day" }, longDay(when)));
+      lastDay = day;
+    }
+    items.push(appointmentRow(a, next));
+  }
+  fill("apptRows", items);
 }
 
 async function act(path, message) {
@@ -735,6 +997,32 @@ async function act(path, message) {
     await Promise.all([loadAppointments(), loadStats()]);
   } catch (err) { toast(err.message, true); }
 }
+
+document.getElementById("apptRange").addEventListener("click", (e) => {
+  const button = e.target.closest("button[data-range]");
+  if (!button) return;
+  const p = rangeParams(button.dataset.range);
+  document.getElementById("apptDate").value = p.date;
+  document.getElementById("apptDays").value = p.days;
+  loadAppointments().catch((err) => toast(err.message, true));
+});
+
+document.querySelector("#tab-today .kpi-row").addEventListener("click", (e) => {
+  const card = e.target.closest("[data-go]");
+  if (card) showTab(card.dataset.go).catch((err) => toast(err.message, true));
+});
+
+document.getElementById("waitAll").addEventListener("click", (e) => {
+  e.preventDefault();
+  showTab("chats").catch((err) => toast(err.message, true));
+});
+
+document.getElementById("newAppt").addEventListener("click", () => {
+  document.getElementById("nDate").value = document.getElementById("apptDate").value || today();
+  document.getElementById("apptDialog").showModal();
+  document.getElementById("nName").focus();
+});
+document.getElementById("apptCancel").addEventListener("click", () => document.getElementById("apptDialog").close());
 
 // --- conversations -------------------------------------------------------
 
@@ -1253,6 +1541,7 @@ document.getElementById("apptForm").addEventListener("submit", async (e) => {
     } });
     toast("Qabul qo'shildi");
     e.target.reset();
+    document.getElementById("apptDialog").close();
     document.getElementById("apptDate").value = date;
     await Promise.all([loadAppointments(), loadStats()]);
   } catch (err) { toast(err.message, true); }
@@ -1565,6 +1854,8 @@ function updateMediaBadge(unseen) {
   const badge = document.getElementById("mediaBadge");
   badge.textContent = unseen > 99 ? "99+" : String(unseen);
   badge.hidden = !unseen;
+  document.getElementById("kMedia").textContent = unseen;
+  setChip("kMediaHint", unseen ? "ko'rilmagan" : "hammasi ko'rildi", unseen ? "accent" : "good");
 }
 
 async function refreshMediaBadge() {
@@ -1956,7 +2247,9 @@ document.getElementById("staffForm").addEventListener("submit", async (e) => {
     PERMISSIONS = new Set(me.permissions || []);
     applyPermissions();
     await loadViews();
-    document.getElementById("whoami").textContent = `${me.name} · ${me.role} · ${me.tenant_name}`;
+    const who = document.getElementById("whoami");
+    who.textContent = nameInitials(me.name);
+    who.title = `${me.name} · ${ROLE_LABELS[me.role] || me.role} · ${me.tenant_name}`;
     // Back where the operator was before the reload. Permissions are applied
     // first, so a link to a tab this role cannot open lands on "Bugun" rather
     // than on a screen it would only be refused.
