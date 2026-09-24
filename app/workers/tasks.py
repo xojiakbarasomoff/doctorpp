@@ -12,11 +12,12 @@ import logging
 import uuid
 from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager, suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arq import Retry, cron
 from arq.connections import RedisSettings
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Imported for the side effect of registering the built-in channel adapters,
@@ -34,17 +35,20 @@ from app.core.tenant_context import reset_current_tenant, set_current_tenant
 from app.models.appointment import Appointment
 from app.models.channel import Channel
 from app.models.conversation import Conversation
-from app.models.message import DeliveryStatus
+from app.models.message import DeliveryStatus, Message, MessageSender
 from app.models.user import User
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider, get_comment_llm_provider, get_llm_provider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
+from app.repositories.conversation import ConversationRepository
+from app.repositories.user import UserRepository
 from app.services import (
     turn,
     callbacks,
     comments,
     doctor_telegram,
+    handoff,
     patient_media,
     voice_notes,
 )
@@ -200,7 +204,9 @@ async def process_inbound_message(
             )
             reply = turn_result.reply
             appointment = turn_result.appointment
-            if appointment is not None:
+            # Committed now, like a booking: the callback below can roll the
+            # session back, and the pin must not go with it.
+            if appointment is not None or turn_result.needs_doctor:
                 await session.commit()
 
             # A patient who asked to be rung. Taken from the assistant's
@@ -740,6 +746,55 @@ async def resolve_username(
 configure_logging()
 
 
+async def note_clinic_reply(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    patient_external_id: str,
+    text: str | None,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+) -> None:
+    """ARQ job: the clinic's account sent this patient a message; if a person
+    typed it in the Instagram app, the patient is no longer waiting on one.
+
+    Instagram echoes every message the account sends, the assistant's too,
+    with nothing that says who sent it. Run a little after the echo, so the
+    assistant's own send has been recorded by then: an echo whose text is one
+    of the messages recorded in the last few minutes is ours, and anything
+    else -- including a photo, which the assistant never sends -- a person's.
+    """
+    token = set_current_tenant(uuid.UUID(tenant_id))
+    try:
+        async with session_factory() as session:
+            user = await UserRepository(session).get_by_external_id(
+                channel_id=uuid.UUID(channel_id), external_id=patient_external_id
+            )
+            if user is None:
+                return
+            conversation = await ConversationRepository(session).get_open_for_user(user.id)
+            if conversation is None or conversation.needs_doctor_since is None:
+                return
+            if (text or "").strip():
+                since = datetime.now(UTC) - timedelta(minutes=10)
+                recent = (
+                    await session.execute(
+                        select(Message.content).where(
+                            Message.conversation_id == conversation.id,
+                            Message.sender != MessageSender.PATIENT,
+                            Message.created_at >= since,
+                        )
+                    )
+                ).scalars()
+                if any(handoff.same_message(text, content) for content in recent):
+                    return
+            await handoff.clear(session, conversation.id)
+            await session.commit()
+            logger.info("clinic_replied_in_app", extra={"conversation_id": str(conversation.id)})
+    finally:
+        reset_current_tenant(token)
+
+
 async def label_booking_weekdays(ctx: dict[str, Any]) -> None:
     """ARQ cron: the weekday in front of each date in the appointment book."""
     await label_appointment_weekdays()
@@ -958,6 +1013,10 @@ async def answer_comment(
                 situation=comments.situation(caption),
             )
             reply, _ = callbacks.extract(reply)
+            reply, needs_doctor = handoff.extract(reply)
+            if needs_doctor and inbound is not None:
+                await handoff.flag(session, inbound.conversation_id)
+                await session.commit()
 
             answered_in_direct = False
             try:
@@ -1000,6 +1059,7 @@ class WorkerSettings:
         handle_patient_media,
         answer_voice_note,
         answer_comment,
+        note_clinic_reply,
     ]
     # Named here as well as in _MAX_ATTEMPTS so the retry ladder in
     # fire_debounce_window and arq's own limit cannot drift apart.

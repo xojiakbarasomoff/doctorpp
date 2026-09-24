@@ -306,6 +306,176 @@ async def test_an_operator_reply_that_cannot_be_delivered_is_not_recorded(
     assert [m["content"] for m in detail["messages"]] == ["Hello"]
 
 
+# --- conversations waiting on the doctor ---
+
+
+async def _pin(db_session: AsyncSession, seed: Seed, minutes_ago: int = 5) -> None:
+    seed.a.conversation.needs_doctor_since = datetime.now(UTC) - timedelta(minutes=minutes_ago)
+    await db_session.flush()
+
+
+async def test_a_conversation_waiting_on_the_doctor_is_listed_first(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    from app.repositories.conversation import ConversationRepository
+    from app.repositories.message import MessageRepository
+    from app.repositories.user import UserRepository
+
+    with as_tenant(seed.tenant_a.id):
+        # A newer conversation, which would sort above the seeded one on
+        # recency alone.
+        other = await UserRepository(db_session).create(
+            channel_id=seed.a.channel.id, external_id="newer-patient"
+        )
+        newer = await ConversationRepository(db_session).create(user_id=other.id, status="open")
+        await MessageRepository(db_session).create(
+            conversation_id=newer.id,
+            sender=MessageSender.PATIENT,
+            content="Salom",
+            channel="instagram",
+        )
+        await _pin(db_session, seed)
+    _login_as(client, seed.a.operator.id)
+
+    rows = (await client.get("/api/admin/conversations")).json()
+    assert rows[0]["id"] == str(seed.a.conversation.id)
+    assert rows[0]["needs_doctor_since"] is not None
+    assert all(r["needs_doctor_since"] is None for r in rows[1:])
+
+    waiting = (await client.get("/api/admin/conversations?needs_doctor=true")).json()
+    assert [r["id"] for r in waiting] == [str(seed.a.conversation.id)]
+
+
+async def test_an_operator_reply_unpins_the_conversation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.api.admin.conversations as conversations_api
+
+    async def delivered(*args: Any, **kwargs: Any) -> str:
+        return "instagram"
+
+    monkeypatch.setattr(conversations_api, "send_reply", delivered)
+    with as_tenant(seed.tenant_a.id):
+        await _pin(db_session, seed)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        f"/api/admin/conversations/{seed.a.conversation.id}/reply",
+        json={"text": "Ertaga 10:00 da keling"},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.status_code == 200
+    detail = (await client.get(f"/api/admin/conversations/{seed.a.conversation.id}")).json()
+    assert detail["conversation"]["needs_doctor_since"] is None
+
+
+async def test_a_reply_that_did_not_reach_the_patient_keeps_the_pin(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        seed.a.channel.credentials = encrypt("pending")
+        await _pin(db_session, seed)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        f"/api/admin/conversations/{seed.a.conversation.id}/reply",
+        json={"text": "Ertaga 10:00 da keling"},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.status_code == 502
+    detail = (await client.get(f"/api/admin/conversations/{seed.a.conversation.id}")).json()
+    assert detail["conversation"]["needs_doctor_since"] is not None
+
+
+async def test_marking_a_conversation_done_unpins_it(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        await _pin(db_session, seed)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        f"/api/admin/conversations/{seed.a.conversation.id}/resolve", headers={CSRF_HEADER: csrf}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["needs_doctor_since"] is None
+
+
+async def test_marking_done_needs_the_csrf_token(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        await _pin(db_session, seed)
+    _login_as(client, manager.id)
+
+    response = await client.post(f"/api/admin/conversations/{seed.a.conversation.id}/resolve")
+
+    assert response.status_code == 403
+    detail = (await client.get(f"/api/admin/conversations/{seed.a.conversation.id}")).json()
+    assert detail["conversation"]["needs_doctor_since"] is not None
+
+
+async def test_a_view_only_account_cannot_mark_done(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        await _pin(db_session, seed)
+    csrf = _login_as(client, seed.a.operator.id)
+
+    response = await client.post(
+        f"/api/admin/conversations/{seed.a.conversation.id}/resolve", headers={CSRF_HEADER: csrf}
+    )
+
+    assert response.status_code == 403
+
+
+async def test_another_clinics_conversation_cannot_be_marked_done(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_b.id):
+        seed.b.conversation.needs_doctor_since = datetime.now(UTC)
+        await db_session.flush()
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        f"/api/admin/conversations/{seed.b.conversation.id}/resolve", headers={CSRF_HEADER: csrf}
+    )
+
+    assert response.status_code == 404
+    await db_session.refresh(seed.b.conversation)
+    assert seed.b.conversation.needs_doctor_since is not None
+
+
 # --- doctors ---
 
 

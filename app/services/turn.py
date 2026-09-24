@@ -21,7 +21,7 @@ from app.models.appointment import Appointment
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.appointment import AppointmentRepository
-from app.services import patient_profile
+from app.services import handoff, patient_profile
 from app.services.answer import generate_answer
 from app.services.booking import extract as extract_booking
 from app.services.booking import settle as settle_booking
@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 class TurnResult:
     reply: str
     appointment: Appointment | None = None
+    # The reply hands the patient to the doctor; the conversation is flagged.
+    needs_doctor: bool = False
 
 
 async def lock_conversation(session: AsyncSession, conversation_id: uuid.UUID) -> None:
@@ -99,11 +101,16 @@ async def respond(
     else:
         reply = extract_booking(reply)[0]
 
+    reply, needs_doctor = handoff.extract(reply)
+    if needs_doctor:
+        await handoff.flag(session, conversation_id)
+
     logger.info(
         "turn_handled",
         extra={
             "conversation_id": str(conversation_id),
             "booking_created": appointment is not None,
+            "handed_to_doctor": needs_doctor,
         },
     )
-    return TurnResult(reply=reply, appointment=appointment)
+    return TurnResult(reply=reply, appointment=appointment, needs_doctor=needs_doctor)

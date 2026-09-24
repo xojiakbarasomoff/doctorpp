@@ -37,6 +37,12 @@ class Conversation(Base):
     is_bot_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
+    # Since when a person has to answer this patient: the assistant handed it
+    # to the doctor, or the patient wrote while staff had it. Cleared when a
+    # person replies. See app.services.handoff.
+    needs_doctor_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

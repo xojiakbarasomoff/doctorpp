@@ -5,7 +5,8 @@ app.services.persona), the facts that go with it, and the conversation, and
 writes the reply itself. Nothing it says is checked or rewritten here.
 
 What this module adds to the persona is the part that is not the clinic's to
-edit: the markers the rest of the system reads ([[BOOK:...]], [[CALLBACK:...]])
+edit: the markers the rest of the system reads ([[BOOK:...]], [[CALLBACK:...]],
+[[DOCTOR]])
 and the appointment book they refer to.
 """
 
@@ -40,6 +41,16 @@ If the patient asks to be called and gives a number, end your reply with \
 [[CALLBACK:<their number>|<why they want the call, at most twelve words>]]. \
 The patient never sees it; it puts them on the list of people to ring. Write \
 it once per request."""
+
+_DOCTOR_CONTRACT = """\
+When a person from the clinic has to answer this patient themselves -- you \
+told them the doctor will reply or you will pass their question to the \
+doctor, the facts you were given do not answer what they asked and a person \
+must, or they insist on the doctor personally -- end your reply with \
+[[DOCTOR]]. The patient never sees it; it puts the conversation at the top of \
+the clinic's inbox until somebody answers. Do not write it for anything you \
+answered yourself, for a booking, or for the usual advice to come in for an \
+examination."""
 
 _BOOKING_CONTRACT = """\
 You can book appointments yourself, from THE APPOINTMENT BOOK below. Only \
@@ -124,6 +135,7 @@ def _build_system_prompt(
     )
     prompt += "\n\n" + _LANGUAGE_CONTRACT.format(default_language=default_language)
     prompt += "\n\n" + _CALLBACK_CONTRACT
+    prompt += "\n\n" + _DOCTOR_CONTRACT
     if appointment_book is not None:
         prompt += "\n\n" + _BOOKING_CONTRACT + appointment_book
     return prompt
@@ -153,8 +165,8 @@ It {what} — rule 3 above says you are not a medical professional and must \
 never do that, whatever the patient asked and however they insisted. Write \
 the same answer again, correctly: warmly decline the medical part, in the \
 patient's own language, and point them to an appointment. Everything else \
-about the reply -- what else it answered, any [[BOOK:...]] or \
-[[CALLBACK:...]] marker it carried -- stays the same. Send only the \
+about the reply -- what else it answered, any [[BOOK:...]], \
+[[CALLBACK:...]] or [[DOCTOR]] marker it carried -- stays the same. Send only the \
 corrected reply."""
 
 

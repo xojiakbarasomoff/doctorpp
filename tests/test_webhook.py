@@ -75,6 +75,17 @@ async def _queued_jobs(pool: ArqRedis) -> list[Job]:
     return [Job(job_id.decode(), redis=pool, _queue_name="arq:queue") for job_id in job_ids]
 
 
+async def _queued_function_names(pool: ArqRedis) -> list[str]:
+    return [(await job.info()).function for job in await _queued_jobs(pool)]
+
+
+async def _answer_jobs(pool: ArqRedis) -> list[Job]:
+    """Queued jobs, less the username lookup every new patient also gets."""
+    return [
+        job for job in await _queued_jobs(pool) if (await job.info()).function != "resolve_username"
+    ]
+
+
 def _sign(body: bytes, secret: str) -> str:
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
@@ -256,7 +267,8 @@ async def test_receive_webhook_skips_echo_event(
     assert response.status_code == 200
     assert "webhook_echo_skipped" in caplog.text
     assert "webhook_message_received" not in caplog.text
-    assert await _queued_jobs(redis_pool) == []
+    # Nothing is answered; the only job is the check for a person replying.
+    assert await _queued_function_names(redis_pool) == ["note_clinic_reply"]
 
 
 async def test_receive_webhook_skips_event_from_own_account_without_echo_flag(
@@ -276,7 +288,7 @@ async def test_receive_webhook_skips_event_from_own_account_without_echo_flag(
 
     assert response.status_code == 200
     assert "webhook_echo_skipped" in caplog.text
-    assert await _queued_jobs(redis_pool) == []
+    assert await _queued_function_names(redis_pool) == ["note_clinic_reply"]
 
 
 async def test_receive_webhook_processes_genuine_inbound_message(
@@ -314,7 +326,7 @@ async def test_receive_webhook_processes_genuine_inbound_message(
     # job it schedules names the channel and conversation the message
     # belongs to — so the worker replies over the account that was written
     # to instead of picking one from the tenant.
-    [job] = await _queued_jobs(redis_pool)
+    [job] = await _answer_jobs(redis_pool)
     info = await job.info()
     assert info is not None
     assert info.function == FIRE_DEBOUNCE_WINDOW_JOB
@@ -369,7 +381,7 @@ async def test_receive_webhook_tenant_b_account_resolves_to_tenant_b_not_a(
     assert record.tenant_id == str(seed.tenant_b.id)  # type: ignore[attr-defined]
     assert record.tenant_id != str(seed.tenant_a.id)  # type: ignore[attr-defined]
 
-    [job] = await _queued_jobs(redis_pool)
+    [job] = await _answer_jobs(redis_pool)
     info = await job.info()
     assert info is not None
     assert info.args[:2] == (str(seed.tenant_b.id), str(seed.b.channel.id))
@@ -538,7 +550,7 @@ async def test_redelivered_message_is_not_recorded_or_answered_twice(
         messages = await MessageRepository(db_session).list_recent(conversation.id, 10)
 
     assert [m.content for m in messages] == ["Salom"]
-    assert len(await _queued_jobs(redis_pool)) == 1
+    assert len(await _answer_jobs(redis_pool)) == 1
 
 
 async def test_distinct_message_ids_are_both_processed(
@@ -554,7 +566,7 @@ async def test_distinct_message_ids_are_both_processed(
     await _post(client, _messaging_payload(page_id, "new-patient", page_id, "Salom", mid="mid-1"))
     await _post(client, _messaging_payload(page_id, "new-patient", page_id, "narxi?", mid="mid-2"))
 
-    assert len(await _queued_jobs(redis_pool)) == 2
+    assert len(await _answer_jobs(redis_pool)) == 2
 
 
 async def test_operator_takeover_records_the_message_but_does_not_answer_it(
@@ -586,8 +598,11 @@ async def test_operator_takeover_records_the_message_but_does_not_answer_it(
 
     assert response.status_code == 200
     assert "webhook_bot_disabled_for_conversation" in caplog.text
-    assert await _queued_jobs(redis_pool) == []
+    assert await _answer_jobs(redis_pool) == []
 
     with as_tenant(seed.tenant_a.id):
         messages = await MessageRepository(db_session).list_recent(conversation.id, 10)
+        await db_session.refresh(conversation)
     assert [m.content for m in messages] == ["yana savolim bor"]
+    # Nobody but a person will answer now, so the conversation is pinned.
+    assert conversation.needs_doctor_since is not None

@@ -198,6 +198,17 @@ async def _handle_event(
             "webhook_echo_skipped",
             extra={"sender_id": event.sender.id, "recipient_id": event.recipient.id},
         )
+        # It may be the doctor answering from the Instagram app, which is what
+        # unpins a conversation waiting on them. Deferred so the assistant's
+        # own sends are recorded first and can be told apart from a person's.
+        await pool.enqueue_job(
+            "note_clinic_reply",
+            str(channel.tenant_id),
+            str(channel.channel_id),
+            event.recipient.id,
+            text,
+            _defer_by=20,
+        )
         return
 
     image_urls = [

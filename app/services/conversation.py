@@ -18,7 +18,7 @@ the reply-window check had no real timestamp to measure against.
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -150,6 +150,10 @@ async def register_inbound_message(
         channel=channel_type,
         meta=dict(reply_context) if reply_context else {},
     )
+    if not conversation.is_bot_enabled and conversation.needs_doctor_since is None:
+        # Staff have this conversation and the bot will not answer, so the
+        # patient is now waiting on a person.
+        conversation.needs_doctor_since = datetime.now(UTC)
     return InboundContext(
         conversation_id=conversation.id,
         user_id=user.id,

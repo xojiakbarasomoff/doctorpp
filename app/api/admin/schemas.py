@@ -61,6 +61,8 @@ class ConversationSummary(BaseModel):
     last_message_at: datetime | None
     last_message_preview: str | None
     updated_at: datetime
+    # Set while a person owes this patient a reply; the list pins these.
+    needs_doctor_since: datetime | None = None
 
 
 class MessageOut(BaseModel):

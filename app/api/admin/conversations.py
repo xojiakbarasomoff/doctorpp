@@ -32,6 +32,7 @@ from app.models.operator import Operator
 from app.models.user import User
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
+from app.services import handoff
 from app.services.conversation import (
     record_outbound_message,
     reply_context_for,
@@ -112,6 +113,7 @@ async def _summaries(
                 # every one, and this view is often left open on a screen.
                 last_message_preview=preview(last.content) if last is not None else None,
                 updated_at=conversation.updated_at,
+                needs_doctor_since=conversation.needs_doctor_since,
             )
         )
     return rows
@@ -123,6 +125,7 @@ async def list_conversations(
     session: AsyncSession = Depends(get_db_session),
     status_filter: str | None = Query(default=None, alias="status"),
     only_taken_over: bool = Query(default=False),
+    needs_doctor: bool = Query(default=False),
     q: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[ConversationSummary]:
@@ -155,6 +158,8 @@ async def list_conversations(
         stmt = stmt.where(Conversation.status == status_filter)
     if only_taken_over:
         stmt = stmt.where(Conversation.is_bot_enabled.is_(False))
+    if needs_doctor:
+        stmt = stmt.where(Conversation.needs_doctor_since.is_not(None))
     if q and q.strip():
         # Matched in the database rather than in the dashboard, because the
         # list is capped at `limit`: filtering what was already fetched would
@@ -178,7 +183,10 @@ async def list_conversations(
     # the id breaks exact ties so a refresh never shuffles two rows that
     # arrived in the same instant -- the dashboard polls this, and rows that
     # swap places on every poll read as the screen twitching.
+    # Conversations waiting on a person are pinned above everything else,
+    # the longest-waiting first.
     stmt = stmt.order_by(
+        Conversation.needs_doctor_since.asc().nulls_last(),
         func.coalesce(last_activity.c.last_at, Conversation.created_at).desc(),
         Conversation.id.desc(),
     ).limit(limit)
@@ -252,6 +260,26 @@ async def set_bot_enabled(
 
 
 @router.post(
+    "/{conversation_id}/resolve",
+    response_model=ConversationSummary,
+    dependencies=[Depends(verify_csrf_header)],
+)
+async def resolve_conversation(
+    conversation_id: uuid.UUID,
+    operator: Operator = Depends(require_patient_access),
+    session: AsyncSession = Depends(get_db_session),
+) -> ConversationSummary:
+    """Unpin a conversation the patient was answered in some other way -- the
+    doctor rang them, or they came in."""
+    conversation = await _load(session, conversation_id)
+    await handoff.clear(session, conversation.id)
+    await session.commit()
+    await session.refresh(conversation)
+    [summary] = await _summaries(session, [conversation])
+    return summary
+
+
+@router.post(
     "/{conversation_id}/reply",
     response_model=MessageOut,
     dependencies=[Depends(verify_csrf_header)],
@@ -299,6 +327,7 @@ async def reply_as_operator(
         text=payload.text,
         sender=MessageSender.OPERATOR,
     )
+    await handoff.clear(session, conversation.id)
     await session.commit()
     return MessageOut(
         id=message.id,

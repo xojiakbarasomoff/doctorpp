@@ -227,6 +227,13 @@
   @keyframes fresh-row { from { background: var(--accent-soft); } to { background: transparent; } }
   tr.fresh:not(.sel) td { animation: fresh-row 2.5s ease-out; }
   tbody tr.clickable { cursor: pointer; }
+  /* Waiting on the doctor: pinned to the top by the API, and marked red
+     until a person answers. */
+  tr.pinned td { background: var(--danger-soft); }
+  tr.pinned td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
+  tr.pinned.sel td { background: var(--accent-soft); }
+  .pin-tag { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; font-weight: 700; color: var(--danger); white-space: nowrap; }
+  .pin-tag::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
   tbody tr.clickable:hover td { background: var(--panel-2); }
   .thread { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px; }
   .msg { max-width: 78%; padding: 8px 11px; border-radius: 8px; font-size: 14px; white-space: pre-wrap; }
@@ -875,9 +882,10 @@ async function loadStats() {
   refreshMediaBadge();
 }
 
-// Conversations the bot has stepped back from: an operator has to answer them.
+// Conversations waiting on a person: the assistant handed them to the doctor,
+// or the patient wrote while staff had the conversation.
 async function loadWaiting() {
-  const rows = await api("/conversations?only_taken_over=true&limit=5");
+  const rows = await api("/conversations?needs_doctor=true&limit=5");
   const count = document.getElementById("waitCount");
   count.textContent = rows.length >= 5 ? "5+" : String(rows.length);
   count.hidden = !rows.length;
@@ -1134,12 +1142,15 @@ async function loadChats(options = {}) {
     // that land on a control are left to that control.
     el("tr", {
       "data-id": c.id,
-      class: "clickable" + (CURRENT_CHAT === c.id ? " sel" : "") + (isFresh(c) ? " fresh" : ""),
+      class: "clickable" + (c.needs_doctor_since ? " pinned" : "") + (CURRENT_CHAT === c.id ? " sel" : "") + (isFresh(c) ? " fresh" : ""),
       onclick: (e) => { if (!e.target.closest("button, select, a, input")) openThread(c.id); },
     },
       el("td", {}, patientLabel(c), c.patient_name && c.patient_username
         ? el("small", { class: "muted" }, el("br"), c.patient_name)
-        : null),
+        : null,
+        c.needs_doctor_since
+          ? [el("br"), el("span", { class: "pin-tag", title: "Bemor shifokor javobini kutmoqda" }, "Doktor javobi kerak · " + relativeWhen(c.needs_doctor_since))]
+          : null),
       el("td", {}, el("span", { class: "pill " + c.channel }, c.channel || "—")),
       el("td", {}, c.last_message_preview || "—", el("br"), el("small", { class: "muted" }, c.last_message_at ? localDateTime(c.last_message_at) : "")),
       el("td", {}, el("span", { class: "pill " + (c.is_bot_enabled ? "ok" : "bad") }, c.is_bot_enabled ? "yoqilgan" : "operatorda")),
@@ -1147,6 +1158,9 @@ async function loadChats(options = {}) {
         el("button", { class: "act", onclick: () => openThread(c.id) }, "Ochish"),
         canManage()
           ? el("button", { class: "act", onclick: () => toggleBot(c.id, !c.is_bot_enabled) }, c.is_bot_enabled ? "O'zim javob beraman" : "Botga qaytarish")
+          : null,
+        canManage() && c.needs_doctor_since
+          ? el("button", { class: "act", title: "Bemorga boshqa yo'l bilan javob berildi (masalan, telefonda)", onclick: () => resolveChat(c.id) }, "Hal qilindi")
           : null))
     )
   ));
@@ -1154,6 +1168,14 @@ async function loadChats(options = {}) {
     fill("chatRows", [el("tr", {}, el("td", { colspan: "5", class: "muted" },
       CHAT_SEARCH ? `"${CHAT_SEARCH}" bo'yicha hech nima topilmadi` : "Hali suhbat yo'q"))]);
   }
+}
+
+async function resolveChat(id) {
+  try {
+    await api(`/conversations/${id}/resolve`, { method: "POST", body: {} });
+    toast("Belgi olib tashlandi");
+    await loadChats();
+  } catch (err) { toast(err.message, true); }
 }
 
 async function toggleBot(id, enabled) {
