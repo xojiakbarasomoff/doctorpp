@@ -67,7 +67,7 @@ def test_facts_reach_the_model() -> None:
     assert "- Dr. Karimov — Urolog — 09:00 - 17:00" in prompt
     assert "- Shanba kuni ham ishlaymiz" in prompt
     assert "Savol: Narxi qancha?\nJavob: Konsultatsiya 150 000" in prompt
-    assert "Ism: Ali Valiyev | Telefon: +998901234567 | Til/yozuv: o'zbek, lotin yozuvi" in prompt
+    assert "Ism: Ali Valiyev | Telefon: +998901234567 | Javob tili: o'zbek, lotin yozuvi" in prompt
 
 
 def test_recent_replies_are_shown_so_the_model_does_not_repeat_itself() -> None:
@@ -96,7 +96,7 @@ def test_a_continuing_conversation_is_told_not_to_restart() -> None:
     assert "birinchi xabar emas" in prompt
     assert "qayta salomlashmang" in prompt
     # The known facts are still there, on their own line above the note.
-    assert "Ism: Ali Valiyev | Telefon: +998901234567 | Til/yozuv: o'zbek, lotin yozuvi" in prompt
+    assert "Ism: Ali Valiyev | Telefon: +998901234567 | Javob tili: o'zbek, lotin yozuvi" in prompt
 
 
 def test_a_conversation_gone_quiet_for_a_day_is_told_to_greet_again() -> None:

@@ -285,7 +285,7 @@ async def test_what_the_clinic_knows_about_the_patient_is_in_the_prompt(
     )
 
     assert (
-        "Ism: Asadbek Risqiyev | Telefon: +998939511111 | Til/yozuv: o'zbek, kirill yozuvi"
+        "Ism: Asadbek Risqiyev | Telefon: +998939511111 | Javob tili: o'zbek, kirill yozuvi"
     ) in llm.calls[0][0]
 
 
@@ -302,7 +302,7 @@ async def test_a_language_the_patient_asked_for_outranks_the_alphabet_of_their_m
         patient=Profile(name=None, phone=None, language="ru"),
     )
 
-    assert "Til/yozuv: rus, kirill yozuvi" in llm.calls[0][0]
+    assert "Javob tili: rus, kirill yozuvi" in llm.calls[0][0]
 
 
 async def test_the_bots_own_recent_replies_are_shown_back_to_it(

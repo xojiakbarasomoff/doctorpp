@@ -53,7 +53,12 @@ to a time, and never tell a patient they are booked in a message that does \
 not carry it. Say the day the way a person would ("bugun", "ertaga", \
 "1-sentabr"), never as 2026-09-01."""
 
-_LANGUAGE_CONTRACT = "When the patient's language is unclear, reply in {default_language}."
+_LANGUAGE_CONTRACT = (
+    'Reply only in the language and alphabet given as "Javob tili" above: '
+    "Russian to a patient writing Russian, Uzbek Cyrillic to one writing Uzbek "
+    "in Cyrillic, Uzbek Latin to one writing Latin. Never mix alphabets in one "
+    "reply. When the patient's language is unclear, reply in {default_language}."
+)
 
 
 def _setting(stored: dict[str, Any], key: str, fallback: str | None = None) -> str | None:

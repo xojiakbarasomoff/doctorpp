@@ -426,7 +426,7 @@ def state_section(state: PatientState) -> str:
         for label, value in (
             ("Ism", state.name),
             ("Telefon", state.phone),
-            ("Til/yozuv", _SCRIPT_LABELS.get(state.script or "", state.script)),
+            ("Javob tili", _SCRIPT_LABELS.get(state.script or "", state.script)),
         )
         if value
     ]
