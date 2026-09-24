@@ -227,8 +227,12 @@ async def generate_answer(
     history: Sequence[ChatMessage] | None = None,
     patient: Profile | None = None,
     long_gap: bool = False,
+    situation: str | None = None,
 ) -> str:
     """Ask the model to answer the patient, with the clinic's facts in hand.
+
+    `situation` is added to the system prompt as it stands, for a message
+    that did not arrive as an ordinary chat line (a comment under a post).
 
     `history` is the conversation's earlier turns, oldest first. Callers get
     it from app.services.conversation.context_for_reply, which already
@@ -279,6 +283,8 @@ async def generate_answer(
             else None
         ),
     )
+    if situation:
+        system_prompt += "\n\n" + situation
     provider = llm_provider or get_llm_provider()
     conversation: list[ChatMessage] = [
         *(history or []),

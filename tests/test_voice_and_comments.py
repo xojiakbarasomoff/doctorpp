@@ -60,7 +60,27 @@ def test_the_public_comment_reply_only_points_at_direct() -> None:
 
     assert "Direct" in reply
     assert "narx" not in reply.lower()
-    assert comments.public_reply("Здравствуйте, сколько стоит?") == comments.PUBLIC_REPLIES["ru"]
+    assert comments.public_reply("Здравствуйте, сколько стоит?") in comments.PUBLIC_REPLIES["ru"]
+
+
+def test_a_failed_direct_answer_is_not_announced_as_sent() -> None:
+    reply = comments.public_reply("Narxi qancha?", answered_in_direct=False)
+
+    assert reply == comments.WRITE_TO_US_REPLIES["uz-latn"]
+    assert "javob berdik" not in reply
+
+
+def test_an_emoji_only_comment_has_nothing_to_answer_in_direct() -> None:
+    assert not comments.has_words("🔥🔥👍")
+    assert comments.has_words("Канча сом")
+
+
+def test_the_model_is_told_which_post_the_comment_is_under() -> None:
+    text = comments.situation("Prostatit: belgilar va davolash. UZI tekshiruvi.")
+
+    assert "Prostatit: belgilar va davolash" in text
+    assert "izoh" in text.lower()
+    assert "noma'lum" in comments.situation(None)
 
 
 # --- what the webhook does with them -------------------------------------------

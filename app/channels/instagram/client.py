@@ -93,6 +93,10 @@ class InstagramClient(ABC):
         public reply says only that the answer is waiting in Direct.
         """
 
+    async def fetch_media_caption(self, *, access_token: str, media_id: str) -> str | None:
+        """The caption of the post a comment was left under, or None."""
+        return None
+
     @abstractmethod
     async def fetch_username(self, *, access_token: str, igsid: str) -> str | None:
         """The patient's Instagram handle, or None if it cannot be had.
@@ -179,6 +183,27 @@ class GraphAPIInstagramClient(InstagramClient):
             json={"recipient": {"comment_id": comment_id}, "message": {"text": text}},
         )
         self._raise_for_error(response, "instagram_private_reply_failed", comment_id)
+
+    async def fetch_media_caption(self, *, access_token: str, media_id: str) -> str | None:
+        # Context only: a comment answered without its post is still answered.
+        try:
+            response = await self._http.get(
+                f"/{media_id}",
+                params={"fields": "caption", "access_token": access_token},
+            )
+        except httpx.HTTPError:
+            return None
+        if response.is_error:
+            logger.warning(
+                "instagram_media_caption_failed",
+                extra={"media_id": media_id, "status_code": response.status_code},
+            )
+            return None
+        with suppress(ValueError):
+            caption = response.json().get("caption")
+            if isinstance(caption, str) and caption.strip():
+                return caption.strip()
+        return None
 
     async def fetch_username(self, *, access_token: str, igsid: str) -> str | None:
         # The sender's own node, which the messaging permission grants for

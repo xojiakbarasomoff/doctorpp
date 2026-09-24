@@ -116,3 +116,12 @@ def _select_llm_provider(settings: Settings) -> LLMProvider:
 @lru_cache
 def get_llm_provider() -> LLMProvider:
     return _select_llm_provider(get_settings())
+
+
+@lru_cache
+def get_comment_llm_provider() -> LLMProvider:
+    """The same model, thinking harder: a comment answer is read by nobody
+    waiting in a chat, so the seconds a Direct reply cannot spare are free here.
+    """
+    settings = get_settings()
+    return _select_llm_provider(settings.model_copy(update={"openai_reasoning_effort": "medium"}))

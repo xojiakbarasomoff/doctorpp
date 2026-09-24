@@ -37,7 +37,7 @@ from app.models.conversation import Conversation
 from app.models.message import DeliveryStatus
 from app.models.user import User
 from app.rag.embeddings import EmbeddingProvider
-from app.rag.llm import LLMProvider, get_llm_provider
+from app.rag.llm import LLMProvider, get_comment_llm_provider, get_llm_provider
 from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
 from app.services import (
@@ -880,12 +880,14 @@ async def answer_comment(
     embedding_provider: EmbeddingProvider | None = None,
     llm_provider: LLMProvider | None = None,
     client: InstagramClient | None = None,
+    media_id: str | None = None,
 ) -> None:
     """ARQ job: answer a comment in Direct, and say so under the comment.
 
     The real answer goes to the writer's inbox -- a comment thread is a
     public place, and a patient's question is not. The public reply is one
     line telling them (and everyone reading) that it has been answered there.
+    A comment of only emoji gets a public thank-you and nothing in Direct.
     """
     settings = get_settings()
     allowed = settings.comment_reply_usernames or settings.answer_only_usernames
@@ -905,6 +907,22 @@ async def answer_comment(
             access_token = decrypt(channel.credentials)
             instagram = client or get_instagram_client()
 
+            if not comments.has_words(text):
+                with suppress(Exception):
+                    await instagram.reply_to_comment(
+                        access_token=access_token,
+                        comment_id=comment_id,
+                        text=comments.thanks_reply(),
+                    )
+                logger.info("comment_thanked", extra={"username": username})
+                return
+
+            caption = (
+                await instagram.fetch_media_caption(access_token=access_token, media_id=media_id)
+                if media_id
+                else None
+            )
+
             # Recorded as a message from this patient, so the conversation the
             # reply lands in reads in order: what they asked, then the answer.
             inbound = None
@@ -922,19 +940,22 @@ async def answer_comment(
                 session,
                 text,
                 embedding_provider=embedding_provider,
-                llm_provider=llm_provider,
+                llm_provider=llm_provider or get_comment_llm_provider(),
                 history=(
                     await context_for_reply(session, inbound.conversation_id)
                     if inbound is not None
                     else None
                 ),
+                situation=comments.situation(caption),
             )
             reply, _ = callbacks.extract(reply)
 
+            answered_in_direct = False
             try:
                 await instagram.send_private_reply(
                     access_token=access_token, comment_id=comment_id, text=reply
                 )
+                answered_in_direct = True
             except Exception:  # noqa: BLE001 - the public line must still go out
                 logger.exception("comment_private_reply_failed")
             else:
@@ -951,7 +972,7 @@ async def answer_comment(
                 await instagram.reply_to_comment(
                     access_token=access_token,
                     comment_id=comment_id,
-                    text=comments.public_reply(text),
+                    text=comments.public_reply(text, answered_in_direct=answered_in_direct),
                 )
             logger.info("comment_answered", extra={"username": username})
     finally:

@@ -81,9 +81,14 @@ class CommentFrom(BaseModel):
     username: str | None = None
 
 
+class CommentMedia(BaseModel):
+    id: str | None = None
+
+
 class CommentValue(BaseModel):
     id: str | None = None
     text: str | None = None
+    media: CommentMedia | None = None
     # Instagram sends the comment's author here; a reply to another comment
     # also carries parent_id, which is left alone -- answering a thread the
     # clinic is not part of would be talking over somebody.
@@ -462,6 +467,7 @@ async def _handle_comment(
         author,
         value.from_.username if value.from_ else None,
         value.text,
+        media_id=value.media.id if value.media else None,
     )
 
 
