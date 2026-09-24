@@ -22,6 +22,7 @@ from app.services.sheets import (
     MAX_COMMENT,
     STATUS_CHOICES,
     VIEW_SHEET,
+    WEEKDAYS_UZ,
     AppointmentRow,
     LeadRow,
     SheetsError,
@@ -566,6 +567,52 @@ async def test_a_reply_does_not_undo_a_status_a_person_set() -> None:
         ranges.clear()
         await mirror.upsert_appointment(_appointment(status="cancelled"))
         assert ranges == ["Qabullar!A2:H2"]
+
+
+async def test_each_booking_date_shows_its_weekday_in_uzbek() -> None:
+    """The name goes in the cell's format, so the value stays a real date
+    the filter and the sort still work on."""
+    formats: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if request.method == "GET" and "/values/" in url and "A1%3AZ1" in url.replace(":", "%3A"):
+            return httpx.Response(200, json={"values": [list(APPOINTMENT_HEADER)]})
+        if request.method == "GET" and "C2" in url:
+            # 46288 is 2026-09-23, a Wednesday, already in the book.
+            return httpx.Response(200, json={"values": [[46288]]})
+        if request.method == "GET" and "/values/" in url:
+            return httpx.Response(200, json={"values": [["Kod"]]})
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"sheets": [{"properties": {"sheetId": 7, "title": "Qabullar"}}]}
+            )
+        if url.endswith("values/Qabullar!A:H:append") or ":append" in url:
+            return httpx.Response(200, json={"updates": {"updatedRange": "Qabullar!A5:H5"}})
+        if url.endswith(":batchUpdate") and "values:batchUpdate" not in url:
+            for req in json.loads(request.content)["requests"]:
+                if "repeatCell" in req:
+                    formats.append(req["repeatCell"])
+        return httpx.Response(200, json={})
+
+    mirror, _ = _mirror(handler)
+    real_client = httpx.AsyncClient
+
+    def fake(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(handler))
+
+    with patch("app.services.sheets.httpx.AsyncClient", fake):
+        mirror._appointments_ready = False  # type: ignore[attr-defined]
+        await mirror.upsert_appointment(_appointment())
+
+    labelled = {
+        f["range"]["startRowIndex"] + 1: f["cell"]["userEnteredFormat"]["numberFormat"]["pattern"]
+        for f in formats
+    }
+    assert labelled[2] == '"Chorshanba" dd.MM.yyyy'
+    day = _appointment().day
+    assert labelled[5] == f'"{WEEKDAYS_UZ[day.weekday()]}" dd.MM.yyyy'
+    assert all(f["range"]["startColumnIndex"] == 2 for f in formats)
 
 
 def test_the_status_column_is_a_dropdown_rather_than_free_text() -> None:

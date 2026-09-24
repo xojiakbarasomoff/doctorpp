@@ -30,8 +30,9 @@ import logging
 import re
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from typing import Any, cast
 
@@ -158,7 +159,16 @@ _COLUMN_WIDTHS = (110, 200, 160, 120, 520)
 
 # The appointment book, sized for what each column actually holds: a full
 # name, a dialable number, a day, a twenty-minute slot, and a sentence.
-_APPOINTMENT_WIDTHS = (220, 160, 110, 90, 120, 150, 420, 90)
+_APPOINTMENT_WIDTHS = (220, 160, 170, 90, 120, 150, 420, 90)
+
+# The day of the week in front of each booking's date, in Uzbek. Sheets'
+# own "dddd" would print it in the spreadsheet's locale, which is Russian on
+# the clinic's account, so the name goes in as literal text of the cell's
+# number format instead -- one format per cell, because the word differs by
+# row. The value underneath stays a real date, so the filter still offers
+# "Bugun" and the sort still orders by day.
+WEEKDAYS_UZ = ("Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba")
+_APPOINTMENT_DATE_INDEX = 2
 _TIME_FORMAT = "HH:mm"
 
 
@@ -581,6 +591,10 @@ class AppointmentRow:
         return f"MED-{self.appointment_id.hex[:6].upper()}"
 
     @property
+    def day(self) -> date:
+        return self.scheduled_at.astimezone(CLINIC_TIMEZONE).date()
+
+    @property
     def status_label(self) -> str:
         return STATUS_LABELS.get(self.status, self.status)
 
@@ -660,6 +674,7 @@ class SheetsMirror:
         # than a request, because this runs before every lead.
         self._ready = False
         self._appointments_ready = False
+        self._appointment_gid: int | None = None
 
     def _token(self) -> str:
         # google-auth refreshes only when the current token is close to
@@ -872,7 +887,96 @@ class SheetsMirror:
                 layout=_appointment_layout_requests,
                 decoration=_appointment_decoration_requests,
             )
+        self._appointment_gid = sheets[APPOINTMENT_SHEET]
+        await self._label_all_weekdays(client)
         self._appointments_ready = True
+
+    def _weekday_request(self, row_number: int, day: date) -> dict[str, Any]:
+        return {
+            "repeatCell": {
+                "range": {
+                    "sheetId": self._appointment_gid,
+                    "startRowIndex": row_number - 1,
+                    "endRowIndex": row_number,
+                    "startColumnIndex": _APPOINTMENT_DATE_INDEX,
+                    "endColumnIndex": _APPOINTMENT_DATE_INDEX + 1,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "numberFormat": {
+                            "type": "DATE",
+                            "pattern": f'"{WEEKDAYS_UZ[day.weekday()]}" {_DATE_FORMAT}',
+                        }
+                    }
+                },
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        }
+
+    async def _label_weekdays(
+        self, client: httpx.AsyncClient, rows: list[tuple[int, date]]
+    ) -> None:
+        """Put the day's name in front of these rows' dates.
+
+        Swallowed on failure: a booking written without its weekday is
+        still a booking, and one lost over a label is not.
+        """
+        if not rows or self._appointment_gid is None:
+            return
+        try:
+            await self._call(
+                client,
+                "POST",
+                ":batchUpdate",
+                json={"requests": [self._weekday_request(n, day) for n, day in rows]},
+            )
+        except SheetsError as exc:
+            logger.warning("sheets_weekday_skipped error=%s", exc)
+
+    async def _label_all_weekdays(self, client: httpx.AsyncClient) -> None:
+        """Once per process: every date already in the book, including ones
+        written before weekdays were shown or changed by hand since, and the
+        date column made wide enough to hold "Chorshanba 23.09.2026"."""
+        try:
+            body = await self._call(
+                client,
+                "GET",
+                f"/values/{APPOINTMENT_SHEET}!C2:C",
+                params={"majorDimension": "ROWS", "valueRenderOption": "UNFORMATTED_VALUE"},
+            )
+        except SheetsError as exc:
+            logger.warning("sheets_weekday_skipped error=%s", exc)
+            return
+        rows = [
+            (index, _SHEETS_EPOCH + timedelta(days=int(values[0])))
+            for index, values in enumerate(body.get("values") or [], start=2)
+            if values and isinstance(values[0], int | float) and not isinstance(values[0], bool)
+        ]
+        await self._label_weekdays(client, rows)
+        with suppress(SheetsError):
+            await self._call(
+                client,
+                "POST",
+                ":batchUpdate",
+                json={
+                    "requests": [
+                        {
+                            "updateDimensionProperties": {
+                                "range": {
+                                    "sheetId": self._appointment_gid,
+                                    "dimension": "COLUMNS",
+                                    "startIndex": _APPOINTMENT_DATE_INDEX,
+                                    "endIndex": _APPOINTMENT_DATE_INDEX + 1,
+                                },
+                                "properties": {
+                                    "pixelSize": _APPOINTMENT_WIDTHS[_APPOINTMENT_DATE_INDEX]
+                                },
+                                "fields": "pixelSize",
+                            }
+                        }
+                    ]
+                },
+            )
 
     async def find_appointment_row(self, client: httpx.AsyncClient, reference: str) -> int | None:
         """The row holding this reference, so a status change rewrites the
@@ -940,15 +1044,18 @@ class SheetsMirror:
             await self._ensure_appointment_sheet(client)
             existing = await self.find_appointment_row(client, row.reference)
             if existing is None:
-                await self._call(
+                body = await self._call(
                     client,
                     "POST",
                     f"/values/{APPOINTMENT_SHEET}!A:{_APPOINTMENT_LAST_COLUMN}:append",
                     params={"valueInputOption": "USER_ENTERED"},
                     json={"values": [row.cells()]},
                 )
-                return
-            await self._write_appointment(client, existing, row)
+                existing = _row_number(body.get("updates", {}).get("updatedRange", ""))
+            else:
+                await self._write_appointment(client, existing, row)
+            if existing is not None:
+                await self._label_weekdays(client, [(existing, row.day)])
 
     async def upsert(self, row: LeadRow) -> None:
         """Put this lead on the list, once."""
