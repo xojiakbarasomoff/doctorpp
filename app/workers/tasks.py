@@ -750,6 +750,9 @@ async def _start_doctor_telegram(ctx: dict[str, Any]) -> None:
     stop = asyncio.Event()
     ctx["doctor_telegram_stop"] = stop
     ctx["doctor_telegram_task"] = asyncio.create_task(doctor_telegram.run_forever(stop))
+    # arq's run_at_startup did not fire on this deployment, so the weekday
+    # labels are refreshed here directly rather than waiting for :15.
+    ctx["weekday_labels_task"] = asyncio.create_task(label_appointment_weekdays())
 
 
 async def _stop_doctor_telegram(ctx: dict[str, Any]) -> None:
@@ -1013,8 +1016,8 @@ class WorkerSettings:
         # channel, so the interval is really the worst case a patient
         # waits before the bot can hear them again.
         cron(verify_channel_webhooks, minute=set(range(0, 60, 10))),
-        # At startup, so a deploy shows the weekdays without waiting for a
-        # booking, and hourly, so a date someone changed by hand catches up.
-        cron(label_booking_weekdays, minute={15}, run_at_startup=True),
+        # Hourly, so a date someone changed by hand catches up. The startup
+        # refresh is in _start_doctor_telegram.
+        cron(label_booking_weekdays, minute={15}),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
