@@ -332,6 +332,19 @@ def test_the_first_doctor_with_nothing_at_that_time_takes_it() -> None:
     assert first_free_doctor([], []) is None
 
 
+def test_a_booking_with_no_doctor_still_fills_a_chair() -> None:
+    """An operator's booking entered without a doctor used to block nobody, so
+    a one-doctor clinic could have two patients booked into the same slot."""
+    only = SimpleNamespace(id=uuid4(), name="Dr. A")
+    first = SimpleNamespace(id=uuid4(), name="Dr. A")
+    second = SimpleNamespace(id=uuid4(), name="Dr. B")
+
+    assert first_free_doctor([only], [None]) is None
+    assert first_free_doctor([first, second], [None]) is first
+    assert first_free_doctor([first, second], [None, first.id]) is None
+    assert first_free_doctor([first, second], [None, None]) is None
+
+
 # --- telling the patient their appointment is cancelled -----------------
 
 

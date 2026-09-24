@@ -192,8 +192,13 @@ def first_free_doctor(
     means it, and evening out a rota is a scheduling decision the front desk
     makes, not one to bury in a booking helper.
     """
-    busy = set(taken)
-    return next((doctor for doctor in doctors if doctor.id not in busy), None)
+    # A booking with no doctor on it still fills one doctor's chair: without
+    # counting it, a one-doctor clinic had an operator's unassigned booking
+    # and the assistant's booking land on the same slot.
+    busy = {doctor_id for doctor_id in taken if doctor_id is not None}
+    unassigned = sum(1 for doctor_id in taken if doctor_id is None)
+    free = [doctor for doctor in doctors if doctor.id not in busy]
+    return free[0] if len(free) > unassigned else None
 
 
 async def assign_doctor(

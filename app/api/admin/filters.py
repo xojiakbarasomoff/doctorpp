@@ -97,18 +97,18 @@ def _clean_params(resource: str, params: dict[str, Any]) -> dict[str, Any]:
             continue
         if isinstance(value, str) and len(value) > MAX_VALUE_LENGTH:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=422,
                 detail=f"'{key}' qiymati juda uzun",
             )
         if not isinstance(value, str | int | float | bool):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=422,
                 detail=f"'{key}' uchun oddiy qiymat kutilgan",
             )
         cleaned[key] = value
         if len(cleaned) > MAX_PARAMS:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=422,
                 detail="Filtrda juda ko'p shart bor",
             )
     return cleaned

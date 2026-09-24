@@ -89,7 +89,7 @@ async def upload_file(
         # Nothing has been written: the file is read and the embeddings are
         # made before the first row is.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+            status_code=422, detail=str(error)
         ) from None
     except EmbeddingUnavailableError:
         raise HTTPException(
