@@ -6,7 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
-    "sqlalchemy>=2.0",
+    # [asyncio] brings greenlet, which the async engine cannot run without.
+    # SQLAlchemy 2.1 stopped installing it by default and a deploy died on
+    # startup; held below 2.1 until that upgrade is tested on its own.
+    "sqlalchemy[asyncio]>=2.0,<2.1",
     "alembic>=1.13",
     "asyncpg>=0.29",
     "pgvector>=0.3",
