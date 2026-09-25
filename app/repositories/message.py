@@ -9,6 +9,7 @@ from app.core.tenant_context import get_current_tenant
 from app.models.conversation import Conversation
 from app.models.message import DeliveryStatus, Message, MessageSender
 from app.repositories.base import BaseRepository, CrossTenantAccessError
+from app.services import message_labels
 
 
 class MessageRepository(BaseRepository[Message]):
@@ -86,6 +87,9 @@ class MessageRepository(BaseRepository[Message]):
                 Message.conversation_id == conversation_id,
                 Conversation.tenant_id == get_current_tenant(),
                 Message.sender == MessageSender.PATIENT,
+                # A ❤️ is not a message: whether it reopens Instagram's
+                # 24-hour window is not something to bet a reply on.
+                ~Message.content.startswith(message_labels.REACTION),
             )
             .order_by(Message.created_at.desc())
             .limit(1)

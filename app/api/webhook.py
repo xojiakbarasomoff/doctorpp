@@ -24,6 +24,7 @@ from app.core.db import get_db_session
 from app.core.queue import get_arq_pool
 from app.core.redaction import preview
 from app.core.tenant_context import reset_current_tenant, set_current_tenant
+from app.services import message_labels
 from app.services.admin_commands import parse_rule
 from app.services.conversation import register_inbound_message
 from app.services.debounce import handle_inbound_message
@@ -49,6 +50,8 @@ class WebhookRecipient(BaseModel):
 
 class AttachmentPayload(BaseModel):
     url: str | None = None
+    # Set on a sticker, which otherwise arrives looking like a photo.
+    sticker_id: int | str | None = None
 
 
 class WebhookAttachment(BaseModel):
@@ -67,13 +70,25 @@ class WebhookMessage(BaseModel):
     mid: str | None = None
     text: str | None = None
     is_echo: bool = False
+    # The patient unsent it; Instagram tells us, there is nothing to answer.
+    is_deleted: bool = False
+    # Something Instagram cannot show through the API.
+    is_unsupported: bool = False
     attachments: list[WebhookAttachment] = []
+
+
+class WebhookReaction(BaseModel):
+    mid: str | None = None
+    action: str | None = None  # "react" / "unreact"
+    reaction: str | None = None  # "love", ...
+    emoji: str | None = None
 
 
 class MessagingEvent(BaseModel):
     sender: WebhookSender
     recipient: WebhookRecipient
     message: WebhookMessage | None = None
+    reaction: WebhookReaction | None = None
 
 
 class CommentFrom(BaseModel):
@@ -170,7 +185,12 @@ async def _handle_event(
     event shape this pipeline has nothing to say to.
     """
     if event.message is None:
-        # Not a message event (e.g. read receipt, postback) — nothing to do yet.
+        if event.reaction is not None and event.sender.id != page_id:
+            await _handle_reaction(session, pool, channel, event)
+        # Otherwise not a message event (e.g. read receipt, postback).
+        return
+
+    if event.message.is_deleted:
         return
 
     if _is_echo(event, page_id):
@@ -214,7 +234,10 @@ async def _handle_event(
     image_urls = [
         attachment.payload.url
         for attachment in event.message.attachments
-        if attachment.type == "image" and attachment.payload and attachment.payload.url
+        if attachment.type == "image"
+        and attachment.payload
+        and attachment.payload.url
+        and attachment.payload.sticker_id is None
     ]
     if event.message.text is None and image_urls:
         await _handle_images(session, pool, channel, event, image_urls)
@@ -227,12 +250,9 @@ async def _handle_event(
         return
 
     if event.message.text is None:
-        # Attachment-only message (video, sticker, etc) — nothing for the
-        # FAQ/LLM pipeline to answer yet.
-        logger.info(
-            "webhook_attachment_only_skipped",
-            extra={"sender_id": event.sender.id, "recipient_id": event.recipient.id},
-        )
+        # Everything else a patient can send without typing: recorded, so the
+        # clinic sees it, and answered only where there is something to say.
+        await _handle_attachment(session, pool, channel, event, _attachment_kind(event.message))
         return
 
     # Claimed before anything is recorded, so a redelivery cannot append a
@@ -399,6 +419,128 @@ async def _handle_images(
         event.message.mid,
         image_urls,
     )
+
+
+# What Instagram calls the things a patient can send, by what we do with them.
+_KIND_BY_TYPE = {
+    "video": message_labels.VIDEO,
+    "file": message_labels.FILE,
+    "share": message_labels.SHARE,
+    "ig_reel": message_labels.SHARE,
+    "reel": message_labels.SHARE,
+    "ig_post": message_labels.SHARE,
+    "post": message_labels.SHARE,
+    "template": message_labels.SHARE,
+    "story_mention": message_labels.STORY,
+    "sticker": message_labels.STICKER,
+    "like_heart": message_labels.STICKER,
+    "animated_image": message_labels.STICKER,
+}
+# Seen by a person, so the conversation waits on one -- as with a photo.
+_FOR_A_PERSON = {message_labels.VIDEO, message_labels.FILE}
+
+
+def _attachment_kind(message: WebhookMessage) -> str | None:
+    """The label for a message with no text, or None for one we cannot name."""
+    if message.is_unsupported:
+        return None
+    for attachment in message.attachments:
+        if attachment.payload is not None and attachment.payload.sticker_id is not None:
+            return message_labels.STICKER
+        kind = _KIND_BY_TYPE.get(attachment.type)
+        if kind is not None:
+            return kind
+    return None
+
+
+async def _handle_attachment(
+    session: AsyncSession,
+    pool: ArqRedis,
+    channel: ResolvedChannel,
+    event: MessagingEvent,
+    kind: str | None,
+) -> None:
+    """A video, a file, a shared reel, a story mention, a sticker -- or
+    something Instagram cannot show us. Recorded in the transcript as a
+    label, then:
+
+    * a video or a file is looked at by a person: the conversation waits on
+      the doctor, and the patient hears the same "we'll take a look" a photo
+      gets;
+    * a shared post or reel gets one question -- what is it about -- because
+      the assistant cannot open it and must not pretend to;
+    * a story mention, a sticker or anything unnamed gets nothing: there is
+      nothing in it to answer.
+    """
+    assert event.message is not None
+    if event.message.mid is not None and not await claim_event(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_type=channel.channel_type,
+        event_id=event.message.mid,
+    ):
+        return
+    text = message_labels.TEXT[kind] if kind is not None else message_labels.UNSUPPORTED
+    inbound = await register_inbound_message(
+        session,
+        channel_id=channel.channel_id,
+        channel_type=channel.channel_type,
+        sender_external_id=event.sender.id,
+        text=text,
+        wants_a_person=kind in _FOR_A_PERSON,
+    )
+    await session.commit()
+    logger.info(
+        "webhook_attachment_received",
+        extra={
+            "tenant_id": str(channel.tenant_id),
+            "kind": text,
+            "types": [attachment.type for attachment in event.message.attachments],
+        },
+    )
+    await pool.enqueue_job(
+        "resolve_username", str(channel.tenant_id), str(channel.channel_id), str(inbound.user_id)
+    )
+    if kind in _FOR_A_PERSON or kind == message_labels.SHARE:
+        await pool.enqueue_job(
+            "answer_attachment",
+            str(channel.tenant_id),
+            str(channel.channel_id),
+            str(inbound.conversation_id),
+            event.sender.id,
+            kind,
+        )
+
+
+async def _handle_reaction(
+    session: AsyncSession,
+    pool: ArqRedis,
+    channel: ResolvedChannel,
+    event: MessagingEvent,
+) -> None:
+    """A ❤️ on one of our messages. Shown in the transcript, never answered,
+    and never a reason for anybody to reply: it is how a conversation ends."""
+    reaction = event.reaction
+    assert reaction is not None
+    if reaction.action != "react":
+        return
+    if reaction.mid is not None and not await claim_event(
+        pool,
+        tenant_id=channel.tenant_id,
+        channel_type=channel.channel_type,
+        event_id=f"reaction:{reaction.mid}:{reaction.emoji or reaction.reaction}",
+    ):
+        return
+    await register_inbound_message(
+        session,
+        channel_id=channel.channel_id,
+        channel_type=channel.channel_type,
+        sender_external_id=event.sender.id,
+        text=message_labels.reaction(reaction.emoji or "❤️"),
+        wants_a_person=False,
+    )
+    await session.commit()
+    logger.info("webhook_reaction_recorded", extra={"tenant_id": str(channel.tenant_id)})
 
 
 async def _handle_voice_note(

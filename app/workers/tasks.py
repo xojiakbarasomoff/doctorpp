@@ -10,7 +10,7 @@ The Telegram bot's inbound edge enqueues these same two jobs.
 import asyncio
 import logging
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractAsyncContextManager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -49,6 +49,7 @@ from app.services import (
     comments,
     doctor_telegram,
     handoff,
+    message_labels,
     patient_media,
     turn,
     voice_notes,
@@ -211,6 +212,10 @@ async def process_inbound_message(
                 embedding_provider=embedding_provider,
                 llm_provider=llm_provider,
             )
+            if turn_result.silent:
+                # A 👍 or "rahmat" that closed the exchange: nothing to send.
+                await session.commit()
+                return
             reply = turn_result.reply
             appointment = turn_result.appointment
             # Committed now, like a booking: the callback below can roll the
@@ -974,25 +979,101 @@ async def handle_patient_media(
         reset_current_tenant(token)
 
 
-async def _said_recently(
-    session: AsyncSession, conversation_id: uuid.UUID, text: str, minutes: int = 30
+async def _said_today(
+    session: AsyncSession, conversation_id: uuid.UUID, texts: Iterable[str]
 ) -> bool:
-    """Whether the clinic's last message in this conversation, within the
-    last few minutes, was exactly this text."""
-    last = (
+    """Whether the clinic sent any of these fixed lines here in the last day."""
+    since = datetime.now(UTC) - timedelta(hours=24)
+    sent = (
         await session.execute(
-            select(Message.content, Message.created_at)
-            .where(
+            select(Message.content).where(
                 Message.conversation_id == conversation_id,
                 Message.sender != MessageSender.PATIENT,
+                Message.created_at >= since,
             )
-            .order_by(Message.created_at.desc())
-            .limit(1)
         )
-    ).first()
-    if last is None or last.created_at < datetime.now(UTC) - timedelta(minutes=minutes):
-        return False
-    return handoff.same_message(last.content, text)
+    ).scalars()
+    lines = list(texts)
+    return any(handoff.same_message(content, line) for content in sent for line in lines)
+
+
+async def answer_attachment(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    channel_id: str,
+    conversation_id: str,
+    sender_external_id: str,
+    kind: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    adapter: ChannelAdapter | None = None,
+) -> None:
+    """ARQ job: a video, a file or a shared post -- answered without the model.
+
+    The model cannot watch a video or open a reel, so anything it wrote about
+    one would be about something nobody had seen. A video or a file waits on
+    the doctor, as a photo does, and gets the photo's "we'll take a look"; a
+    shared post gets one question, once a day, about what it is for.
+    """
+    tenant_uuid = uuid.UUID(tenant_id)
+    conversation_uuid = uuid.UUID(conversation_id)
+    token = set_current_tenant(tenant_uuid)
+    try:
+        async with session_factory() as session:
+            for_a_person = kind in (message_labels.VIDEO, message_labels.FILE)
+            if for_a_person:
+                await handoff.flag(session, conversation_uuid)
+                await session.commit()
+            if not await bot_replies_enabled(session, tenant_uuid):
+                return
+            conversation = await session.get(Conversation, conversation_uuid)
+            if conversation is None or not conversation.is_bot_enabled:
+                return
+            if not await _may_answer(
+                session, channel_id=uuid.UUID(channel_id), user_id=conversation.user_id
+            ):
+                return
+            if for_a_person:
+                await patient_media.acknowledge(
+                    session,
+                    ctx["redis"],
+                    channel_id=uuid.UUID(channel_id),
+                    conversation_id=conversation_uuid,
+                    recipient_external_id=sender_external_id,
+                )
+                return
+            if kind != message_labels.SHARE:
+                return
+            if await _said_today(session, conversation_uuid, SHARE_QUESTIONS.values()):
+                logger.info("share_question_skipped_repeat")
+                return
+            text = SHARE_QUESTIONS[await patient_media.patient_script(session, conversation_uuid)]
+            delivered = await send_reply(
+                session,
+                channel_id=uuid.UUID(channel_id),
+                recipient_external_id=sender_external_id,
+                text=text,
+                last_user_message_at=await last_inbound_at(session, conversation_uuid)
+                or datetime.now(UTC),
+                reply_context=await reply_context_for(session, conversation_uuid),
+                adapter=adapter,
+            )
+            if delivered is not None:
+                await record_outbound_message(
+                    session, conversation_id=conversation_uuid, channel_type=delivered, text=text
+                )
+                await session.commit()
+            logger.info("share_answered", extra={"delivered": delivered is not None})
+    finally:
+        reset_current_tenant(token)
+
+
+# The one thing to say to a shared post or reel: the assistant cannot open it.
+SHARE_QUESTIONS = {
+    "uz-latn": "Qaysi masala bo'yicha yubordingiz? Savolingizni qisqacha yozib qoldiring.",
+    "uz-cyrl": "Қайси масала бўйича юбордингиз? Саволингизни қисқача ёзиб қолдиринг.",
+    "ru": "По какому вопросу вы это отправили? Напишите, пожалуйста, коротко.",
+}
 
 
 async def answer_voice_note(
@@ -1028,8 +1109,9 @@ async def answer_voice_note(
             ):
                 return
             text = await voice_notes.reply_for(session, conversation_uuid)
-            if await _said_recently(session, conversation_uuid, text):
-                # Two voice notes in a row got the same line twice.
+            if await _said_today(session, conversation_uuid, voice_notes.REPLIES.values()):
+                # The patient has been told once today that the doctor answers
+                # these; telling them under every recording is a wall of it.
                 logger.info("voice_note_reply_skipped_repeat")
                 return
             delivered = await send_reply(
@@ -1184,6 +1266,7 @@ class WorkerSettings:
         answer_voice_note,
         answer_comment,
         note_clinic_reply,
+        answer_attachment,
         # A few calls to a model thinking hard; arq's five minutes is too few.
         func(review_tenant, timeout=900, max_tries=1),
     ]

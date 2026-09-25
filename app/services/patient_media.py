@@ -32,6 +32,7 @@ from app.models.patient_media import PatientMedia
 from app.models.user import User
 from app.repositories.channel import ChannelRepository
 from app.repositories.message import MessageRepository
+from app.services import message_labels
 from app.services.conversation import record_outbound_message, reply_context_for
 from app.services.delivery import send_reply
 from app.services.language import reply_script
@@ -175,10 +176,10 @@ async def repair(session: AsyncSession, media: PatientMedia, channel_id: uuid.UU
     return True
 
 
-async def _patient_script(session: AsyncSession, conversation_id: uuid.UUID) -> str:
+async def patient_script(session: AsyncSession, conversation_id: uuid.UUID) -> str:
     """Which alphabet to acknowledge in: the one the patient last wrote in."""
     for message in reversed(await MessageRepository(session).list_recent(conversation_id, 20)):
-        if message.sender == MessageSender.PATIENT and not message.content.startswith("📷"):
+        if message.sender == MessageSender.PATIENT and not message_labels.is_label(message.content):
             return reply_script(message.content)
     return "uz-latn"
 
@@ -227,7 +228,7 @@ async def acknowledge(
     )
     if not first:
         return
-    text = ACKNOWLEDGEMENTS[await _patient_script(session, conversation_id)]
+    text = ACKNOWLEDGEMENTS[await patient_script(session, conversation_id)]
     delivered = await send_reply(
         session,
         channel_id=channel_id,

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.message import MessageSender
 from app.repositories.message import MessageRepository
+from app.services import message_labels
 from app.services.language import reply_script
 
 REPLIES = {
@@ -35,8 +36,10 @@ REPLIES = {
 async def reply_for(session: AsyncSession, conversation_id: uuid.UUID) -> str:
     """The fixed reply, in the script this patient has been writing in."""
     for message in reversed(await MessageRepository(session).list_recent(conversation_id, 20)):
-        if message.sender == MessageSender.PATIENT and not message.content.startswith(
-            ("🎤", "📷", "💬")
+        if (
+            message.sender == MessageSender.PATIENT
+            and not message_labels.is_label(message.content)
+            and not message.content.startswith("💬")
         ):
             return REPLIES[reply_script(message.content)]
     return REPLIES["uz-latn"]

@@ -2,8 +2,10 @@
 it made.
 
     lock the conversation
+    → a 👍 or "rahmat" that closes an exchange: say nothing
     → remember anything new they told us about themselves (name, number)
     → ask the model for the reply
+    → greet only where a greeting belongs (app.services.greeting)
     → book the slot its [[BOOK:...]] marker names, if it wrote one
 """
 
@@ -21,7 +23,7 @@ from app.models.appointment import Appointment
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.appointment import AppointmentRepository
-from app.services import handoff, patient_profile
+from app.services import greeting, handoff, patient_profile, small_talk
 from app.services.answer import generate_answer
 from app.services.booking import extract as extract_booking
 from app.services.booking import settle as settle_booking
@@ -36,6 +38,8 @@ class TurnResult:
     appointment: Appointment | None = None
     # The reply hands the patient to the doctor; the conversation is flagged.
     needs_doctor: bool = False
+    # Nothing to send: the message closed the exchange (app.services.small_talk).
+    silent: bool = False
 
 
 async def lock_conversation(session: AsyncSession, conversation_id: uuid.UUID) -> None:
@@ -49,6 +53,30 @@ async def lock_conversation(session: AsyncSession, conversation_id: uuid.UUID) -
         sql_text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
         {"key": str(conversation_id)},
     )
+
+
+def _greet_where_it_belongs(
+    reply: str,
+    *,
+    message: str,
+    history: Sequence[ChatMessage] | None,
+    long_gap: bool,
+) -> str:
+    """The reply with its hello -- and its "I am the administrator" -- only
+    where a person at the front desk would say them."""
+    said_hello = greeting.patient_greeted(message)
+    mode = greeting.mode_for(first=not history, long_gap=long_gap, patient_greeted=said_hello)
+    earlier = [turn["content"] for turn in history or [] if turn["role"] == "assistant"]
+    tidied = greeting.tidy(
+        reply,
+        mode=mode,
+        patient_greeted=said_hello,
+        introduced_before=greeting.introduced(earlier),
+        asked_who=greeting.asked_who(message),
+    )
+    if tidied != reply:
+        logger.info("reply_greeting_tidied", extra={"mode": str(mode)})
+    return tidied
 
 
 async def respond(
@@ -67,11 +95,15 @@ async def respond(
     resolved = settings or get_settings()
     await lock_conversation(session, conversation_id)
 
+    gap_hours = await hours_since_last_contact(session, conversation_id, now=datetime.now(UTC))
+    long_gap = gap_hours is not None and gap_hours >= 24
+    plan = small_talk.plan(message, list(history or []), long_gap=long_gap)
+    if plan.silent:
+        logger.info("turn_left_unanswered", extra={"conversation_id": str(conversation_id)})
+        return TurnResult(reply="", silent=True)
+
     await patient_profile.remember(session, user_id=user_id, message=message, history=history)
     profile = await patient_profile.load(session, user_id)
-    gap_hours = await hours_since_last_contact(
-        session, conversation_id, now=datetime.now(UTC)
-    )
 
     reply = await generate_answer(
         session,
@@ -85,8 +117,10 @@ async def respond(
         # for how it opens, even though there is history to read: a front
         # desk greets somebody back who wrote yesterday, and stops doing
         # that only within one sitting. See PatientState.long_gap.
-        long_gap=gap_hours is not None and gap_hours >= 24,
+        long_gap=long_gap,
+        situation=plan.note,
     )
+    reply = _greet_where_it_belongs(reply, message=message, history=history, long_gap=long_gap)
 
     appointment: Appointment | None = None
     if resolved.booking_enabled:

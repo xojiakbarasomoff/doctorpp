@@ -121,6 +121,7 @@ async def register_inbound_message(
     sender_external_id: str,
     text: str,
     reply_context: Mapping[str, Any] | None = None,
+    wants_a_person: bool = True,
 ) -> InboundContext:
     """Record one message from a patient and return the context to act on it.
 
@@ -150,7 +151,13 @@ async def register_inbound_message(
         channel=channel_type,
         meta=dict(reply_context) if reply_context else {},
     )
-    if not conversation.is_bot_enabled and conversation.needs_doctor_since is None:
+    # `wants_a_person` is False for a sticker or a ❤️: nothing in it for
+    # anybody to answer, so it pins nothing.
+    if (
+        wants_a_person
+        and not conversation.is_bot_enabled
+        and conversation.needs_doctor_since is None
+    ):
         # Staff have this conversation and the bot will not answer, so the
         # patient is now waiting on a person.
         conversation.needs_doctor_since = datetime.now(UTC)

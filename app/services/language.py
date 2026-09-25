@@ -2,6 +2,7 @@ import re
 from collections.abc import Sequence
 
 from app.rag.llm import ChatMessage
+from app.services import message_labels
 
 _UZBEK_CYRILLIC = frozenset("ўқғҳ")
 
@@ -103,12 +104,12 @@ def conversation_script(history: Sequence[ChatMessage] | None, user_message: str
 # Labels the system puts in the transcript in its own words -- "🎤 Ovozli
 # xabar", "📷 Rasm yubordi", "💬 Izoh: ..." -- are not the patient writing,
 # and their Latin once had a patient writing Cyrillic answered in Latin.
-_SYSTEM_LABEL = re.compile(r"^\s*(🎤|📷)")
+# See app.services.message_labels.
 _COMMENT_PREFIX = re.compile(r"^\s*💬\s*Izoh:\s*")
 
 
 def _patient_words(message: str) -> str:
-    if _SYSTEM_LABEL.match(message):
+    if message_labels.is_label(message):
         return ""
     return _COMMENT_PREFIX.sub("", message)
 

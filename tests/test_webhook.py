@@ -5,19 +5,22 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractContextManager
+from typing import Any
 from uuid import UUID
 
 import httpx
 import pytest
 from arq.connections import ArqRedis
 from arq.jobs import Job
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.queue import get_arq_pool
 from app.main import app
-from app.models.message import MessageSender
+from app.models.conversation import Conversation
+from app.models.message import Message, MessageSender
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
 from app.repositories.user import UserRepository
@@ -387,12 +390,14 @@ async def test_receive_webhook_tenant_b_account_resolves_to_tenant_b_not_a(
     assert info.args[:2] == (str(seed.tenant_b.id), str(seed.b.channel.id))
 
 
-async def test_receive_webhook_attachment_only_message_is_skipped_and_not_enqueued(
+async def test_a_message_instagram_cannot_show_is_recorded_but_not_answered(
     client: httpx.AsyncClient,
     seed: Seed,
     redis_pool: ArqRedis,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """No text and nothing we can name: the clinic sees that the patient
+    sent something, and nobody is asked to answer it."""
     page_id = seed.a.channel.external_id
     body = _messaging_payload(page_id, "user-1", page_id, None)
     signature = _sign(body, "test-app-secret")
@@ -403,9 +408,9 @@ async def test_receive_webhook_attachment_only_message_is_skipped_and_not_enqueu
         )
 
     assert response.status_code == 200
-    assert "webhook_attachment_only_skipped" in caplog.text
+    assert "webhook_attachment_received" in caplog.text
     assert "webhook_message_received" not in caplog.text
-    assert await _queued_jobs(redis_pool) == []
+    assert await _answer_jobs(redis_pool) == []
 
 
 async def test_a_photo_is_recorded_and_handed_to_the_media_job(
@@ -606,3 +611,242 @@ async def test_operator_takeover_records_the_message_but_does_not_answer_it(
     assert [m.content for m in messages] == ["yana savolim bor"]
     # Nobody but a person will answer now, so the conversation is pinned.
     assert conversation.needs_doctor_since is not None
+
+
+# --- everything a patient can send without typing -------------------------------
+
+
+def _event(page_id: str, sender: str, **event: Any) -> bytes:
+    return json.dumps(
+        {
+            "object": "instagram",
+            "entry": [
+                {
+                    "id": page_id,
+                    "time": 1,
+                    "messaging": [
+                        {"sender": {"id": sender}, "recipient": {"id": page_id}, "timestamp": 1}
+                        | event
+                    ],
+                }
+            ],
+        }
+    ).encode()
+
+
+async def _transcript(
+    db_session: AsyncSession, seed: Seed, as_tenant: Any, sender: str
+) -> list[str]:
+    with as_tenant(seed.tenant_a.id):
+        user = await UserRepository(db_session).get_by_external_id(
+            channel_id=seed.a.channel.id, external_id=sender
+        )
+        if user is None:
+            return []
+        rows = await db_session.execute(
+            select(Message.content)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(Conversation.user_id == user.id)
+            .order_by(Message.created_at)
+        )
+        return list(rows.scalars())
+
+
+@pytest.mark.parametrize(
+    ("attachment", "label", "answered"),
+    [
+        (
+            {"type": "video", "payload": {"url": "https://cdn.example/v.mp4"}},
+            "🎞 Video yubordi",
+            True,
+        ),
+        (
+            {"type": "file", "payload": {"url": "https://cdn.example/a.pdf"}},
+            "📎 Fayl yubordi",
+            True,
+        ),
+        (
+            {"type": "share", "payload": {"url": "https://ig.example/p/1"}},
+            "🔗 Post yoki reels ulashdi",
+            True,
+        ),
+        (
+            {"type": "ig_reel", "payload": {"url": "https://ig.example/r/1"}},
+            "🔗 Post yoki reels ulashdi",
+            True,
+        ),
+        (
+            {"type": "story_mention", "payload": {"url": "https://ig.example/s/1"}},
+            "📣 Storisida klinikani belgiladi",
+            False,
+        ),
+        ({"type": "like_heart"}, "🏷 Stiker yubordi", False),
+        (
+            {
+                "type": "image",
+                "payload": {"url": "https://cdn.example/s.png", "sticker_id": 369239263222822},
+            },
+            "🏷 Stiker yubordi",
+            False,
+        ),
+        ({"type": "something_new"}, "📎 Instagram ko'rsatmaydigan xabar yubordi", False),
+    ],
+)
+async def test_what_a_patient_sends_without_typing_is_recorded_and_routed(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    attachment: dict[str, Any],
+    label: str,
+    answered: bool,
+) -> None:
+    page_id = seed.a.channel.external_id
+    body = _event(page_id, "no-words", message={"mid": f"mid-{label}", "attachments": [attachment]})
+
+    response = await _post(client, body)
+
+    assert response.status_code == 200
+    assert await _transcript(db_session, seed, as_tenant, "no-words") == [label]
+    functions = await _queued_function_names(redis_pool)
+    assert ("answer_attachment" in functions) is answered
+    # Never the model, never the photo job: a sticker is not a photo.
+    assert FIRE_DEBOUNCE_WINDOW_JOB not in functions
+    assert "handle_patient_media" not in functions
+
+
+async def test_a_redelivered_video_is_recorded_once(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    page_id = seed.a.channel.external_id
+    body = _event(page_id, "twice", message={"mid": "mid-v", "attachments": [{"type": "video"}]})
+
+    await _post(client, body)
+    await _post(client, body)
+
+    assert await _transcript(db_session, seed, as_tenant, "twice") == ["🎞 Video yubordi"]
+
+
+async def test_an_unsent_message_leaves_nothing_behind(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    page_id = seed.a.channel.external_id
+    body = _event(page_id, "unsent", message={"mid": "mid-d", "is_deleted": True})
+
+    await _post(client, body)
+
+    assert await _transcript(db_session, seed, as_tenant, "unsent") == []
+    assert await _queued_jobs(redis_pool) == []
+
+
+async def test_a_reaction_is_shown_and_never_answered(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    page_id = seed.a.channel.external_id
+    react = _event(
+        page_id,
+        "fan",
+        reaction={"mid": "mid-ours", "action": "react", "reaction": "love", "emoji": "❤️"},
+    )
+
+    await _post(client, react)
+    await _post(client, react)  # redelivered
+
+    assert await _transcript(db_session, seed, as_tenant, "fan") == ["💟 Reaksiya bildirdi: ❤️"]
+    assert await _queued_jobs(redis_pool) == []
+
+
+@pytest.mark.parametrize(
+    "reaction",
+    [
+        {"mid": "m", "action": "unreact"},
+        {"mid": "m"},
+    ],
+)
+async def test_an_unreaction_is_ignored(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    reaction: dict[str, Any],
+) -> None:
+    page_id = seed.a.channel.external_id
+
+    await _post(client, _event(page_id, "fickle", reaction=reaction))
+
+    assert await _transcript(db_session, seed, as_tenant, "fickle") == []
+
+
+async def test_our_own_reaction_is_ignored(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+) -> None:
+    page_id = seed.a.channel.external_id
+    body = _event(page_id, page_id, reaction={"mid": "m", "action": "react", "emoji": "❤️"})
+
+    response = await _post(client, body)
+
+    assert response.status_code == 200
+    assert await _queued_jobs(redis_pool) == []
+
+
+async def test_a_sticker_does_not_pin_a_conversation_staff_have_taken(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    page_id = seed.a.channel.external_id
+    seed.a.conversation.is_bot_enabled = False
+    await db_session.flush()
+    sticker = _event(
+        page_id,
+        seed.a.user.external_id,
+        message={"mid": "mid-st", "attachments": [{"type": "like_heart"}]},
+    )
+    video = _event(
+        page_id,
+        seed.a.user.external_id,
+        message={"mid": "mid-vid", "attachments": [{"type": "video"}]},
+    )
+
+    await _post(client, sticker)
+    await db_session.refresh(seed.a.conversation)
+    assert seed.a.conversation.needs_doctor_since is None
+
+    await _post(client, video)
+    await db_session.refresh(seed.a.conversation)
+    assert seed.a.conversation.needs_doctor_since is not None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"message": {"mid": "x", "attachments": [{"type": 5}]}},
+        {"message": {"mid": "x", "attachments": "video"}},
+        {"reaction": "love"},
+        {"reaction": {"action": ["react"]}},
+    ],
+)
+async def test_a_malformed_event_is_refused_cleanly(
+    client: httpx.AsyncClient, seed: Seed, payload: dict[str, Any]
+) -> None:
+    page_id = seed.a.channel.external_id
+
+    response = await _post(client, _event(page_id, "odd", **payload))
+
+    assert response.status_code in (200, 422)
