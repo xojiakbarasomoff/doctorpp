@@ -25,6 +25,7 @@ from app.api.admin.schemas import (
     LeadUpdate,
     RuleOut,
     RuleRemove,
+    RuleState,
     TenantSettings,
 )
 from app.api.auth import get_current_operator
@@ -38,11 +39,14 @@ from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.lead import LeadRepository
 from app.services.knowledge_base import (
+    MAX_RULES,
     RULE_CATEGORY,
     FAQImport,
+    TooManyRulesError,
     ingest_faqs,
     list_rules,
     remove_rule,
+    set_rule_online,
 )
 from app.services.persona import DEFAULT_EXAMPLES, DEFAULT_PROMPT
 
@@ -291,6 +295,31 @@ async def delete_rule(
     tenant = await session.get(Tenant, get_current_tenant())
     assert tenant is not None
     if not await remove_rule(session, tenant, payload.text):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Qoida topilmadi")
+    await session.commit()
+    return [RuleOut(**vars(rule)) for rule in await list_rules(session, tenant)]
+
+
+@router.post(
+    "/rules/state", response_model=list[RuleOut], dependencies=[Depends(verify_csrf_header)]
+)
+async def switch_rule(
+    payload: RuleState,
+    operator: Operator = Depends(require_manage_clinic),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[RuleOut]:
+    """Put a rule online -- onto the list the assistant reads -- or take it
+    offline, where it stays listed and can be put back."""
+    tenant = await session.get(Tenant, get_current_tenant())
+    assert tenant is not None
+    try:
+        found = await set_rule_online(session, tenant, payload.text, payload.online)
+    except TooManyRulesError:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Online qoidalar soni {MAX_RULES} tadan oshmasligi kerak",
+        ) from None
+    if not found:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Qoida topilmadi")
     await session.commit()
     return [RuleOut(**vars(rule)) for rule in await list_rules(session, tenant)]

@@ -42,7 +42,12 @@ from app.models.tenant import Tenant
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider
 from app.services.appointment import CLINIC_TIMEZONE
-from app.services.knowledge_base import FAQImport, ingest_faqs, record_rule_in_knowledge_base
+from app.services.knowledge_base import (
+    MAX_RULES,
+    FAQImport,
+    ingest_faqs,
+    record_rule_in_knowledge_base,
+)
 from app.services.rule_interpreter import (
     MAX_RULE_LENGTH,
     Fact,
@@ -59,9 +64,6 @@ logger = logging.getLogger(__name__)
 # short enough that it is a message and not a document.
 MAX_INSTRUCTION_LENGTH = 1500
 
-# Every rule is read before every reply. Past this the list is a manual, and
-# the newest rules are the ones a model attends to least.
-MAX_RULES = 40
 
 # Instagram refuses a text over 1000 characters.
 _MAX_REPLY_LENGTH = 900

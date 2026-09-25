@@ -204,6 +204,11 @@ class RuleRemove(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class RuleState(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    online: bool
+
+
 class FaqCreate(BaseModel):
     question: str
     answer: str

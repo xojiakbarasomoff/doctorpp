@@ -127,6 +127,11 @@ async def ingest_faqs(
     return results
 
 
+# Every rule is read before every reply. Past this the list is a manual, and
+# the newest rules are the ones a model attends to least.
+MAX_RULES = 40
+
+
 # What the clinic's own rules are filed under in the knowledge base, so an
 # operator scanning the list can see at a glance that these are instructions
 # to the assistant rather than answers to a patient.
@@ -224,5 +229,60 @@ async def remove_rule(session: AsyncSession, tenant: Tenant, text: str) -> bool:
         tenant.settings = {**tenant.settings, "strict_rules": kept}
     for copy in doomed:
         await session.delete(copy)
+    await session.flush()
+    return True
+
+
+class TooManyRulesError(Exception):
+    """Switching this rule on would take the live list past MAX_RULES."""
+
+
+async def set_rule_online(
+    session: AsyncSession,
+    tenant: Tenant,
+    text: str,
+    online: bool,
+    *,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> bool:
+    """Switch a rule on (onto the live list) or off (a copy that stays listed).
+
+    False when there is no such rule. Switching off keeps the rule in the
+    dashboard's list, as a knowledge-base copy -- one is made for a rule typed
+    straight into Settings, which never had one -- so it can be switched back.
+    """
+    live = list(tenant.settings.get("strict_rules") or [])
+    is_live = any(_same_rule(rule, text) for rule in live)
+    copies = (
+        (
+            await session.execute(
+                select(KnowledgeBase).where(
+                    KnowledgeBase.tenant_id == tenant.id, KnowledgeBase.category == RULE_CATEGORY
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    copy = next((c for c in copies if _same_rule(c.answer, text)), None)
+    if not is_live and copy is None:
+        return False
+
+    if online and not is_live:
+        if len(live) >= MAX_RULES:
+            raise TooManyRulesError
+        tenant.settings = {**tenant.settings, "strict_rules": [*live, copy.answer]}
+    elif not online and is_live:
+        if copy is None:
+            await record_rule_in_knowledge_base(
+                session,
+                rule=next(rule for rule in live if _same_rule(rule, text)),
+                position=len(copies) + 1,
+                embedding_provider=embedding_provider,
+            )
+        tenant.settings = {
+            **tenant.settings,
+            "strict_rules": [rule for rule in live if not _same_rule(rule, text)],
+        }
     await session.flush()
     return True

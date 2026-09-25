@@ -615,6 +615,130 @@ async def test_removing_a_rule_needs_the_csrf_token_and_a_clinic_admin(
     assert len((await client.get("/api/admin/rules")).json()) == 3
 
 
+async def _switch(client: httpx.AsyncClient, csrf: str | None, text: str, online: bool) -> Any:
+    headers = {CSRF_HEADER: csrf} if csrf else {}
+    return await client.post(
+        "/api/admin/rules/state", json={"text": text, "online": online}, headers=headers
+    )
+
+
+async def test_an_offline_rule_can_be_put_back_online(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    response = await _switch(client, csrf, "Eski qoida.", True)
+
+    assert response.status_code == 200
+    assert all(r["online"] for r in response.json())
+    settings = (await client.get("/api/admin/settings")).json()
+    assert settings["strict_rules"][-1] == "Eski qoida."
+
+
+async def test_an_online_rule_taken_offline_stays_listed(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """ "Narxni aytmang." was typed into Settings and never had a copy; it
+    must not vanish from the list when switched off."""
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    response = await _switch(client, csrf, "Narxni aytmang.", False)
+
+    assert response.status_code == 200
+    by_text = {r["text"]: r["online"] for r in response.json()}
+    assert by_text == {
+        "Salomga salom bilan javob bering.": True,
+        "Narxni aytmang.": False,
+        "Eski qoida.": False,
+    }
+    settings = (await client.get("/api/admin/settings")).json()
+    assert settings["strict_rules"] == ["Salomga salom bilan javob bering."]
+
+    back = await _switch(client, csrf, "Narxni aytmang.", True)
+    assert {r["text"]: r["online"] for r in back.json()}["Narxni aytmang."] is True
+
+
+async def test_switching_to_the_state_it_already_has_changes_nothing(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    response = await _switch(client, csrf, "Narxni aytmang.", True)
+
+    assert response.status_code == 200
+    settings = (await client.get("/api/admin/settings")).json()
+    assert settings["strict_rules"] == ["Salomga salom bilan javob bering.", "Narxni aytmang."]
+
+
+async def test_a_rule_cannot_go_online_past_the_limit(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    from app.services.knowledge_base import MAX_RULES
+
+    await _rules_fixture(db_session, seed, as_tenant)
+    with as_tenant(seed.tenant_a.id):
+        seed.tenant_a.settings = {
+            **seed.tenant_a.settings,
+            "strict_rules": [f"Qoida {n}." for n in range(MAX_RULES)],
+        }
+        await db_session.flush()
+    csrf = _login_as(client, manager.id)
+
+    response = await _switch(client, csrf, "Eski qoida.", True)
+
+    assert response.status_code == 409
+    settings = (await client.get("/api/admin/settings")).json()
+    assert len(settings["strict_rules"]) == MAX_RULES
+
+
+async def test_switching_a_rule_that_does_not_exist_is_a_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    assert (await _switch(client, csrf, "Bunday qoida yo'q", True)).status_code == 404
+
+
+async def test_switching_a_rule_needs_the_csrf_token_and_a_clinic_admin(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    front_desk: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+
+    csrf = _login_as(client, front_desk.id)
+    assert (await _switch(client, None, "Eski qoida.", True)).status_code == 403
+    assert (await _switch(client, csrf, "Eski qoida.", True)).status_code == 403
+    rules = (await client.get("/api/admin/rules")).json()
+    assert [r["online"] for r in rules] == [True, True, False]
+
+
 async def test_another_clinics_rules_are_never_listed(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

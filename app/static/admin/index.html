@@ -238,6 +238,9 @@
   .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .status.online { background: var(--good-soft); color: var(--good); }
   .status.offline { background: var(--panel-2); color: var(--ink-3); }
+  button.status { font: inherit; font-size: 12px; font-weight: 700; border: 1px solid transparent; cursor: pointer; }
+  button.status:hover { border-color: currentColor; }
+  button.status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 700px) { .rule { flex-wrap: wrap; } .rule .side { width: 100%; justify-content: flex-end; } }
   .faq-list { display: flex; flex-direction: column; gap: 12px; }
   .faq { padding: 16px 18px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 8px; }
@@ -762,7 +765,7 @@
         <h2>Botga qoidalar</h2>
         <span class="muted" id="ruleSummary"></span>
       </div>
-      <p class="muted" style="margin:0 0 14px"><b>Online</b> — bot har bir javobda shu qoidaga amal qiladi. <b>Offline</b> — eski qoida: keyinroq almashtirilgan yoki olib tashlangan, bot uni endi o'qimaydi. Qoidalar Sozlamalardagi "Qat'iy qoidalar"dan yoki <code>//:</code> buyrug'idan keladi.</p>
+      <p class="muted" style="margin:0 0 14px"><b>Online</b> — bot har bir javobda shu qoidaga amal qiladi. <b>Offline</b> — bot uni o'qimaydi. Holatni o'zgartirish uchun Online / Offline belgisini bosing. Qoidalar Sozlamalardagi "Qat'iy qoidalar"dan yoki <code>//:</code> buyrug'idan keladi.</p>
       <ol class="rule-list" id="ruleRows"></ol>
     </div>
     <div class="panel">
@@ -1758,11 +1761,34 @@ async function loadRules() {
       el("span", { class: "num", "aria-hidden": "true" }, r.number),
       el("span", { class: "text" }, r.text),
       el("span", { class: "side" },
-        el("span", { class: "status " + (r.online ? "online" : "offline") }, r.online ? "Online" : "Offline"),
+        canManageClinic()
+          ? el("button", {
+              class: "status " + (r.online ? "online" : "offline"),
+              type: "button",
+              title: r.online ? "Bosing: Offline qilish" : "Bosing: Online qilish",
+              "aria-label": `${r.number}-qoida ${r.online ? "online" : "offline"}. ${r.online ? "Offline" : "Online"} qilish`,
+              onclick: () => switchRule(r),
+            }, r.online ? "Online" : "Offline")
+          : el("span", { class: "status " + (r.online ? "online" : "offline") }, r.online ? "Online" : "Offline"),
         canManageClinic()
           ? el("button", { class: "act danger", type: "button", "aria-label": `${r.number}-qoidani o'chirish`, onclick: () => removeRule(r) }, "O'chirish")
           : null))
   ) : [el("li", { class: "agenda-empty" }, "Hali qoida yo'q")]);
+}
+
+async function switchRule(rule) {
+  const target = rule.online ? "Offline" : "Online";
+  const what = rule.online
+    ? "Bot bu qoidaga endi amal qilmaydi. Qoida ro'yxatda qoladi, keyin qayta Online qilish mumkin."
+    : "Bot har bir javobda shu qoidaga amal qiladi.";
+  if (!confirm(`${rule.number}-qoida ${target} holatiga o'tsinmi?
+
+${what}`)) return;
+  try {
+    await api("/rules/state", { method: "POST", body: { text: rule.text, online: !rule.online } });
+    toast(`${rule.number}-qoida ${target} qilindi`);
+    await loadRules();
+  } catch (err) { toast(err.message, true); }
 }
 
 async function removeRule(rule) {
