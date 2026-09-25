@@ -527,6 +527,7 @@
             <button type="button" data-range="today" aria-pressed="true">Bugun</button>
             <button type="button" data-range="tomorrow" aria-pressed="false">Ertaga</button>
             <button type="button" data-range="week" aria-pressed="false">Hafta</button>
+            <button type="button" data-range="month" aria-pressed="false">Oy</button>
           </div>
         </div>
         <details class="filters">
@@ -1050,10 +1051,11 @@ function applyParams(resource, params) {
 function rangeParams(range) {
   const day = new Date();
   if (range === "tomorrow") day.setDate(day.getDate() + 1);
-  return { date: isoDay(day), days: range === "week" ? "7" : "1" };
+  const days = { week: "7", month: "30" }[range] || "1";
+  return { date: isoDay(day), days };
 }
 
-// Which of Bugun / Ertaga / Hafta the filters amount to, if any.
+// Which of Bugun / Ertaga / Hafta / Oy the filters amount to, if any.
 function markRange() {
   const date = document.getElementById("apptDate").value;
   const days = document.getElementById("apptDays").value;
