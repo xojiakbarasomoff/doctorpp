@@ -137,12 +137,20 @@ async def file(
         ).scalar_one_or_none()
         if channel_id is None or not await patient_media.repair(session, media, channel_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rasm yuklanmadi")
+    content_type = (
+        media.content_type if media.content_type in patient_media.SAFE_IMAGE_TYPES else None
+    )
     return Response(
         content=media.content,
-        media_type=media.content_type or "image/jpeg",
+        media_type=content_type or "application/octet-stream",
         # Patient photos: never cached by a shared proxy, never sniffed into
-        # something executable.
-        headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff"},
+        # something executable, and -- opened on their own in a tab, on the
+        # dashboard's origin -- never able to run anything even if they were.
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; img-src 'self'; sandbox",
+        },
     )
 
 

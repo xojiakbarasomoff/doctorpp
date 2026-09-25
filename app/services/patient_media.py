@@ -67,6 +67,13 @@ _BROWSER_HEADERS = {
 }
 
 
+# Raster formats only. "image/*" also admits image/svg+xml, which can carry
+# script and is served from the dashboard's own origin.
+SAFE_IMAGE_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif"}
+)
+
+
 async def download(url: str, http: httpx.AsyncClient | None = None) -> tuple[bytes, str] | None:
     """The image and its content type, or None if it cannot be had."""
     client = http or httpx.AsyncClient(timeout=30, follow_redirects=True, headers=_BROWSER_HEADERS)
@@ -78,11 +85,11 @@ async def download(url: str, http: httpx.AsyncClient | None = None) -> tuple[byt
     finally:
         if http is None:
             await client.aclose()
-    content_type = response.headers.get("content-type", "").split(";")[0].strip()
+    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
     if (
         response.is_error
         or len(response.content) > MAX_IMAGE_BYTES
-        or not content_type.startswith("image/")
+        or content_type not in SAFE_IMAGE_TYPES
     ):
         logger.warning(
             "patient_media_download_refused",
