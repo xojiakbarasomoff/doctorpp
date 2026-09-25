@@ -34,7 +34,9 @@ from app.services.conversation_signals import find_phone_number
 logger = logging.getLogger(__name__)
 
 CALLBACK_MARKER = re.compile(
-    r"\[\[\s*CALLBACK\s*:\s*(?P<phone>[^\]|]{5,40}?)(?:\s*\|\s*(?P<reason>[^\]]{1,300}?))?\s*\]\]"
+    r"\[\[\s*CALLBACK\s*:\s*(?P<phone>[^\]|]{5,40}?)"
+    r"(?:\s*\|\s*(?P<reason>[^\]|]{1,300}?))?"
+    r"(?:\s*\|\s*(?P<when>[^\]|]{1,100}?))?\s*\]\]"
 )
 MALFORMED_MARKER = re.compile(r"\[\[\s*CALLBACK[^\]]*\]?\]?")
 
@@ -57,6 +59,9 @@ MAX_REASON = 255
 class CallbackRequest:
     phone: str
     reason: str | None
+    # When the patient said to ring them ("bugun 14:00-15:00", "20:00 dan
+    # keyin"). The assistant was promising these times and nothing kept them.
+    when: str | None = None
 
 
 def extract(reply: str) -> tuple[str, CallbackRequest | None]:
@@ -69,7 +74,8 @@ def extract(reply: str) -> tuple[str, CallbackRequest | None]:
     if not any(ch.isdigit() for ch in phone):
         return cleaned, None
     reason = (match.group("reason") or "").strip() or None
-    return cleaned, CallbackRequest(phone=phone, reason=reason)
+    when = (match.group("when") or "").strip() or None
+    return cleaned, CallbackRequest(phone=phone, reason=reason, when=when)
 
 
 def from_patient_words(patient_said: list[str]) -> CallbackRequest | None:
@@ -102,6 +108,7 @@ async def record(
             existing,
             phone=request.phone,
             topic=reason or existing.topic,
+            convenient_time=request.when or existing.convenient_time,
             patient_name=existing.patient_name or (user.name if user else None),
         )
         return existing, False
@@ -111,6 +118,7 @@ async def record(
         patient_name=user.name if user else None,
         phone=request.phone,
         topic=reason,
+        convenient_time=request.when,
         status=LeadStatus.NEW,
     )
     logger.info("callback_requested", extra={"lead_id": str(lead.id)})

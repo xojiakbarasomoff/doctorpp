@@ -2,7 +2,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from arq.connections import ArqRedis
@@ -383,6 +383,57 @@ async def test_fire_debounce_window_processes_joined_batch_when_generation_curre
     assert client.calls == [("token", SENDER, reply_text)]
 
 
+# --- fire_debounce_window: one reply at a time per conversation ---
+
+
+async def _two_batches_at_once(
+    redis_pool: ArqRedis, monkeypatch: pytest.MonkeyPatch, conversations: tuple[str, str]
+) -> int:
+    """Run two claimed batches side by side; return how many replies were
+    ever being written at the same moment."""
+    import asyncio
+
+    import app.workers.tasks as tasks
+
+    running = 0
+    most = 0
+
+    async def slow_reply(*args: object, **kwargs: object) -> None:
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.3)
+        running -= 1
+
+    monkeypatch.setattr(tasks, "process_inbound_message", slow_reply)
+    tenant, channel = str(uuid4()), str(uuid4())
+    senders = ("patient-one", "patient-two")
+    for sender in senders:
+        prefix = f"debounce:{tenant}:{channel}:{sender}"
+        await redis_pool.rpush(f"{prefix}:messages", "salom")
+        await redis_pool.set(f"{prefix}:generation", "1")
+
+    async def fire(sender: str, conversation: str) -> None:
+        await fire_debounce_window({"redis": redis_pool}, tenant, channel, conversation, sender, 1)
+
+    await asyncio.gather(*(fire(s, c) for s, c in zip(senders, conversations, strict=True)))
+    return most
+
+
+async def test_two_batches_for_one_conversation_are_answered_one_after_the_other(
+    redis_pool: ArqRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A patient writing again while the first answer is being generated
+    used to get two replies written side by side, each blind to the other."""
+    assert await _two_batches_at_once(redis_pool, monkeypatch, ("conv-1", "conv-1")) == 1
+
+
+async def test_different_conversations_are_still_answered_in_parallel(
+    redis_pool: ArqRedis, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert await _two_batches_at_once(redis_pool, monkeypatch, ("conv-1", "conv-2")) == 2
+
+
 # --- fire_debounce_window: stale generation jobs no-op ---
 
 
@@ -654,9 +705,7 @@ _ADMINS = "urolog_timur,as.1.ed,med.uz.ai"
 def _as_admin_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "app.workers.tasks.get_settings",
-        lambda: isolated_settings(
-            admin_instagram_usernames=_ADMINS, admin_command_keyword="//:"
-        ),
+        lambda: isolated_settings(admin_instagram_usernames=_ADMINS, admin_command_keyword="//:"),
     )
 
 

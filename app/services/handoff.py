@@ -25,13 +25,22 @@ _A = "['ʻʼ‘’`]?"
 # A reply that tells the patient the doctor will answer them, without the
 # marker. A handover the model forgot to mark is a patient who waits for an
 # answer nobody knows is owed.
+# The phrasings below are the ones real replies used: "doktor bilan aniqlab
+# olaman", "sizni doktorga bildiraman", "klinika botiga yubordim", "рақамни
+# докторга юбордим" -- each a promise that somebody would come back, on a
+# conversation nobody had been told about.
 _HANDOVER_WORDS = re.compile(
     rf"(doktor|shifokor)(ning)?\s+o{_A}z(i|lari)\s+(sizga\s+)?(javob|yoz|qo{_A}ng{_A}iroq)"
-    rf"|(doktor|shifokor)(ga|imizga)\s+yetkaz"
+    rf"|(doktor|shifokor)(ga|imizga)\s+(yetkaz|bildir|yubor|xabar\s+ber)"
+    rf"|(doktor|shifokor)\s+bilan\s+aniq(lab|lashtir)"
+    rf"|(klinika\s+)?bot(i|ga|iga)\s+yubor"
     r"|(доктор|шифокор)(нинг)?\s+ўз(и|лари)\s+(сизга\s+)?(жавоб|ёз|қўнғироқ)"
-    r"|(доктор|шифокор)(га|имизга)\s+етказ"
+    r"|(доктор|шифокор)(га|имизга)\s+(етказ|билдир|юбор|хабар\s+бер)"
+    r"|(доктор|шифокор)\s+билан\s+ани(қ|к)(лаб|лаштир)"
+    r"|(клиника\s+)?бот(и|га|ига)\s+юбор"
     r"|врач\s+(сам|лично)\s+(вам\s+)?(ответ|напиш|позвон)"
-    r"|переда(м|дим|л[аи]?)\s+(ваш\w*\s+)?(вопрос\s+)?врачу",
+    r"|переда(м|дим|л[аи]?)\s+(ваш\w*\s+)?(вопрос\s+|номер\s+|контакт\w*\s+)?врачу"
+    r"|уточн(ю|им)\s+у\s+врача|сообщ(у|им)\s+врачу",
     re.IGNORECASE,
 )
 

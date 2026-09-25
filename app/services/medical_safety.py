@@ -153,6 +153,26 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
         r"|\bничего\s*страшного\b|\bсамо\s*пройдёт\b|\bсамо\s*пройдет\b"
         r"|\bне\s*обязательно\b[^.!?]{0,30}\b(?:приходить|врач)",
     ),
+    # Treatment to try at home: techniques and exercises. A real reply walked
+    # a patient through "stop-start", "squeeze" and Kegel counts -- which is
+    # treating them, whatever it was called.
+    (
+        "uy_muolajasi",
+        r"\bstop[\s-]*start|\bsqueeze\b|\bkegel\w*|стоп[\s-]*старт|\bкегел\w*"
+        r"|\b(?:usul|mashq|texnika)\w*[^.!?]{0,50}"
+        r"\b(?:sinab\s*ko['’ʻ]?ring|qo['’ʻ]?llang|bajaring|o['’ʻ]?rganing)"
+        r"|\b(?:sinab\s*ko['’ʻ]?ring|qo['’ʻ]?llang|bajaring)[^.!?]{0,50}"
+        r"\b(?:usul|mashq|texnika)\w*"
+        r"|\b(?:усул|машқ|машк|техника)\w*[^.!?]{0,50}"
+        r"\b(?:синаб\s*кўринг|қўлланг|бажаринг)"
+        r"|\b(?:упражнени|метод|техник)\w*[^.!?]{0,50}\b(?:попробуйте|делайте|выполняйте)",
+    ),
+    # Recommending a vitamin or supplement for the complaint.
+    (
+        "vitamin",
+        r"\bvitamin\w*[^.!?]{0,80}\b(?:foyda|yordam\s*ber|yaxshila|iching|qabul)"
+        r"|\bвитамин\w*[^.!?]{0,80}\b(?:фойда|ёрдам\s*бер|яхшила|ичинг|қабул|помога|улучша)",
+    ),
     # Writing a prescription.
     ("retsept", r"\bretsept\w*\s*(?:yoz|ber)|\bрецепт\w*\s*(?:выпиш|напиш)"),
     # Claiming to be the clinician. The persona says who is answering --
@@ -179,6 +199,8 @@ DESCRIPTIONS: dict[str, str] = {
     "buyurish": "prescribed or recommended a medicine",
     "tashxis": "told the patient what condition they have",
     "kelmasa_boladi": "told the patient they do not need to come in, or that it is not serious",
+    "uy_muolajasi": "gave treatment to try at home -- a technique or an exercise",
+    "vitamin": "recommended a vitamin or supplement",
     "retsept": "wrote a prescription",
     "ozini_shifokor_deb_korsatish": "claimed to be the doctor or a clinician",
 }

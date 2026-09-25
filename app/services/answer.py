@@ -29,7 +29,7 @@ from app.repositories.knowledge_base import KnowledgeBaseMatch
 from app.repositories.knowledge_document import ChunkMatch
 from app.services import medical_safety
 from app.services import persona as persona_service
-from app.services.language import conversation_script
+from app.services.language import conversation_script, reply_fits
 from app.services.patient_profile import Profile
 from app.services.persona import ClinicFacts, PatientState, Persona
 from app.services.tenant_resolution import clinic_rules as clinic_rules_for
@@ -38,9 +38,13 @@ logger = logging.getLogger(__name__)
 
 _CALLBACK_CONTRACT = """\
 If the patient asks to be called and gives a number, end your reply with \
-[[CALLBACK:<their number>|<why they want the call, at most twelve words>]]. \
-The patient never sees it; it puts them on the list of people to ring. Write \
-it once per request."""
+[[CALLBACK:<their number>|<why they want the call, at most twelve words>|<when \
+they said to call, in their words, or nothing>]]. The patient never sees it; \
+it puts them on the list of people to ring, with the time they asked for. \
+Write it once per request, and again with the time if they give one later. \
+Say that the clinic will call; never promise an exact time as certain -- \
+somebody from the clinic rings, and the patient hears from you only that \
+their wish is noted."""
 
 _DOCTOR_CONTRACT = """\
 When a person from the clinic has to answer this patient themselves -- you \
@@ -50,7 +54,20 @@ must, or they insist on the doctor personally -- end your reply with \
 [[DOCTOR]]. The patient never sees it; it puts the conversation at the top of \
 the clinic's inbox until somebody answers. Do not write it for anything you \
 answered yourself, for a booking, or for the usual advice to come in for an \
-examination."""
+examination.
+You only ever speak when the patient writes; you cannot come back to them \
+later. So never say "bir daqiqa", "hozir aniqlab beraman", "hozir ko'rib \
+beramiz" or anything else that promises you will follow up. Say instead that \
+the doctor or the administrator will answer them here, and mark it."""
+
+_MEDICAL_BOUNDS_CONTRACT = """\
+You are the clinic's administrator, not a clinician. Beyond never naming a \
+medicine or a dose: give no home treatment, exercises or techniques to try, \
+no vitamins or supplements, and no opinion on whether a medicine or spray the \
+patient already uses is safe, harmful or fine to keep using -- those are the \
+doctor's, at an examination. Ask at most two short questions about the \
+complaint; you are not taking a medical history. Then offer the appointment, \
+or a call if they cannot come."""
 
 _BOOKING_CONTRACT = """\
 You can book appointments yourself, from THE APPOINTMENT BOOK below. Only \
@@ -68,8 +85,25 @@ _LANGUAGE_CONTRACT = (
     'Reply only in the language and alphabet given as "Javob tili" above: '
     "Russian to a patient writing Russian, Uzbek Cyrillic to one writing Uzbek "
     "in Cyrillic, Uzbek Latin to one writing Latin. Never mix alphabets in one "
-    "reply. When the patient's language is unclear, reply in {default_language}."
+    "reply. The clinic's rules and examples sometimes quote exact wording in "
+    "another language or alphabet: say what they mean, in the reply's own "
+    "language and alphabet, rather than copying them. When the patient's "
+    "language is unclear, reply in {default_language}."
 )
+
+_SCRIPT_NAMES = {
+    "uz-latn": "Uzbek, in the Latin alphabet",
+    "uz-cyrl": "Uzbek, in the Cyrillic alphabet",
+    "ru": "Russian",
+}
+
+_WRONG_SCRIPT = """
+
+YOUR LAST REPLY WAS IN THE WRONG LANGUAGE OR ALPHABET
+This patient must be answered in {name}. Write the same answer again, \
+entirely in {name} -- every word, including any greeting. Keep usernames, \
+telephone numbers and any [[...]] marker exactly as they were. Send only the \
+corrected reply."""
 
 
 def _setting(stored: dict[str, Any], key: str, fallback: str | None = None) -> str | None:
@@ -136,6 +170,7 @@ def _build_system_prompt(
     prompt += "\n\n" + _LANGUAGE_CONTRACT.format(default_language=default_language)
     prompt += "\n\n" + _CALLBACK_CONTRACT
     prompt += "\n\n" + _DOCTOR_CONTRACT
+    prompt += "\n\n" + _MEDICAL_BOUNDS_CONTRACT
     if appointment_book is not None:
         prompt += "\n\n" + _BOOKING_CONTRACT + appointment_book
     return prompt
@@ -303,10 +338,51 @@ async def generate_answer(
         ChatMessage(role="user", content=user_message),
     ]
     reply = await provider.generate(system_prompt, conversation)
-    return await _enforce(
+    reply = await _enforce(
         reply,
         provider=provider,
         system_prompt=system_prompt,
         conversation=conversation,
         script=script,
     )
+    return await _enforce_script(
+        reply,
+        provider=provider,
+        system_prompt=system_prompt,
+        conversation=conversation,
+        script=script,
+    )
+
+
+async def _enforce_script(
+    reply: str,
+    *,
+    provider: LLMProvider,
+    system_prompt: str,
+    conversation: Sequence[ChatMessage],
+    script: str,
+) -> str:
+    """The reply, rewritten once if it came back in the wrong language or
+    alphabet.
+
+    Told in the prompt, the model still answered one reply in six in the
+    wrong one on real conversations -- Latin to a patient writing Cyrillic,
+    Russian to one writing Uzbek, a word of each in one sentence. Checked
+    here the same way the medical rules are: free when the reply is right,
+    one more call when it is not. A second miss is sent rather than
+    withheld; an answer in the wrong alphabet still beats silence.
+    """
+    if script not in _SCRIPT_NAMES or reply_fits(reply, script):
+        return reply
+    logger.warning("reply_wrong_script", extra={"script": script, "reply": reply[:200]})
+    instruction = _WRONG_SCRIPT.format(name=_SCRIPT_NAMES[script])
+    try:
+        second = await provider.generate(system_prompt + instruction, list(conversation))
+    except Exception:
+        logger.exception("reply_script_rewrite_failed")
+        return reply
+    if medical_safety.check(second) is not None:
+        return reply
+    if not reply_fits(second, script):
+        logger.warning("reply_wrong_script_again", extra={"script": script})
+    return second

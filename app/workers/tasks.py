@@ -97,6 +97,13 @@ _RETRY_BACKOFF_SECONDS = (30, 120, 300, 600)
 # gets that a patient went unanswered.
 _MAX_ATTEMPTS = 5
 
+# The per-conversation reply lock. It expires on its own after the first
+# figure, so a worker that died holding it cannot silence a patient; the
+# second is how long a batch waits for the reply before it before giving up
+# into the retry ladder above.
+_REPLY_LOCK_SECONDS = 240
+_REPLY_LOCK_WAIT_SECONDS = 200
+
 
 async def _may_answer(session: AsyncSession, *, channel_id: uuid.UUID, user_id: uuid.UUID) -> bool:
     """Whether the assistant may answer this patient at all.
@@ -427,19 +434,30 @@ async def fire_debounce_window(
         return
 
     try:
-        await process_inbound_message(
-            ctx,
-            tenant_id,
-            channel_id,
-            conversation_id,
-            sender_external_id,
-            join_messages(messages),
-            reply_context,
-            session_factory=session_factory,
-            embedding_provider=embedding_provider,
-            llm_provider=llm_provider,
-            adapter=adapter,
-        )
+        # One reply at a time per conversation, from reading the history to
+        # recording the answer. A patient who writes again while the first
+        # answer is being generated opens a second batch; without this the
+        # two ran side by side, the second read a history without the first
+        # answer in it, and the patient got two replies that talked past each
+        # other -- "booked you at 11:00" and then "11:00 is taken".
+        async with pool.lock(
+            f"reply-lock:{conversation_id}",
+            timeout=_REPLY_LOCK_SECONDS,
+            blocking_timeout=_REPLY_LOCK_WAIT_SECONDS,
+        ):
+            await process_inbound_message(
+                ctx,
+                tenant_id,
+                channel_id,
+                conversation_id,
+                sender_external_id,
+                join_messages(messages),
+                reply_context,
+                session_factory=session_factory,
+                embedding_provider=embedding_provider,
+                llm_provider=llm_provider,
+                adapter=adapter,
+            )
     except Exception as exc:
         # The claim above emptied Redis, so these words exist nowhere else.
         # Put them back before letting the failure out, or a rate-limited
@@ -850,6 +868,9 @@ async def handle_patient_media(
                 urls=urls,
                 channel_id=uuid.UUID(channel_id),
             )
+            # Only a person can look at a photo; the conversation waits on one.
+            await handoff.flag(session, uuid.UUID(conversation_id))
+            await session.commit()
             if not await _may_answer(
                 session, channel_id=uuid.UUID(channel_id), user_id=uuid.UUID(user_id)
             ):
@@ -879,6 +900,27 @@ async def handle_patient_media(
         reset_current_tenant(token)
 
 
+async def _said_recently(
+    session: AsyncSession, conversation_id: uuid.UUID, text: str, minutes: int = 30
+) -> bool:
+    """Whether the clinic's last message in this conversation, within the
+    last few minutes, was exactly this text."""
+    last = (
+        await session.execute(
+            select(Message.content, Message.created_at)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.sender != MessageSender.PATIENT,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if last is None or last.created_at < datetime.now(UTC) - timedelta(minutes=minutes):
+        return False
+    return handoff.same_message(last.content, text)
+
+
 async def answer_voice_note(
     ctx: dict[str, Any],
     tenant_id: str,
@@ -900,6 +942,10 @@ async def answer_voice_note(
     token = set_current_tenant(tenant_uuid)
     try:
         async with session_factory() as session:
+            # Only a person can listen to it; the conversation waits on one,
+            # whether or not the assistant says so below.
+            await handoff.flag(session, conversation_uuid)
+            await session.commit()
             if not await bot_replies_enabled(session, tenant_uuid):
                 return
             conversation = await session.get(Conversation, conversation_uuid)
@@ -908,6 +954,10 @@ async def answer_voice_note(
             ):
                 return
             text = await voice_notes.reply_for(session, conversation_uuid)
+            if await _said_recently(session, conversation_uuid, text):
+                # Two voice notes in a row got the same line twice.
+                logger.info("voice_note_reply_skipped_repeat")
+                return
             delivered = await send_reply(
                 session,
                 channel_id=uuid.UUID(channel_id),

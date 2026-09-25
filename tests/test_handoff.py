@@ -51,6 +51,13 @@ def test_messages_are_the_same_whitespace_aside_and_only_whole() -> None:
         "Саволингизни шифокорга етказаман.",
         "Врач сам вам ответит.",
         "Передам ваш вопрос врачу.",
+        # The promises real replies made without pinning anything.
+        "Yaxshi, doktor bilan aniqlab olaman, bir daqiqa iltimos.",
+        "Mayli, sizni doktorga bildiraman.",
+        "Sizning so‘rovingizni klinika botiga yubordik.",
+        "Суҳбатингизни клиника ботига юбордим.",
+        "Тушунарли. Сизнинг рақамни докторга юбордим, WhatsApp орқали боғланиш учун.",
+        "Я уточню у врача и напишу вам.",
     ],
 )
 def test_a_handover_in_words_is_caught_without_the_marker(reply: str) -> None:
@@ -62,6 +69,9 @@ def test_a_handover_in_words_is_caught_without_the_marker(reply: str) -> None:
     [
         "Buni ko'rmasdan aytib bo'lmaydi, qabulga yozib qo'yaymi?",
         "Doktor dushanbadan shanbagacha 09:00 dan 17:00 gacha ishlaydi.",
+        "Doktor bilan uchrashuvga yozilmoqchimisiz?",
+        "Bot emas, men klinika administratoriman.",
+        "Доктор билан қабулга ёзилишни хоҳлайсизми?",
         "Ertaga 11:00 ga yozib qo'ydim.",
         "Врач принимает с 9 до 17.",
     ],

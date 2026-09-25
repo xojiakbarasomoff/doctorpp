@@ -82,3 +82,54 @@ def test_reasoning_effort_is_sent_only_to_reasoning_models() -> None:
 
     assert OpenAILLMProvider(settings, model="gpt-5-mini")._reasoning_effort == "minimal"
     assert settings.openai_reasoning_effort == "minimal"
+
+
+def test_the_time_the_patient_asked_for_is_read_from_the_marker() -> None:
+    """Replies promised "20:00 da qo'ng'iroq qilamiz" and no lead ever carried
+    the time, so whoever rang had no idea when."""
+    text, request = callbacks.extract(
+        "Yaxshi, qo'ng'iroq qilamiz. "
+        "[[CALLBACK:+998 95 627 77 79|telefon maslahat|bugun 14:00-15:00]]"
+    )
+
+    assert text == "Yaxshi, qo'ng'iroq qilamiz."
+    assert request is not None
+    assert request.reason == "telefon maslahat"
+    assert request.when == "bugun 14:00-15:00"
+
+
+def test_a_marker_without_a_time_still_reads() -> None:
+    _, request = callbacks.extract("[[CALLBACK:+998901234567|narx]]")
+
+    assert request is not None
+    assert (request.reason, request.when) == ("narx", None)
+
+
+async def test_the_time_is_kept_on_the_lead_and_updated_when_given_later(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        lead, _ = await callbacks.record(
+            db_session,
+            user=seed.a.user,
+            conversation_id=seed.a.conversation.id,
+            request=callbacks.CallbackRequest(phone="998901234567", reason="maslahat"),
+            fallback_reason=None,
+        )
+        assert lead.convenient_time is None
+
+        same, created = await callbacks.record(
+            db_session,
+            user=seed.a.user,
+            conversation_id=seed.a.conversation.id,
+            request=callbacks.CallbackRequest(
+                phone="998901234567", reason=None, when="ishdan keyin, 20:00"
+            ),
+            fallback_reason=None,
+        )
+
+    assert not created and same.id == lead.id
+    assert same.convenient_time == "ishdan keyin, 20:00"
+    assert same.topic == "maslahat"

@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation
@@ -205,3 +206,57 @@ async def test_an_echo_to_somebody_who_never_wrote_is_ignored(
         "Salom",
         session_factory=_sessions(db_session),
     )
+
+
+# --- voice notes ---------------------------------------------------------------
+
+
+async def _voice(session: AsyncSession, seed: Seed, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    import app.workers.tasks as tasks
+
+    sent: list[str] = []
+
+    async def deliver(*args: object, **kwargs: object) -> str:
+        sent.append(str(kwargs.get("text")))
+        return "instagram"
+
+    monkeypatch.setattr(tasks, "send_reply", deliver)
+    await tasks.answer_voice_note(
+        {},
+        str(seed.tenant_a.id),
+        str(seed.a.channel.id),
+        str(seed.a.conversation.id),
+        seed.a.user.external_id,
+        session_factory=_sessions(session),
+    )
+    return sent
+
+
+async def test_a_voice_note_pins_the_conversation_for_somebody_to_listen(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        sent = await _voice(db_session, seed, monkeypatch)
+        since = await _flag_state(db_session, seed)
+
+    assert len(sent) == 1
+    assert since is not None
+
+
+async def test_two_voice_notes_in_a_row_get_the_line_once(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[uuid.UUID], AbstractContextManager[None]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A patient who sent two voice notes a minute apart got the same fixed
+    line twice."""
+    with as_tenant(seed.tenant_a.id):
+        first = await _voice(db_session, seed, monkeypatch)
+        second = await _voice(db_session, seed, monkeypatch)
+
+    assert len(first) == 1
+    assert second == []

@@ -271,6 +271,7 @@ async def set_rule_online(
     if online and not is_live:
         if len(live) >= MAX_RULES:
             raise TooManyRulesError
+        assert copy is not None  # not live and no copy returned False above
         tenant.settings = {**tenant.settings, "strict_rules": [*live, copy.answer]}
     elif not online and is_live:
         if copy is None:

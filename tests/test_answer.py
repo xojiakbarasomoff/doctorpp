@@ -356,9 +356,7 @@ async def test_a_conversation_with_history_is_told_not_to_restart(
         {"role": "assistant", "content": "Va alaykum assalom, qaysi kun qulay?"},
     ]
 
-    _, llm = await _ask(
-        db_session, seed, as_tenant, "Sizlarda UZI ham bormi?", history=history
-    )
+    _, llm = await _ask(db_session, seed, as_tenant, "Sizlarda UZI ham bormi?", history=history)
 
     assert "birinchi xabar emas" in llm.calls[0][0]
     assert "qayta salomlashmang" in llm.calls[0][0]
@@ -601,3 +599,80 @@ async def test_a_provider_failure_on_the_retry_still_returns_a_safe_line(
         )
 
     assert result == SAFE_REPLIES["uz-latn"]
+
+
+# --- the reply's language and alphabet, enforced ------------------------------
+
+
+async def test_a_reply_in_the_wrong_alphabet_is_written_again(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """One reply in six on real conversations came back in Latin to a patient
+    writing Cyrillic, or in Russian to one writing Uzbek."""
+    reply, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Салом, тез бушанишга нима килса булади",
+        reply=[
+            "Tushundim. Qachondan beri bezovta qilyapti?",
+            "Тушундим. Қачондан бери безовта қиляпти?",
+        ],
+    )
+
+    assert reply == "Тушундим. Қачондан бери безовта қиляпти?"
+    assert len(llm.calls) == 2
+    assert "Uzbek, in the Cyrillic alphabet" in llm.calls[1][0]
+
+
+async def test_a_reply_already_in_the_right_alphabet_costs_no_second_call(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    reply, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Салом, манзилингиз каерда",
+        reply="Манзил: Тошкент, Юнусобод. Telegram: @Temur_Akhmadaliev",
+    )
+
+    assert reply.startswith("Манзил")
+    assert len(llm.calls) == 1
+
+
+async def test_russian_to_a_russian_patient_is_left_alone_and_uzbek_is_not(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    reply, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Здравствуйте, сколько стоит консультация?",
+        reply=["Тушундим, нархни телефон орқали айтамиз.", "Стоимость уточняется по телефону."],
+    )
+
+    assert reply == "Стоимость уточняется по телефону."
+    assert len(llm.calls) == 2
+
+
+async def test_a_second_miss_is_still_sent_rather_than_nothing(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    reply, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Салом, тез бушанишга нима килса булади",
+        reply=["Tushundim.", "Tushundim, qachondan beri?"],
+    )
+
+    assert reply == "Tushundim, qachondan beri?"
+    assert len(llm.calls) == 2
