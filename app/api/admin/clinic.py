@@ -23,6 +23,8 @@ from app.api.admin.schemas import (
     LeadCreate,
     LeadOut,
     LeadUpdate,
+    RuleOut,
+    RuleRemove,
     TenantSettings,
 )
 from app.api.auth import get_current_operator
@@ -35,7 +37,13 @@ from app.models.user import User
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 from app.repositories.lead import LeadRepository
-from app.services.knowledge_base import FAQImport, ingest_faqs
+from app.services.knowledge_base import (
+    RULE_CATEGORY,
+    FAQImport,
+    ingest_faqs,
+    list_rules,
+    remove_rule,
+)
 from app.services.persona import DEFAULT_EXAMPLES, DEFAULT_PROMPT
 
 router = APIRouter(prefix="/api/admin", tags=["Admin — Clinic"])
@@ -194,9 +202,14 @@ async def list_faqs(
     operator: Operator = Depends(get_current_operator),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[FaqOut]:
+    # The clinic's rules are listed on their own (/rules); these are the
+    # questions and answers a patient can be given.
     stmt = (
         select(KnowledgeBase)
-        .where(KnowledgeBase.tenant_id == get_current_tenant())
+        .where(
+            KnowledgeBase.tenant_id == get_current_tenant(),
+            KnowledgeBase.category.is_distinct_from(RULE_CATEGORY),
+        )
         .order_by(KnowledgeBase.question)
     )
     return [_faq_out(faq) for faq in (await session.execute(stmt)).scalars()]
@@ -247,6 +260,40 @@ async def deactivate_faq(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="FAQ topilmadi")
     await repo.update(faq, is_active=False)
     await session.commit()
+
+
+# --- rules -----------------------------------------------------------------
+
+
+@router.get("/rules", response_model=list[RuleOut])
+async def get_rules(
+    operator: Operator = Depends(get_current_operator),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[RuleOut]:
+    tenant = await session.get(Tenant, get_current_tenant())
+    assert tenant is not None
+    return [RuleOut(**vars(rule)) for rule in await list_rules(session, tenant)]
+
+
+@router.post(
+    "/rules/remove", response_model=list[RuleOut], dependencies=[Depends(verify_csrf_header)]
+)
+async def delete_rule(
+    payload: RuleRemove,
+    operator: Operator = Depends(require_manage_clinic),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[RuleOut]:
+    """Remove a rule by its text, from the live list and the knowledge base.
+
+    By text rather than by number: numbers shift as rules come and go, and a
+    click on a list that went stale must not remove the rule now in its place.
+    """
+    tenant = await session.get(Tenant, get_current_tenant())
+    assert tenant is not None
+    if not await remove_rule(session, tenant, payload.text):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Qoida topilmadi")
+    await session.commit()
+    return [RuleOut(**vars(rule)) for rule in await list_rules(session, tenant)]
 
 
 # --- settings --------------------------------------------------------------

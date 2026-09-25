@@ -476,6 +476,157 @@ async def test_another_clinics_conversation_cannot_be_marked_done(
     assert seed.b.conversation.needs_doctor_since is not None
 
 
+# --- rules ---
+
+
+async def _rules_fixture(
+    db_session: AsyncSession, seed: Seed, as_tenant: Callable[[UUID], AbstractContextManager[None]]
+) -> None:
+    """Two live rules, one with a knowledge-base copy, plus an old copy of a
+    rule that was since replaced."""
+    from app.repositories.knowledge_base import KnowledgeBaseRepository
+    from app.services.knowledge_base import RULE_CATEGORY
+
+    with as_tenant(seed.tenant_a.id):
+        seed.tenant_a.settings = {
+            **seed.tenant_a.settings,
+            "strict_rules": ["Salomga salom bilan javob bering.", "Narxni aytmang."],
+        }
+        repo = KnowledgeBaseRepository(db_session)
+        for position, text in ((1, "Salomga  salom bilan javob bering."), (2, "Eski qoida.")):
+            await repo.create(
+                question=f"Qoida {position}: {text}",
+                answer=text,
+                category=RULE_CATEGORY,
+                embedding=[0.0] * EMBEDDING_DIMENSIONS,
+                embedding_model="test",
+                is_active=False,
+            )
+        await db_session.flush()
+
+
+async def test_rules_are_numbered_online_first_then_offline(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    _login_as(client, seed.a.operator.id)
+
+    rules = (await client.get("/api/admin/rules")).json()
+
+    assert [(r["number"], r["text"], r["online"]) for r in rules] == [
+        (1, "Salomga salom bilan javob bering.", True),
+        (2, "Narxni aytmang.", True),
+        (3, "Eski qoida.", False),
+    ]
+
+
+async def test_rule_copies_are_not_listed_as_questions_and_answers(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    _login_as(client, seed.a.operator.id)
+
+    faqs = (await client.get("/api/admin/knowledge-base")).json()
+
+    assert [f["id"] for f in faqs] == [str(seed.a.knowledge_base.id)]
+
+
+async def test_removing_an_online_rule_takes_it_off_the_live_list_and_its_copy(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        "/api/admin/rules/remove",
+        json={"text": "Salomga salom bilan javob bering."},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.status_code == 200
+    assert [(r["number"], r["text"]) for r in response.json()] == [
+        (1, "Narxni aytmang."),
+        (2, "Eski qoida."),
+    ]
+    settings = (await client.get("/api/admin/settings")).json()
+    assert settings["strict_rules"] == ["Narxni aytmang."]
+
+
+async def test_removing_an_offline_rule_leaves_the_live_ones_alone(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        "/api/admin/rules/remove", json={"text": "Eski qoida."}, headers={CSRF_HEADER: csrf}
+    )
+
+    assert response.status_code == 200
+    assert [r["online"] for r in response.json()] == [True, True]
+
+
+async def test_removing_a_rule_that_does_not_exist_is_a_404(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    manager: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    csrf = _login_as(client, manager.id)
+
+    response = await client.post(
+        "/api/admin/rules/remove", json={"text": "Bunday qoida yo'q"}, headers={CSRF_HEADER: csrf}
+    )
+
+    assert response.status_code == 404
+    assert len((await client.get("/api/admin/rules")).json()) == 3
+
+
+async def test_removing_a_rule_needs_the_csrf_token_and_a_clinic_admin(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    front_desk: Any,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    body = {"text": "Narxni aytmang."}
+
+    csrf = _login_as(client, front_desk.id)
+    assert (await client.post("/api/admin/rules/remove", json=body)).status_code == 403
+    refused = await client.post("/api/admin/rules/remove", json=body, headers={CSRF_HEADER: csrf})
+    assert refused.status_code == 403
+    assert len((await client.get("/api/admin/rules")).json()) == 3
+
+
+async def test_another_clinics_rules_are_never_listed(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    await _rules_fixture(db_session, seed, as_tenant)
+    _login_as(client, seed.b.operator.id)
+
+    assert (await client.get("/api/admin/rules")).json() == []
+
+
 # --- doctors ---
 
 

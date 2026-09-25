@@ -193,6 +193,17 @@ class FaqOut(BaseModel):
     is_active: bool
 
 
+class RuleOut(BaseModel):
+    number: int
+    text: str
+    # True: the assistant reads it on every reply. False: only an old copy.
+    online: bool
+
+
+class RuleRemove(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
 class FaqCreate(BaseModel):
     question: str
     answer: str

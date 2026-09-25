@@ -1,10 +1,13 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge_base import KnowledgeBase
+from app.models.tenant import Tenant
 from app.rag.embeddings import EMBEDDING_MODEL, EmbeddingProvider, get_embedding_provider
 from app.repositories.knowledge_base import KnowledgeBaseRepository
 
@@ -162,3 +165,64 @@ async def record_rule_in_knowledge_base(
         embedding_model=EMBEDDING_MODEL,
         is_active=False,
     )
+
+
+def _same_rule(a: str | None, b: str | None) -> bool:
+    return " ".join((a or "").split()) == " ".join((b or "").split())
+
+
+@dataclass(frozen=True)
+class RuleEntry:
+    """One rule as the dashboard lists it.
+
+    Online: in tenants.settings.strict_rules, so the assistant reads it on
+    every reply. Offline: only a copy left in the knowledge base -- a rule
+    that was later replaced or removed, which the assistant no longer reads.
+    """
+
+    number: int
+    text: str
+    online: bool
+
+
+async def list_rules(session: AsyncSession, tenant: Tenant) -> list[RuleEntry]:
+    """Every rule the clinic has, online ones first in the order they apply."""
+    live = [rule for rule in tenant.settings.get("strict_rules") or [] if str(rule).strip()]
+    copies = (
+        await session.execute(
+            select(KnowledgeBase.answer)
+            .where(KnowledgeBase.tenant_id == tenant.id, KnowledgeBase.category == RULE_CATEGORY)
+            .order_by(KnowledgeBase.question)
+        )
+    ).scalars()
+    texts: list[tuple[str, bool]] = [(rule, True) for rule in live]
+    for copy in copies:
+        if not any(_same_rule(copy, text) for text, _ in texts):
+            texts.append((copy, False))
+    return [
+        RuleEntry(number=index, text=text, online=online)
+        for index, (text, online) in enumerate(texts, start=1)
+    ]
+
+
+async def remove_rule(session: AsyncSession, tenant: Tenant, text: str) -> bool:
+    """Take a rule away everywhere: off the live list and out of the
+    knowledge base. False when there was no such rule."""
+    live = list(tenant.settings.get("strict_rules") or [])
+    kept = [rule for rule in live if not _same_rule(rule, text)]
+    copies = (
+        await session.execute(
+            select(KnowledgeBase).where(
+                KnowledgeBase.tenant_id == tenant.id, KnowledgeBase.category == RULE_CATEGORY
+            )
+        )
+    ).scalars()
+    doomed = [copy for copy in copies if _same_rule(copy.answer, text)]
+    if len(kept) == len(live) and not doomed:
+        return False
+    if len(kept) != len(live):
+        tenant.settings = {**tenant.settings, "strict_rules": kept}
+    for copy in doomed:
+        await session.delete(copy)
+    await session.flush()
+    return True

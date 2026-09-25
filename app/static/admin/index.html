@@ -226,6 +226,25 @@
   .tile-name { font-size: 16px; font-weight: 800; }
   .tile-meta { font-size: 13px; color: var(--ink-3); min-height: 1.5em; }
   .tile-meta.hot { color: var(--danger); font-weight: 700; }
+  /* Qoidalar va savol-javoblar */
+  .rule-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .rule { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); }
+  .rule.offline { opacity: .72; }
+  .rule .num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 16px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--accent-soft); color: var(--accent); }
+  .rule.offline .num { background: var(--panel-2); color: var(--ink-3); }
+  .rule .text { flex: 1; min-width: 0; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .rule .side { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12px; font-weight: 700; }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status.online { background: var(--good-soft); color: var(--good); }
+  .status.offline { background: var(--panel-2); color: var(--ink-3); }
+  @media (max-width: 700px) { .rule { flex-wrap: wrap; } .rule .side { width: 100%; justify-content: flex-end; } }
+  .faq-list { display: flex; flex-direction: column; gap: 12px; }
+  .faq { padding: 16px 18px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 8px; }
+  .faq.off { opacity: .6; }
+  .faq .q { font-size: 15px; font-weight: 800; }
+  .faq .a { font-size: 14px; line-height: 1.55; color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .faq .foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
   dialog.sheet .actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
   /* The conversations screen is two columns: the list, and the thread beside
      it. The thread used to sit under the table, so opening one meant
@@ -739,6 +758,14 @@
 
   <section id="tab-faq" hidden>
     <div class="panel">
+      <div class="panel-head">
+        <h2>Botga qoidalar</h2>
+        <span class="muted" id="ruleSummary"></span>
+      </div>
+      <p class="muted" style="margin:0 0 14px"><b>Online</b> — bot har bir javobda shu qoidaga amal qiladi. <b>Offline</b> — eski qoida: keyinroq almashtirilgan yoki olib tashlangan, bot uni endi o'qimaydi. Qoidalar Sozlamalardagi "Qat'iy qoidalar"dan yoki <code>//:</code> buyrug'idan keladi.</p>
+      <ol class="rule-list" id="ruleRows"></ol>
+    </div>
+    <div class="panel">
       <h2>Bot uslubi va qoidalari</h2>
       <p class="muted">Bot shu matn bo'yicha yozadi: kim ekani, yozish uslubi, taqiqlangan iboralar, chegaralar. Yangi hodimga yo'riqnoma yozgandek o'zgartiring — keyingi javobdan kuchga kiradi. Manzil, telefon, ish vaqti, shifokorlar, quyidagi bilim bazasi va suhbat holati matnga o'zi qo'shiladi: ular <code>{klinika_malumotlari}</code>, <code>{bilimlar_bazasi}</code>, <code>{suhbat_holati}</code>, <code>{namunalar}</code> o'rniga tushadi (matnda bo'lmasa oxiriga qo'shiladi).</p>
       <form id="assistantForm" class="grid">
@@ -761,20 +788,6 @@
         <thead><tr><th>Fayl</th><th>Hajmi</th><th>Bo'laklar</th><th>Yuklangan</th><th></th></tr></thead>
         <tbody id="fileRows"></tbody>
       </table></div>
-    </div>
-    <div class="panel">
-      <h2>Bilim bazasi</h2>
-      <p class="muted">Bot faqat shu yerdagi ma'lumotdan javob beradi. Yangi savol qo'shilganda u avtomatik indekslanadi.</p>
-      <div class="scroll"><table>
-        <thead><tr><th>Savol</th><th>Javob</th><th>Holat</th><th></th></tr></thead>
-        <tbody id="faqRows"></tbody>
-      </table></div>
-      <h2 style="margin-top:22px">Yangi savol-javob</h2>
-      <form id="faqForm" class="grid">
-        <div style="grid-column:1/-1"><label for="fQ">Savol</label><input id="fQ" required></div>
-        <div style="grid-column:1/-1"><label for="fA">Javob</label><textarea id="fA" rows="3" required></textarea></div>
-        <div><button class="act primary" type="submit">Saqlash</button></div>
-      </form>
     </div>
   </section>
 
@@ -814,6 +827,20 @@
         <div><label for="sHours">Ish vaqti</label><input id="sHours"></div>
         <div><label for="sDeb">Kutish oynasi (soniya)</label><input type="number" id="sDeb" min="0" max="300"></div>
         <div style="grid-column:1/-1"><label for="sRules">Qat'iy qoidalar (har qatorda bittadan)</label><textarea id="sRules" rows="4"></textarea></div>
+        <div><button class="act primary" type="submit">Saqlash</button></div>
+      </form>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Savol-javoblar</h2>
+        <span class="muted" id="faqSummary"></span>
+      </div>
+      <p class="muted" style="margin:0 0 14px">Bemor shunga o'xshash savol bersa, bot shu javobni topib aytadi. Yangi savol qo'shilganda u avtomatik indekslanadi.</p>
+      <div class="faq-list" id="faqRows"></div>
+      <h2 style="margin-top:22px">Yangi savol-javob</h2>
+      <form id="faqForm" class="grid">
+        <div style="grid-column:1/-1"><label for="fQ">Savol</label><input id="fQ" required></div>
+        <div style="grid-column:1/-1"><label for="fA">Javob</label><textarea id="fA" rows="3" required></textarea></div>
         <div><button class="act primary" type="submit">Saqlash</button></div>
       </form>
     </div>
@@ -1707,17 +1734,45 @@ async function setDoctorActive(id, active) {
 
 async function loadFaqs() {
   const rows = await api("/knowledge-base");
-  fill("faqRows", rows.map((f) =>
-    el("tr", {},
-      el("td", {}, f.question),
-      el("td", {}, f.answer),
-      el("td", {}, el("span", { class: "pill " + (f.is_active ? "ok" : "bad") }, f.is_active ? "faol" : "o'chirilgan")),
-      el("td", {}, canManageClinic() && f.is_active
-        ? el("button", { class: "act danger", onclick: () => removeFaq(f.id) }, "O'chirish")
-        : null)
-    )
-  ));
-  if (!rows.length) fill("faqRows", [el("tr", {}, el("td", { colspan: "4", class: "muted" }, "Bilim bazasi bo'sh — bot faqat umumiy javob beradi"))]);
+  const active = rows.filter((f) => f.is_active).length;
+  document.getElementById("faqSummary").textContent = rows.length ? `${active} tasi faol` : "";
+  fill("faqRows", rows.length ? rows.map((f) =>
+    el("article", { class: "faq" + (f.is_active ? "" : " off") },
+      el("span", { class: "q" }, f.question),
+      el("span", { class: "a" }, f.answer),
+      el("span", { class: "foot" },
+        el("span", { class: "status " + (f.is_active ? "online" : "offline") }, f.is_active ? "Faol" : "O'chirilgan"),
+        canManageClinic() && f.is_active
+          ? el("button", { class: "act danger", type: "button", onclick: () => removeFaq(f.id) }, "O'chirish")
+          : null))
+  ) : [el("p", { class: "agenda-empty" }, "Hali savol-javob yo'q — bot faqat umumiy javob beradi")]);
+}
+
+async function loadRules() {
+  const rules = await api("/rules");
+  const online = rules.filter((r) => r.online).length;
+  document.getElementById("ruleSummary").textContent =
+    rules.length ? `${online} ta online · ${rules.length - online} ta offline` : "";
+  fill("ruleRows", rules.length ? rules.map((r) =>
+    el("li", { class: "rule" + (r.online ? "" : " offline") },
+      el("span", { class: "num", "aria-hidden": "true" }, r.number),
+      el("span", { class: "text" }, r.text),
+      el("span", { class: "side" },
+        el("span", { class: "status " + (r.online ? "online" : "offline") }, r.online ? "Online" : "Offline"),
+        canManageClinic()
+          ? el("button", { class: "act danger", type: "button", "aria-label": `${r.number}-qoidani o'chirish`, onclick: () => removeRule(r) }, "O'chirish")
+          : null))
+  ) : [el("li", { class: "agenda-empty" }, "Hali qoida yo'q")]);
+}
+
+async function removeRule(rule) {
+  const what = rule.online ? "Bot bu qoidaga endi amal qilmaydi." : "Eski nusxa butunlay o'chadi.";
+  if (!confirm(`${rule.number}-qoida o'chirilsinmi?\n\n${what}`)) return;
+  try {
+    await api("/rules/remove", { method: "POST", body: { text: rule.text } });
+    toast("Qoida o'chirildi");
+    await loadRules();
+  } catch (err) { toast(err.message, true); }
 }
 
 async function removeFaq(id) {
@@ -2440,8 +2495,8 @@ const LOADERS = {
   report: loadReport,
   leads: loadLeads,
   doctors: loadDoctors,
-  faq: () => Promise.all([loadFaqs(), loadAssistant(), loadFiles()]),
-  settings: loadSettings,
+  faq: () => Promise.all([loadRules(), loadAssistant(), loadFiles()]),
+  settings: () => Promise.all([loadSettings(), loadFaqs()]),
   staff: loadStaff,
 };
 
