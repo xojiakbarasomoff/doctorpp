@@ -119,6 +119,20 @@ def get_llm_provider() -> LLMProvider:
 
 
 @lru_cache
+def get_review_llm_provider() -> LLMProvider:
+    """For the nightly review: the review model if one is set, thinking hard."""
+    settings = get_settings()
+    return _select_llm_provider(
+        settings.model_copy(
+            update={
+                "openai_model": settings.openai_review_model or settings.openai_model,
+                "openai_reasoning_effort": "high",
+            }
+        )
+    )
+
+
+@lru_cache
 def get_comment_llm_provider() -> LLMProvider:
     """The same model, thinking harder: a comment answer is read by nobody
     waiting in a chat, so the seconds a Direct reply cannot spare are free here.

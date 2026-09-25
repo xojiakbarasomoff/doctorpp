@@ -258,6 +258,10 @@ class Settings(BaseSettings):
     openai_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = Field(
         default="low", alias="OPENAI_REASONING_EFFORT"
     )
+    # The nightly review of the day's conversations (app.services.review).
+    # Nobody waits on it, so it may use a stronger model and think longer
+    # than a reply can; unset, it uses OPENAI_MODEL.
+    openai_review_model: str | None = Field(default=None, alias="OPENAI_REVIEW_MODEL")
 
     # Which backend writes the replies. Unset -- the normal case -- they are
     # written by OpenAI, which is also what makes the embeddings.
@@ -321,6 +325,7 @@ class Settings(BaseSettings):
         "provision_telegram_bot_token",
         "provision_operator_username",
         "provision_operator_password",
+        "openai_review_model",
         mode="after",
     )
     @classmethod

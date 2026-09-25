@@ -73,6 +73,10 @@
   nav#tabs::-webkit-scrollbar { display: none; }
   nav#tabs button { font: inherit; font-size: 14px; font-weight: 600; height: 40px; padding: 0 16px; border: 0; border-radius: 20px; background: transparent; color: var(--ink-3); cursor: pointer; white-space: nowrap; }
   nav#tabs button:hover { color: var(--ink); }
+  /* Eleven tabs for a clinic admin: tighter on a laptop screen so the last
+     ones are not cut off behind the account buttons. */
+  @media (max-width: 1480px) { nav#tabs button { padding: 0 10px; font-size: 13.5px; } }
+  @media (max-width: 1320px) { nav#tabs button { padding: 0 8px; font-size: 13px; } }
   nav#tabs button[aria-selected="true"] { background: var(--panel-solid); color: var(--ink); font-weight: 700; box-shadow: 0 2px 8px rgba(60, 40, 90, .10); }
   nav#tabs button:focus-visible, .pillbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .who { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
@@ -242,6 +246,26 @@
   button.status:hover { border-color: currentColor; }
   button.status:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   @media (max-width: 700px) { .rule { flex-wrap: wrap; } .rule .side { width: 100%; justify-content: flex-end; } }
+  /* Tavsiyalar */
+  .suggest-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .suggest-chips button { font: inherit; font-size: 13px; font-weight: 700; height: 32px; padding: 0 12px; border-radius: 16px; border: 1px solid var(--rule); background: transparent; color: var(--ink-2); cursor: pointer; }
+  .suggest-chips button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg-solid); }
+  .suggest-chips button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .suggest-bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .suggest-list { display: flex; flex-direction: column; gap: 12px; }
+  .suggest { padding: 16px 18px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 10px; }
+  .suggest .kind { align-self: flex-start; height: 24px; padding: 0 10px; border-radius: 12px; display: inline-flex; align-items: center; font-size: 12px; font-weight: 800; background: var(--accent-soft); color: var(--accent); }
+  .suggest .kind.faq { background: var(--warn-soft); color: var(--warn); }
+  .suggest .problem { font-size: 15px; font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
+  .suggest .lbl { font-size: 12px; font-weight: 700; color: var(--ink-3); margin: 0; }
+  .suggest textarea { width: 100%; min-height: 64px; resize: vertical; }
+  .suggest .fixed { font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }
+  .suggest .evidence { display: flex; flex-wrap: wrap; gap: 8px; }
+  .suggest .evidence button { font: inherit; font-size: 13px; text-align: left; border: 1px solid var(--rule); background: var(--panel-2); color: var(--ink-2); border-radius: 12px; padding: 6px 10px; cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
+  .suggest .evidence button:hover { border-color: var(--accent); color: var(--ink); }
+  .suggest .evidence button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .suggest .foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .suggest .foot .buttons { display: flex; gap: 8px; }
   .faq-list { display: flex; flex-direction: column; gap: 12px; }
   .faq { padding: 16px 18px; border-radius: 20px; background: var(--panel-solid); border: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 8px; }
   .faq.off { opacity: .6; }
@@ -436,6 +460,7 @@
       <button data-tab="leads" aria-selected="false">Nomerlar<span class="tab-badge" id="leadsBadge" hidden></span></button>
       <button data-tab="doctors" aria-selected="false">Shifokorlar</button>
       <button data-tab="faq" aria-selected="false">Bilim bazasi</button>
+      <button data-tab="suggest" aria-selected="false" hidden>Tavsiyalar<span class="tab-badge" id="suggestBadge" hidden></span></button>
       <button data-tab="settings" aria-selected="false">Sozlamalar</button>
       <button data-tab="staff" aria-selected="false" hidden>Xodimlar</button>
     </nav>
@@ -791,6 +816,25 @@
         <thead><tr><th>Fayl</th><th>Hajmi</th><th>Bo'laklar</th><th>Yuklangan</th><th></th></tr></thead>
         <tbody id="fileRows"></tbody>
       </table></div>
+    </div>
+  </section>
+
+  <section id="tab-suggest" hidden>
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Tavsiyalar</h2>
+        <div class="suggest-chips" role="group" aria-label="Tavsiyalar holati" id="suggestFilter">
+          <button type="button" data-status="pending" aria-pressed="true">Kutilmoqda</button>
+          <button type="button" data-status="accepted" aria-pressed="false">Qabul qilingan</button>
+          <button type="button" data-status="rejected" aria-pressed="false">Rad etilgan</button>
+        </div>
+      </div>
+      <p class="muted" style="margin:0 0 14px">Har kecha bot kunlik suhbatlarni qayta o'qib chiqadi va takrorlanayotgan xatolarni tuzatish uchun yangi qoida yoki savol-javob taklif qiladi. <b>Hech bir taklif o'zicha kuchga kirmaydi</b> — faqat siz "Qabul qilish"ni bosganingizdan keyin. Matnni qabul qilishdan oldin tahrirlash mumkin.</p>
+      <div class="suggest-bar">
+        <span class="muted" id="suggestLastRun"></span>
+        <button class="act" type="button" id="suggestRun">Hozir tahlil qilish</button>
+      </div>
+      <div class="suggest-list" id="suggestRows" aria-live="polite"></div>
     </div>
   </section>
 
@@ -1801,6 +1845,123 @@ async function removeRule(rule) {
   } catch (err) { toast(err.message, true); }
 }
 
+// --- suggestions ----------------------------------------------------------
+// What the nightly review proposes. Nothing here reaches a patient until
+// somebody presses "Qabul qilish" -- and the server checks the edited text
+// again (no medicine, no dose, no price) whatever this page lets through.
+
+let SUGGEST_STATUS = "pending";
+const SUGGEST_KIND = { rule: "Yangi qoida", faq: "Savol-javob" };
+
+async function refreshSuggestBadge() {
+  if (!canManageClinic()) return;
+  const status = await api("/suggestions/status");
+  const badge = document.getElementById("suggestBadge");
+  badge.textContent = String(status.pending);
+  badge.hidden = !status.pending;
+  document.getElementById("suggestLastRun").textContent = status.last_run
+    ? "Oxirgi tahlil: " + localDateTime(status.last_run)
+    : "Hali tahlil qilinmagan";
+}
+
+async function loadSuggestions() {
+  for (const chip of document.querySelectorAll("#suggestFilter button")) {
+    chip.setAttribute("aria-pressed", String(chip.dataset.status === SUGGEST_STATUS));
+  }
+  const [items] = await Promise.all([
+    api("/suggestions?status=" + encodeURIComponent(SUGGEST_STATUS)),
+    refreshSuggestBadge(),
+  ]);
+  const empty = {
+    pending: "Hozircha yangi tavsiya yo'q — bot kecha xato qilmagan yoki tahlil hali o'tmagan",
+    accepted: "Qabul qilingan tavsiya yo'q",
+    rejected: "Rad etilgan tavsiya yo'q",
+  }[SUGGEST_STATUS];
+  fill("suggestRows", items.length ? items.map(suggestionCard)
+    : [el("p", { class: "agenda-empty" }, empty)]);
+}
+
+function suggestionCard(s) {
+  const pending = s.status === "pending";
+  // The same limits the server enforces (app.services.review).
+  const LIMITS = { rule: 400, q: 200, a: 800 };
+  const box = (key, label, value, rows) => pending
+    ? [el("label", { class: "lbl", for: `sg-${key}-${s.id}` }, label),
+       el("textarea", { id: `sg-${key}-${s.id}`, rows: String(rows), maxlength: String(LIMITS[key]) }, value || "")]
+    : value ? [el("span", { class: "lbl" }, label), el("div", { class: "fixed" }, value)] : [];
+  const fix = s.kind === "rule"
+    ? box("rule", "Taklif qilinayotgan qoida", s.rule_text, 3)
+    : [...box("q", "Savol", s.question, 2),
+       ...box("a", pending && !s.answer ? "Javob (bot bilmaydi — o'zingiz yozing)" : "Javob", s.answer, 3)];
+  return el("article", { class: "suggest" },
+    el("span", { class: "kind " + s.kind }, SUGGEST_KIND[s.kind] || s.kind),
+    el("div", { class: "problem" }, s.problem),
+    ...fix,
+    s.evidence.length ? el("span", { class: "lbl" }, "Qaysi suhbatda ko'rindi") : null,
+    s.evidence.length ? el("div", { class: "evidence" }, s.evidence.map((e) =>
+      el("button", { type: "button", title: "Suhbatni ochish", onclick: () => openPatientChat(e.conversation_id) },
+        e.patient + (e.quote ? ` — “${e.quote}”` : "")))) : null,
+    el("div", { class: "foot" },
+      el("span", { class: "muted" }, pending
+        ? "Taklif qilindi: " + localDateTime(s.created_at)
+        : (s.status === "accepted" ? "Qabul qilindi: " : "Rad etildi: ") + localDateTime(s.decided_at)),
+      pending ? el("span", { class: "buttons" },
+        el("button", { class: "act", type: "button", onclick: (e) => decideSuggestion(s, false, e.currentTarget) }, "Rad etish"),
+        el("button", { class: "act primary", type: "button", onclick: (e) => decideSuggestion(s, true, e.currentTarget) }, "Qabul qilish"))
+        : null));
+}
+
+async function decideSuggestion(s, accept, button) {
+  const value = (key) => {
+    const field = document.getElementById(`sg-${key}-${s.id}`);
+    return field ? field.value : null;
+  };
+  const body = s.kind === "rule" ? { rule_text: value("rule") } : { question: value("q"), answer: value("a") };
+  if (accept) {
+    if (s.kind === "faq" && !(body.answer || "").trim()) {
+      toast("Avval javobni yozing", true);
+      document.getElementById(`sg-a-${s.id}`).focus();
+      return;
+    }
+    const what = s.kind === "rule"
+      ? "Qoida Online holatda qo'shiladi va bot keyingi javobdan unga amal qiladi."
+      : "Savol-javob bilim bazasiga qo'shiladi va bot undan foydalanadi.";
+    if (!confirm(`Tavsiya qabul qilinsinmi?\n\n${what}`)) return;
+  } else if (!confirm("Tavsiya rad etilsinmi? Bot buni qayta taklif qilmaydi.")) {
+    return;
+  }
+  const buttons = button.parentElement.querySelectorAll("button");
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    await api(`/suggestions/${s.id}/${accept ? "accept" : "reject"}`, { method: "POST", body: accept ? body : {} });
+    toast(accept ? "Qabul qilindi — bot endi shunga amal qiladi" : "Rad etildi");
+    await loadSuggestions();
+  } catch (err) {
+    buttons.forEach((b) => { b.disabled = false; });
+    toast(err.message, true);
+  }
+}
+
+document.getElementById("suggestFilter").addEventListener("click", (e) => {
+  const chip = e.target.closest("button[data-status]");
+  if (!chip) return;
+  SUGGEST_STATUS = chip.dataset.status;
+  loadSuggestions().catch((err) => toast(err.message, true));
+});
+
+document.getElementById("suggestRun").addEventListener("click", async (e) => {
+  const button = e.currentTarget;
+  button.disabled = true;
+  try {
+    await api("/suggestions/run", { method: "POST", body: {} });
+    toast("Tahlil boshlandi — bir necha daqiqada tavsiyalar shu yerda chiqadi");
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    setTimeout(() => { button.disabled = false; }, 5000);
+  }
+});
+
 async function removeFaq(id) {
   try {
     await api(`/knowledge-base/${id}`, { method: "DELETE", headers: { "X-CSRF-Token": CSRF } });
@@ -2095,6 +2256,8 @@ async function removeStaff(id, name) {
 // of these again on the request itself.
 function applyPermissions() {
   document.querySelector('#tabs button[data-tab="staff"]').hidden = !can("manage_staff");
+  // Suggestions quote patients and, once accepted, change the bot: clinic admins only.
+  document.querySelector('#tabs button[data-tab="suggest"]').hidden = !canManageClinic();
   for (const id of ["doctorForm", "faqForm", "settingsForm", "assistantForm", "fileForm"]) {
     const form = document.getElementById(id);
     if (form) form.hidden = !canManageClinic();
@@ -2522,6 +2685,7 @@ const LOADERS = {
   leads: loadLeads,
   doctors: loadDoctors,
   faq: () => Promise.all([loadRules(), loadAssistant(), loadFiles()]),
+  suggest: loadSuggestions,
   settings: () => Promise.all([loadSettings(), loadFaqs()]),
   staff: loadStaff,
 };
@@ -2604,6 +2768,7 @@ document.getElementById("staffForm").addEventListener("submit", async (e) => {
     ROLE = me.role;
     PERMISSIONS = new Set(me.permissions || []);
     applyPermissions();
+    refreshSuggestBadge().catch(() => {});
     await loadViews();
     ME_NAME = me.name || "";
     const who = document.getElementById("whoami");

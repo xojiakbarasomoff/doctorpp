@@ -282,3 +282,36 @@ class AnalyticsSummary(BaseModel):
 
 
 ACTIVE_APPOINTMENT_STATUSES = {AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED}
+
+
+class SuggestionEvidence(BaseModel):
+    conversation_id: str
+    quote: str = ""
+    # Who the conversation was with, so the card can say it without a lookup.
+    patient: str | None = None
+
+
+class SuggestionOut(BaseModel):
+    id: uuid.UUID
+    kind: str
+    status: str
+    problem: str
+    rule_text: str | None
+    question: str | None
+    answer: str | None
+    evidence: list[SuggestionEvidence]
+    created_at: datetime
+    decided_at: datetime | None
+
+
+class SuggestionAccept(BaseModel):
+    """What the clinic accepts -- the proposal, or its own edit of it."""
+
+    rule_text: str | None = Field(default=None, max_length=4000)
+    question: str | None = Field(default=None, max_length=4000)
+    answer: str | None = Field(default=None, max_length=4000)
+
+
+class ReviewStatus(BaseModel):
+    pending: int
+    last_run: datetime | None

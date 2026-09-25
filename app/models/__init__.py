@@ -16,6 +16,7 @@ from app.models.message import DeliveryStatus, Message, MessageSender
 from app.models.operator import Operator
 from app.models.patient_media import PatientMedia, PatientMediaStatus
 from app.models.saved_filter import SavedFilter
+from app.models.suggestion import Suggestion, SuggestionKind, SuggestionStatus
 from app.models.tenant import Tenant
 from app.models.user import User
 
@@ -43,6 +44,9 @@ __all__ = [
     "PatientMedia",
     "PatientMediaStatus",
     "SavedFilter",
+    "Suggestion",
+    "SuggestionKind",
+    "SuggestionStatus",
     "Tenant",
     "User",
 ]

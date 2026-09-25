@@ -149,3 +149,27 @@ def test_violation_is_a_plain_value() -> None:
     v = Violation(category="doza", matched="500 mg")
     assert v.category == "doza"
     assert v.matched == "500 mg"
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Men dori tavsiya qila olmayman, buni doktor aytadi.",
+        "Afsuski, dori tavsiya qilmaymiz — shifokor ko'rigidan keyin aniqlanadi.",
+        "Bemorga dori yoki doza tavsiya qilmang, doktorga yo'naltiring.",
+    ],
+)
+def test_refusing_to_recommend_a_medicine_is_not_recommending_one(reply: str) -> None:
+    assert check(reply) is None
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Sizga shu dorini tavsiya qilaman.",
+        "Tabletka tavsiya qilamiz, kuniga bir marta.",
+        "Dori tavsiya qila olaman: paratsetamol.",
+    ],
+)
+def test_recommending_a_medicine_is_still_caught(reply: str) -> None:
+    assert check(reply) is not None

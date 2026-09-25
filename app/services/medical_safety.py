@@ -120,10 +120,10 @@ _PATTERNS: tuple[tuple[str, str], ...] = (
     # recommendation wearing the passive voice.
     (
         "buyurish",
-        r"\b(?:buyur(?:iladi|aman|amiz)|tavsiya\s*qil\w+)"
+        r"\b(?:buyur(?:iladi|aman|amiz)|tavsiya\s*qil(?!ma)(?!a\s+olma)\w*)"
         r"[^.!?]{0,80}\b(?:dori|antibiotik|preparat|tabletka)\w*"
         r"|\b(?:dori|antibiotik|preparat|tabletka)\w*[^.!?]{0,80}"
-        r"\b(?:buyur(?:iladi|aman|amiz)|tavsiya\s*qil\w+)",
+        r"\b(?:buyur(?:iladi|aman|amiz)|tavsiya\s*qil(?!ma)(?!a\s+olma)\w*)",
     ),
     # Telling the patient what they have. A condition has to be named AND
     # attributed to them -- "sizda X bor" is a diagnosis, "X bilan urolog

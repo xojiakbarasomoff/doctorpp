@@ -25,6 +25,7 @@ from app.api.admin.operators import router as operators_router
 from app.api.admin.reports import router as reports_router
 from app.api.admin.schedule import router as schedule_router
 from app.api.admin.session import router as session_router
+from app.api.admin.suggestions import router as suggestions_router
 
 router = APIRouter()
 router.include_router(session_router)
@@ -37,5 +38,6 @@ router.include_router(media_router)
 router.include_router(operators_router)
 router.include_router(reports_router)
 router.include_router(schedule_router)
+router.include_router(suggestions_router)
 
 __all__ = ["router"]

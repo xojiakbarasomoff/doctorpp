@@ -17,6 +17,7 @@ from typing import Any
 
 from arq import Retry, cron
 from arq.connections import RedisSettings
+from arq.worker import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,20 +37,20 @@ from app.models.appointment import Appointment
 from app.models.channel import Channel
 from app.models.conversation import Conversation
 from app.models.message import DeliveryStatus, Message, MessageSender
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.rag.embeddings import EmbeddingProvider
 from app.rag.llm import LLMProvider, get_comment_llm_provider, get_llm_provider
-from app.repositories.appointment import AppointmentRepository
 from app.repositories.channel import ChannelRepository
 from app.repositories.conversation import ConversationRepository
 from app.repositories.user import UserRepository
 from app.services import (
-    turn,
     callbacks,
     comments,
     doctor_telegram,
     handoff,
     patient_media,
+    turn,
     voice_notes,
 )
 from app.services.admin_commands import handle_instruction, is_admin, parse_rule
@@ -72,6 +73,7 @@ from app.services.debounce import (
 from app.services.delivery import send_reply
 from app.services.profile import ensure_instagram_username
 from app.services.reminders import send_due_reminders
+from app.services.review import review_window_start, run_review
 from app.services.sheets import (
     AppointmentRow,
     LeadRow,
@@ -818,6 +820,78 @@ async def label_booking_weekdays(ctx: dict[str, Any]) -> None:
     await label_appointment_weekdays()
 
 
+async def review_tenant(
+    ctx: dict[str, Any],
+    tenant_id: str,
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    llm_provider: LLMProvider | None = None,
+) -> int:
+    """Read one clinic's recent conversations and propose fixes.
+
+    Returns how many suggestions were stored. Proposals only: nothing the
+    review writes reaches a patient until the clinic accepts it.
+    """
+    tid = uuid.UUID(tenant_id)
+    # One review per clinic at a time: the button pressed during the nightly
+    # run would otherwise read the same day twice and propose it twice.
+    lock = ctx["redis"].lock(f"review-lock:{tenant_id}", timeout=900) if "redis" in ctx else None
+    if lock is not None and not await lock.acquire(blocking=False):
+        logger.info("review_tenant_already_running", extra={"tenant_id": tenant_id})
+        return 0
+    token = set_current_tenant(tid)
+    try:
+        async with session_factory() as session:
+            tenant = await session.get(Tenant, tid)
+            if tenant is None:
+                return 0
+            run = await run_review(
+                session,
+                tenant,
+                since=review_window_start(tenant),
+                llm_provider=llm_provider,
+            )
+        logger.info(
+            "review_tenant_done",
+            extra={"tenant_id": tenant_id, "examined": run.examined, "suggested": run.created},
+        )
+        return run.created
+    finally:
+        reset_current_tenant(token)
+        if lock is not None:
+            with suppress(Exception):
+                await lock.release()
+
+
+async def review_conversations(
+    ctx: dict[str, Any],
+    *,
+    session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
+    llm_provider: LLMProvider | None = None,
+) -> None:
+    """Cron job: the nightly review, clinic by clinic.
+
+    One clinic failing -- a model outage, a bad row -- is logged and the
+    next clinic still gets its review.
+    """
+    async with session_factory() as session:
+        tenant_ids = list((await session.execute(select(Tenant.id))).scalars())
+    pool = ctx.get("redis")
+    if pool is not None:
+        # A job per clinic, each with its own timeout and retry, so one
+        # clinic's slow night cannot run the others out of time.
+        for tid in tenant_ids:
+            await pool.enqueue_job("review_tenant", str(tid))
+        return
+    for tid in tenant_ids:
+        try:
+            await review_tenant(
+                ctx, str(tid), session_factory=session_factory, llm_provider=llm_provider
+            )
+        except Exception:
+            logger.exception("review_tenant_failed", extra={"tenant_id": str(tid)})
+
+
 async def _start_doctor_telegram(ctx: dict[str, Any]) -> None:
     """Start the doctor's Telegram bot beside the queue, if it is configured."""
     stop = asyncio.Event()
@@ -1110,6 +1184,8 @@ class WorkerSettings:
         answer_voice_note,
         answer_comment,
         note_clinic_reply,
+        # A few calls to a model thinking hard; arq's five minutes is too few.
+        func(review_tenant, timeout=900, max_tries=1),
     ]
     # Named here as well as in _MAX_ATTEMPTS so the retry ladder in
     # fire_debounce_window and arq's own limit cannot drift apart.
@@ -1129,5 +1205,8 @@ class WorkerSettings:
         # Hourly, so a date someone changed by hand catches up. The startup
         # refresh is in _start_doctor_telegram.
         cron(label_booking_weekdays, minute={15}),
+        # 02:30 in Tashkent: the day's conversations are over and the
+        # suggestions are waiting when the clinic opens.
+        cron(review_conversations, hour={21}, minute={30}),
     ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
