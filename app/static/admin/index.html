@@ -1416,6 +1416,9 @@ function canManageClinic() {
 const WEEKDAYS_LONG = ["Yakshanba", "Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"];
 const MONTHS_LONG = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
 const ACTIVE_STATUSES = new Set(["scheduled", "confirmed"]);
+const OUTCOME_STATUSES = new Set(["completed", "no_show"]);
+// The same half hour as app.services.appointment.OUTCOME_GRACE.
+const OUTCOME_GRACE_MS = 30 * 60000;
 const STATUS_VIEW = {
   scheduled: ["Kutilmoqda", ""],
   confirmed: ["Tasdiqlangan", "ok"],
@@ -1534,14 +1537,30 @@ function appointmentRow(a, next) {
   const past = !isNext && new Date(a.scheduled_at).getTime() < Date.now() && ACTIVE_STATUSES.has(a.status);
   const name = a.patient_name || "Ismi ko'rsatilmagan";
   const detail = [a.notes, a.patient_phone].filter(Boolean).join(" · ") || a.doctor_name;
+  // Once the time has come (half an hour early counts), the visit is marked
+  // "Keldi" / "Kelmadi" -- what the report's outcome chart is made of. A
+  // marked visit keeps the other button, so a wrong click can be put right.
+  const due = new Date(a.scheduled_at).getTime() - OUTCOME_GRACE_MS <= Date.now();
+  const markable = ACTIVE_STATUSES.has(a.status) || OUTCOME_STATUSES.has(a.status);
+  const outcome = canManage() && due && markable
+    ? [
+        a.status !== "completed"
+          ? el("button", { class: "act", type: "button", title: "Bemor keldi", "aria-label": `${name}: keldi`, onclick: () => act(`/appointments/${a.id}/complete`, "Keldi deb belgilandi") }, "Keldi")
+          : null,
+        a.status !== "no_show"
+          ? el("button", { class: "act", type: "button", title: "Bemor kelmadi", "aria-label": `${name}: kelmadi`, onclick: () => act(`/appointments/${a.id}/no-show`, "Kelmadi deb belgilandi") }, "Kelmadi")
+          : null,
+      ]
+    : [];
   const actions = canManage() && ACTIVE_STATUSES.has(a.status)
     ? [
-        a.status === "scheduled"
+        ...outcome,
+        a.status === "scheduled" && !due
           ? el("button", { class: "act", type: "button", title: "Tasdiqlash", "aria-label": `${name}: tasdiqlash`, onclick: () => act(`/appointments/${a.id}/confirm`, "Tasdiqlandi") }, "✓")
           : null,
         el("button", { class: "act danger", type: "button", title: "Bekor qilish", "aria-label": `${name}: bekor qilish`, onclick: () => act(`/appointments/${a.id}/cancel`, "Bekor qilindi") }, "✕"),
       ]
-    : [];
+    : outcome;
   return el("div", { class: "appt" + (isNext ? " next" : "") + (past ? " gone" : "") },
     el("span", { class: "t" }, localTime(a.scheduled_at)),
     el("span", { class: "av", style: `background:${tintFor(name)}`, "aria-hidden": "true" }, nameInitials(name)),

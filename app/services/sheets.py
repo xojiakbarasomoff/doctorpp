@@ -114,6 +114,10 @@ STATUS_LABELS = {
 # bot also writes by itself.
 STATUS_CHOICES = ("Kutilmoqda", "Keldi", "Kelmadi", "Bekor qilindi")
 
+# Statuses written over whatever the Status cell says: each is a decision
+# somebody made, not the bot's guess at one.
+_DECIDED_STATUSES = frozenset({"cancelled", "completed", "no_show"})
+
 # What each of those looks like, so the book can be read at a glance rather
 # than word by word.
 _STATUS_COLOURS = {
@@ -1004,12 +1008,13 @@ class SheetsMirror:
         Everything but the Status column. Status is the one cell in this
         sheet that belongs to a person rather than to the bot: the doctor
         marks "Keldi" when the patient walks in, and a reply arriving a
-        minute later must not put it back to "Kutilmoqda". The exception is
-        a cancellation, which the bot is the one who knows about.
+        minute later must not put it back to "Kutilmoqda". The exceptions
+        are the statuses somebody decided on purpose: a cancellation, and
+        "Keldi" / "Kelmadi" marked in the dashboard.
         """
         cells = row.cells()
         status = APPOINTMENT_HEADER.index("Status")
-        if row.status == "cancelled":
+        if row.status in _DECIDED_STATUSES:
             data = [
                 {
                     "range": f"{APPOINTMENT_SHEET}!A{row_number}:{_APPOINTMENT_LAST_COLUMN}"

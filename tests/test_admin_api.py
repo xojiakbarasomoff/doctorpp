@@ -1454,3 +1454,110 @@ async def test_the_csv_of_patient_names_and_phones_is_not_open_to_every_account(
     response = await client.get("/api/admin/export/appointments.csv")
 
     assert response.status_code == 403
+
+
+# --- marking a visit Keldi / Kelmadi ---
+
+
+def _outcome_url(appointment_id: Any, outcome: str) -> str:
+    return f"/api/admin/appointments/{appointment_id}/{outcome}"
+
+
+async def test_a_visit_that_has_come_is_marked_and_a_wrong_mark_put_right(
+    client: httpx.AsyncClient, seed: Seed, front_desk: Any
+) -> None:
+    """The seeded booking is for now: its time has come."""
+    headers = {CSRF_HEADER: _login_as(client, front_desk.id)}
+
+    came = await client.post(_outcome_url(seed.a.appointment.id, "complete"), headers=headers)
+    assert came.status_code == 200, came.text
+    assert came.json()["status"] == AppointmentStatus.COMPLETED
+
+    fixed = await client.post(_outcome_url(seed.a.appointment.id, "no-show"), headers=headers)
+    assert fixed.status_code == 200
+    assert fixed.json()["status"] == AppointmentStatus.NO_SHOW
+
+
+async def test_the_report_counts_the_marked_outcome(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    headers = {CSRF_HEADER: _login_as(client, manager.id)}
+
+    await client.post(_outcome_url(seed.a.appointment.id, "complete"), headers=headers)
+    report = (await client.get("/api/admin/reports?days=7")).json()
+
+    statuses = {bucket["key"]: bucket for bucket in report["appointment_status"]}
+    assert statuses["completed"]["label"] == "Keldi"
+    assert statuses["completed"]["count"] >= 1
+
+
+async def test_a_visit_still_ahead_cannot_be_marked(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    headers = {CSRF_HEADER: _login_as(client, manager.id)}
+    created = await client.post(
+        "/api/admin/appointments",
+        json={"scheduled_at": _next_free_slot().isoformat(), "patient_name": "Ertangi"},
+        headers=headers,
+    )
+    assert created.status_code == 201
+
+    for outcome in ("complete", "no-show"):
+        response = await client.post(_outcome_url(created.json()["id"], outcome), headers=headers)
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Qabul vaqti hali kelmagan"
+
+
+async def test_a_cancelled_visit_cannot_be_marked(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    headers = {CSRF_HEADER: _login_as(client, manager.id)}
+    await client.post(f"/api/admin/appointments/{seed.a.appointment.id}/cancel", headers=headers)
+
+    response = await client.post(_outcome_url(seed.a.appointment.id, "complete"), headers=headers)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Bekor qilingan qabulni belgilab bo'lmaydi"
+
+
+@pytest.mark.parametrize("outcome", ["complete", "no-show"])
+async def test_a_view_only_doctor_account_cannot_mark(
+    client: httpx.AsyncClient, seed: Seed, outcome: str
+) -> None:
+    """The seed's own operator is a `doctor`: it reads, it does not write."""
+    headers = {CSRF_HEADER: _login_as(client, seed.a.operator.id)}
+
+    response = await client.post(_outcome_url(seed.a.appointment.id, outcome), headers=headers)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize("outcome", ["complete", "no-show"])
+async def test_marking_needs_the_csrf_token(
+    client: httpx.AsyncClient, seed: Seed, manager: Any, outcome: str
+) -> None:
+    _login_as(client, manager.id)
+
+    response = await client.post(_outcome_url(seed.a.appointment.id, outcome))
+
+    assert response.status_code == 403
+
+
+async def test_another_clinics_visit_is_not_found(
+    client: httpx.AsyncClient, seed: Seed, manager: Any
+) -> None:
+    headers = {CSRF_HEADER: _login_as(client, manager.id)}
+
+    response = await client.post(_outcome_url(seed.b.appointment.id, "complete"), headers=headers)
+
+    assert response.status_code == 404
+
+
+async def test_an_unknown_visit_is_not_found(client: httpx.AsyncClient, manager: Any) -> None:
+    headers = {CSRF_HEADER: _login_as(client, manager.id)}
+    missing = "00000000-0000-0000-0000-000000000000"
+
+    assert (
+        await client.post(_outcome_url(missing, "complete"), headers=headers)
+    ).status_code == 404
+    assert (await client.post(_outcome_url("nope", "complete"), headers=headers)).status_code == 422

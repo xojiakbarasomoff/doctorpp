@@ -357,6 +357,43 @@ async def confirm_appointment(repo: AppointmentRepository, appointment: Appointm
     return await repo.update(appointment, status=AppointmentStatus.CONFIRMED)
 
 
+class CancelledAppointmentError(Exception):
+    """A cancelled booking has no visit to mark as attended or missed."""
+
+
+class NotYetDueError(Exception):
+    """The visit has not happened yet, so whether the patient came is unknown."""
+
+
+# How early a visit may be marked: a patient who walks in half an hour
+# before their slot has come, and the front desk marks it when they do.
+OUTCOME_GRACE = timedelta(minutes=30)
+OUTCOME_STATUSES = frozenset({AppointmentStatus.COMPLETED, AppointmentStatus.NO_SHOW})
+
+
+async def record_outcome(
+    repo: AppointmentRepository,
+    appointment: Appointment,
+    outcome: AppointmentStatus,
+    *,
+    now: datetime | None = None,
+) -> Appointment:
+    """Marks whether the patient came -- "Keldi" or "Kelmadi".
+
+    A booking that is still on, or already marked the other way (so a
+    wrong click can be put right), and whose time has come. Not a
+    cancelled one: there was no visit to come to. Either outcome frees
+    the slot, like any status outside ACTIVE_STATUSES -- it is in the past.
+    """
+    if outcome not in OUTCOME_STATUSES:
+        raise ValueError(f"not an outcome: {outcome}")
+    if appointment.status == AppointmentStatus.CANCELLED:
+        raise CancelledAppointmentError
+    if appointment.scheduled_at - OUTCOME_GRACE > (now or datetime.now(UTC)):
+        raise NotYetDueError
+    return await repo.update(appointment, status=outcome)
+
+
 async def notify_patient_of_cancellation(
     session: AsyncSession,
     appointment: Appointment,

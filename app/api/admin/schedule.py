@@ -19,7 +19,7 @@ from app.api.auth import get_current_operator
 from app.core.config import Settings, get_settings
 from app.core.db import get_db_session
 from app.core.tenant_context import get_current_tenant
-from app.models.appointment import ACTIVE_STATUSES, Appointment
+from app.models.appointment import ACTIVE_STATUSES, Appointment, AppointmentStatus
 from app.models.conversation import Conversation
 from app.models.knowledge_base import KnowledgeBase
 from app.models.lead import Lead, LeadStatus
@@ -29,14 +29,17 @@ from app.repositories.doctor import DoctorRepository
 from app.services.appointment import (
     CLINIC_TIMEZONE,
     UNASSIGNED_DOCTOR_NAME,
+    CancelledAppointmentError,
     DoctorDayOffError,
     MissingPatientIdentityError,
+    NotYetDueError,
     OutsideWorkingHoursError,
     SlotAlreadyBookedError,
     cancel_appointment,
     confirm_appointment,
     create_appointment,
     notify_patient_of_cancellation,
+    record_outcome,
 )
 from app.services.sheets import AppointmentRow, mirror_appointment
 
@@ -246,6 +249,53 @@ async def confirm(
     await session.commit()
     await _mirror(appointment)
     return _out(appointment)
+
+
+async def _outcome(
+    session: AsyncSession, appointment_id: uuid.UUID, outcome: AppointmentStatus
+) -> AppointmentOut:
+    appointment = await _load(session, appointment_id)
+    try:
+        await record_outcome(AppointmentRepository(session), appointment, outcome)
+    except CancelledAppointmentError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Bekor qilingan qabulni belgilab bo'lmaydi"
+        ) from None
+    except NotYetDueError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Qabul vaqti hali kelmagan"
+        ) from None
+    await session.commit()
+    await _mirror(appointment)
+    return _out(appointment)
+
+
+@router.post(
+    "/appointments/{appointment_id}/complete",
+    response_model=AppointmentOut,
+    dependencies=[Depends(verify_csrf_header)],
+)
+async def complete(
+    appointment_id: uuid.UUID,
+    operator: Operator = Depends(require_patient_access),
+    session: AsyncSession = Depends(get_db_session),
+) -> AppointmentOut:
+    """The patient came ("Keldi")."""
+    return await _outcome(session, appointment_id, AppointmentStatus.COMPLETED)
+
+
+@router.post(
+    "/appointments/{appointment_id}/no-show",
+    response_model=AppointmentOut,
+    dependencies=[Depends(verify_csrf_header)],
+)
+async def no_show(
+    appointment_id: uuid.UUID,
+    operator: Operator = Depends(require_patient_access),
+    session: AsyncSession = Depends(get_db_session),
+) -> AppointmentOut:
+    """The patient did not come ("Kelmadi")."""
+    return await _outcome(session, appointment_id, AppointmentStatus.NO_SHOW)
 
 
 @router.get("/analytics", response_model=AnalyticsSummary)
