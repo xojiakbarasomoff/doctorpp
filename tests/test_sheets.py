@@ -571,8 +571,11 @@ async def test_a_reply_does_not_undo_a_status_a_person_set() -> None:
 
 async def test_each_booking_date_shows_its_weekday_in_uzbek() -> None:
     """The name goes in the cell's format, so the value stays a real date
-    the filter and the sort still work on."""
+    the filter and the sort still work on -- for dates already in the book,
+    and for the new booking, whose format travels in the same batch that
+    inserts it."""
     formats: list[dict[str, object]] = []
+    written: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
@@ -581,18 +584,40 @@ async def test_each_booking_date_shows_its_weekday_in_uzbek() -> None:
         if request.method == "GET" and "C2" in url:
             # 46288 is 2026-09-23, a Wednesday, already in the book.
             return httpx.Response(200, json={"values": [[46288]]})
+        if request.method == "GET" and "/values/" in url and "A1%3AH" in url.replace(":", "%3A"):
+            return httpx.Response(
+                200,
+                json={
+                    "values": [
+                        list(APPOINTMENT_HEADER),
+                        ["Sentabr 2026", "", "", "", "", "", "", "OY"],
+                        ["A", "+1", 46288, 0.5, "Instagram", "Kutilmoqda", "", "MED-AAAAAA"],
+                    ]
+                },
+            )
         if request.method == "GET" and "/values/" in url:
             return httpx.Response(200, json={"values": [["Kod"]]})
         if request.method == "GET":
             return httpx.Response(
-                200, json={"sheets": [{"properties": {"sheetId": 7, "title": "Qabullar"}}]}
+                200,
+                json={
+                    "sheets": [
+                        {
+                            "properties": {
+                                "sheetId": 7,
+                                "title": "Qabullar",
+                                "gridProperties": {"rowCount": 1000},
+                            }
+                        }
+                    ]
+                },
             )
-        if url.endswith("values/Qabullar!A:H:append") or ":append" in url:
-            return httpx.Response(200, json={"updates": {"updatedRange": "Qabullar!A5:H5"}})
         if url.endswith(":batchUpdate") and "values:batchUpdate" not in url:
             for req in json.loads(request.content)["requests"]:
                 if "repeatCell" in req:
                     formats.append(req["repeatCell"])
+                if "updateCells" in req:
+                    written.append(req["updateCells"])
         return httpx.Response(200, json={})
 
     mirror, _ = _mirror(handler)
@@ -610,9 +635,14 @@ async def test_each_booking_date_shows_its_weekday_in_uzbek() -> None:
         for f in formats
     }
     assert labelled[2] == '"Chorshanba" dd.MM.yyyy'
-    day = _appointment().day
-    assert labelled[5] == f'"{WEEKDAYS_UZ[day.weekday()]}" dd.MM.yyyy'
     assert all(f["range"]["startColumnIndex"] == 2 for f in formats)
+    # 2 September sorts before the 23rd: row 3, under the September line.
+    [booking] = [w for w in written if w["range"]["startRowIndex"] == 2]
+    date_cell = booking["rows"][0]["values"][2]
+    day = _appointment().day
+    assert date_cell["userEnteredFormat"]["numberFormat"]["pattern"] == (
+        f'"{WEEKDAYS_UZ[day.weekday()]}" dd.MM.yyyy'
+    )
 
 
 def test_the_status_column_is_a_dropdown_rather_than_free_text() -> None:

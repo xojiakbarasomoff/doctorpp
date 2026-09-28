@@ -41,6 +41,7 @@ import httpx
 from google.oauth2 import service_account
 
 from app.core.config import Settings, get_settings
+from app.services import sheet_months
 from app.services.appointment import CLINIC_TIMEZONE
 from app.services.conversation_signals import looks_like_a_greeting, looks_like_a_phone_number
 
@@ -888,6 +889,7 @@ class SheetsMirror:
                 decoration=_appointment_decoration_requests,
             )
         self._appointment_gid = sheets[APPOINTMENT_SHEET]
+        await self._organise_once(client)
         await self._label_all_weekdays(client)
         self._appointments_ready = True
 
@@ -1032,29 +1034,241 @@ class SheetsMirror:
             json={"valueInputOption": "USER_ENTERED", "data": data},
         )
 
-    async def upsert_appointment(self, row: AppointmentRow) -> None:
-        """Put this booking in the appointment book, once.
+    async def _book(self, client: httpx.AsyncClient) -> tuple[list[list[Any]], int, dict[str, Any]]:
+        """Qabullar as it stands: its cells read raw, how many rows the grid
+        has, and the sheet's own properties (merges, colour rules)."""
+        body = await self._call(
+            client,
+            "GET",
+            f"/values/{APPOINTMENT_SHEET}!A1:{_APPOINTMENT_LAST_COLUMN}",
+            params={
+                "majorDimension": "ROWS",
+                "valueRenderOption": "UNFORMATTED_VALUE",
+                "dateTimeRenderOption": "SERIAL_NUMBER",
+            },
+        )
+        meta = await self._call(
+            client,
+            "GET",
+            "",
+            params={
+                "fields": "sheets(properties(sheetId,title,gridProperties.rowCount),"
+                "merges,conditionalFormats)"
+            },
+        )
+        sheet: dict[str, Any] = next(
+            (
+                entry
+                for entry in meta.get("sheets", [])
+                if entry.get("properties", {}).get("title") == APPOINTMENT_SHEET
+            ),
+            {},
+        )
+        rows = int(sheet.get("properties", {}).get("gridProperties", {}).get("rowCount", 1000))
+        return body.get("values") or [], rows, sheet
 
-        A new booking is appended in one call and the row Google chose is
-        never guessed at: two bookings taken in the same second would
-        otherwise pick the same row and the second would overwrite the
-        first.
+    def _booking_cells(self, row: AppointmentRow) -> list[dict[str, Any]]:
+        local = row.scheduled_at.astimezone(CLINIC_TIMEZONE)
+        cells = row.cells()
+        return sheet_months.booking_cells(
+            name=cells[0],
+            phone=_e164(row.phone),
+            day=float(sheet_months.serial(row.day)),
+            time=(local.hour * 60 + local.minute) / 1440,
+            channel=cells[4],
+            status=cells[5],
+            comment=cells[6],
+            reference=cells[7],
+            date_pattern=f'"{WEEKDAYS_UZ[row.day.weekday()]}" {_DATE_FORMAT}',
+        )
+
+    async def _insert_appointment(self, client: httpx.AsyncClient, row: AppointmentRow) -> int:
+        """Put a new booking under its month, in the order the day goes,
+        opening the month's line if it has none. Returns its row."""
+        values, grid_rows, _ = await self._book(client)
+        rows = sheet_months.parse(values)
+        cells = self._booking_cells(row)
+        day, time = (
+            cells[2]["userEnteredValue"]["numberValue"],
+            cells[3]["userEnteredValue"]["numberValue"],
+        )
+        placement = sheet_months.place(rows, day, time)
+        requests = sheet_months.insert_requests(
+            self._appointment_gid or 0,
+            rows,
+            placement,
+            cells,
+            template_row=grid_rows - 1,
+            new_month=(row.day.year, row.day.month) if placement.line_at is not None else None,
+        )
+        await self._call(client, "POST", ":batchUpdate", json={"requests": requests})
+        return placement.row
+
+    async def _move_if_moved_month(
+        self, client: httpx.AsyncClient, row_number: int, row: AppointmentRow
+    ) -> int:
+        """A booking moved to another month leaves its old month's section.
+
+        Removed and put in again under the right month. What a person set
+        on it -- "Keldi" -- does not come with it, and does not need to: a
+        visit that moved has not happened yet.
+        """
+        values, _, _ = await self._book(client)
+        rows = sheet_months.parse(values)
+        under = sheet_months.block_month(rows, row_number)
+        if under is None or under == (row.day.year, row.day.month):
+            return row_number
+        await self._call(
+            client,
+            "POST",
+            ":batchUpdate",
+            json={
+                "requests": [
+                    {
+                        "deleteDimension": {
+                            "range": {
+                                "sheetId": self._appointment_gid,
+                                "dimension": "ROWS",
+                                "startIndex": row_number - 1,
+                                "endIndex": row_number,
+                            }
+                        }
+                    }
+                ]
+            },
+        )
+        logger.info("sheets_booking_moved_month from=%s", under)
+        return await self._insert_appointment(client, row)
+
+    async def organise_by_month(self, client: httpx.AsyncClient) -> None:
+        """Put the book in order: no gaps, dates as dates, sorted by day and
+        time, and a line above each month. Safe to run again -- the old
+        lines are taken out and drawn afresh.
+
+        Rows move whole -- a status a person set, the colours, the code all
+        go with them -- because they are moved by sorting, never rewritten.
+        """
+        gid = self._appointment_gid
+        values, _, sheet = await self._book(client)
+        rows = sheet_months.parse(values)
+        tidy = sheet_months.plan(rows, values)
+        first: list[dict[str, Any]] = [
+            {"unmergeCells": {"range": merge}}
+            for merge in sheet.get("merges") or []
+            if merge.get("startRowIndex", 0) >= 1
+        ]
+        for number, day in tidy.text_dates.items():
+            first.append(
+                {
+                    "updateCells": {
+                        "range": {
+                            "sheetId": gid,
+                            "startRowIndex": number - 1,
+                            "endRowIndex": number,
+                            "startColumnIndex": _APPOINTMENT_DATE_INDEX,
+                            "endColumnIndex": _APPOINTMENT_DATE_INDEX + 1,
+                        },
+                        "rows": [{"values": [{"userEnteredValue": {"numberValue": day}}]}],
+                        "fields": "userEnteredValue",
+                    }
+                }
+            )
+        first += [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": gid,
+                        "dimension": "ROWS",
+                        "startIndex": number - 1,
+                        "endIndex": number,
+                    }
+                }
+            }
+            for number in tidy.delete  # bottom first, so the rest keep their numbers
+        ]
+        bookings = sum(1 for row in rows if not row.empty and not row.is_line)
+        first.append(
+            {
+                "sortRange": {
+                    "range": {
+                        "sheetId": gid,
+                        "startRowIndex": 1,
+                        "endRowIndex": 1 + bookings,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": len(APPOINTMENT_HEADER),
+                    },
+                    "sortSpecs": [
+                        {"dimensionIndex": _APPOINTMENT_DATE_INDEX, "sortOrder": "ASCENDING"},
+                        {"dimensionIndex": _APPOINTMENT_DATE_INDEX + 1, "sortOrder": "ASCENDING"},
+                    ],
+                }
+            }
+        )
+        await self._call(client, "POST", ":batchUpdate", json={"requests": first})
+
+        # The lines, bottom month first so the rows above keep their numbers.
+        values, _, sheet = await self._book(client)
+        rows = sheet_months.parse(values)
+        second: list[dict[str, Any]] = []
+        for month in reversed(tidy.months):
+            start = next(
+                row.number
+                for row in rows
+                if row.day is not None and sheet_months.month_of(row.day) == month
+            )
+            second.append(
+                {
+                    "insertDimension": {
+                        "range": {
+                            "sheetId": gid,
+                            "dimension": "ROWS",
+                            "startIndex": start - 1,
+                            "endIndex": start,
+                        },
+                        "inheritFromBefore": False,
+                    }
+                }
+            )
+            second += sheet_months.line_requests(gid or 0, start, *month)
+        has_rule = any(
+            f'$H2="{sheet_months.MARKER}"' in json.dumps(rule)
+            for rule in sheet.get("conditionalFormats") or []
+        )
+        if not has_rule:
+            second.append(sheet_months.line_rule(gid or 0))
+        if second:
+            await self._call(client, "POST", ":batchUpdate", json={"requests": second})
+        logger.info(
+            "sheets_book_organised months=%d removed=%d", len(tidy.months), len(tidy.delete)
+        )
+
+    async def _organise_once(self, client: httpx.AsyncClient) -> None:
+        """A book with bookings but no month lines -- one written before
+        months existed -- is put in order the first time it is opened."""
+        try:
+            values, _, _ = await self._book(client)
+            rows = sheet_months.parse(values)
+            if any(row.day is not None for row in rows) and not any(row.is_line for row in rows):
+                await self.organise_by_month(client)
+        except SheetsError as exc:
+            logger.warning("sheets_organise_skipped error=%s", exc)
+
+    async def upsert_appointment(self, row: AppointmentRow) -> None:
+        """Put this booking in the appointment book, once, under its month.
+
+        A new booking is inserted and written in one atomic batch, never
+        appended and then looked for: two bookings taken in the same second
+        each insert their own row, and neither can write into the other's.
         """
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             await self._ensure_appointment_sheet(client)
             existing = await self.find_appointment_row(client, row.reference)
             if existing is None:
-                body = await self._call(
-                    client,
-                    "POST",
-                    f"/values/{APPOINTMENT_SHEET}!A:{_APPOINTMENT_LAST_COLUMN}:append",
-                    params={"valueInputOption": "USER_ENTERED"},
-                    json={"values": [row.cells()]},
-                )
-                existing = _row_number(body.get("updates", {}).get("updatedRange", ""))
-            else:
-                await self._write_appointment(client, existing, row)
-            if existing is not None:
+                await self._insert_appointment(client, row)
+                return
+            await self._write_appointment(client, existing, row)
+            moved = await self._move_if_moved_month(client, existing, row)
+            if moved == existing:
                 await self._label_weekdays(client, [(existing, row.day)])
 
     async def relabel_weekdays(self) -> None:

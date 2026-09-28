@@ -1,27 +1,16 @@
-"""The front page of the clinic's spreadsheet: the year, and each month in it.
+"""The front page of the clinic's spreadsheet: the year and its months.
 
-The appointment book (Qabullar) is one long list, and the doctor asked for
-what a paper diary has: open the year, pick the month, see that month's
-patients -- on the same page, with an ✕ to go back. So everything lives on
-one tab, Home:
+The appointment book (Qabullar) is kept month by month -- a "Sentabr 2026"
+line with that month's bookings under it, then October's (see
+app.services.sheet_months). Home is the way in: the year, and a tile per
+month that jumps to that month's line in Qabullar.
 
-    top      the year and twelve month tiles
-    below    one section per month the clinic has asked for, far enough
-             down to be out of sight until a tile is clicked
-
-A tile is a link to the top of its month's section, and the ✕ at the top of
-a section is a link back to the top of the page. Plain links, because a
-spreadsheet without scripts has no clicks of its own -- and a link to a cell
-is the one kind of navigation Sheets does inside a page.
-
-A section holds no copy of anything. It is a single formula over Qabullar:
-that month's bookings, in the order the day goes. A booking the assistant
-writes at three in the morning is on Home when the doctor opens it, and
-nothing here has to run for that.
-
-Built on request (`python -m app.services.sheet_pages 2026 9`), not on every
-booking: the page is layout, and a clinic's layout changes when a person
-decides it should.
+Nothing on Home has to be rebuilt as the months go by. Each tile finds its
+month's line with MATCH, so it still lands on the right row after bookings
+are inserted above it; it counts its month's bookings with COUNTIFS; and it
+lights up by colour rule the moment the bot opens the month's line, and
+turns solid on the month the calendar is in. Built once per year:
+`python -m app.services.sheet_pages 2026`.
 """
 
 import asyncio
@@ -32,26 +21,12 @@ from typing import Any
 
 import httpx
 
-from app.services.sheets import (
-    _STATUS_COLOURS as STATUS_COLOURS,
-)
-from app.services.sheets import (
-    APPOINTMENT_SHEET,
-    STATUS_CHOICES,
-    SheetsMirror,
-    _rgb,
-)
+from app.services.sheet_months import MONTHS_UZ, label
+from app.services.sheets import APPOINTMENT_SHEET, SheetsMirror, _rgb
 
 logger = logging.getLogger(__name__)
 
 HOME_SHEET = "Home"
-MONTHS_UZ = (
-    "Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun",
-    "Iyul", "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr",
-)  # fmt: skip
-WEEKDAYS = "Dushanba,Seshanba,Chorshanba,Payshanba,Juma,Shanba,Yakshanba"
-EMPTY_MONTH = "Bu oyda hali qabul yo‘q"
-CLOSE = "✕  Yopish"
 
 # The palette of the rest of the spreadsheet: the teal of the Lidlar and
 # Qabullar headers, a slate ink, and quiet greys for what is not there yet.
@@ -61,39 +36,14 @@ INK = "#0F172A"
 MUTED = "#64748B"
 FAINT = "#94A3B8"
 LINE = "#E2E8F0"
-BAND = "#F8FAFC"
 NOT_YET = "#F1F5F9"
 WHITE = "#FFFFFF"
 
-# --- the grid --------------------------------------------------------------------------
-#
-# One set of columns for the tiles and the tables under them, so a month's
-# table sits exactly under the tiles: four wide columns with narrow gaps,
-# and the last column -- a margin beside the tiles -- wide enough to hold
-# the comment in a table row.
-#
 #   A      B     C   D     E   F       G   H       I
-#   margin tile  gap tile  gap tile    gap tile    margin / Izoh
-_WIDTHS = (32, 190, 18, 190, 18, 190, 18, 190, 420)
+#   margin tile  gap tile  gap tile    gap tile    margin
+_WIDTHS = (32, 190, 18, 190, 18, 190, 18, 190, 32)
 _TILE_COLUMNS = (1, 3, 5, 7)
 _YEAR_ROW, _FIRST_TILE_ROW = 4, 6
-# Where the ✕ goes back to: the page title.
-_TOP = (1, 1)
-# Where the first month's section starts (0-based), and how many rows each
-# month is given: a busy month is twenty patients a day, six days a week.
-FIRST_SECTION_ROW = 40
-SECTION_ROWS = 700
-# Section rows, relative to its first row.
-_TITLE, _KPI_LABELS, _KPI_VALUES, _HEADER, _DATA = 0, 2, 3, 5, 6
-# The table's columns in the grid: when, patient, phone, status, comment.
-_WHEN, _PATIENT, _PHONE, _STATUS, _NOTE = 1, 3, 5, 7, 8
-TABLE_HEADER = {
-    _WHEN: "Kun · sana · vaqt",
-    _PATIENT: "Bemor",
-    _PHONE: "Telefon",
-    _STATUS: "Status",
-    _NOTE: "Izoh",
-}
 
 # --- formulas ----------------------------------------------------------------------
 
@@ -123,59 +73,39 @@ def separator_for(locale: str | None) -> str:
     return "," if (locale or "en").split("_")[0].lower() in dot_decimal else ";"
 
 
-def _month_dates(year: int, month: int) -> tuple[str, str]:
-    """DATE() of the first day, and of the first day after -- December's
-    "after" is DATE(year, 13, 1), which Sheets rolls into January."""
-    return f"DATE({year}, {month}, 1)", f"DATE({year}, {month + 1}, 1)"
+def _where(year: int, month: int) -> str:
+    """The row of the month's line in Qabullar, or an error if it has none."""
+    return f'MATCH("{label(year, month)}", {APPOINTMENT_SHEET}!A:A, 0)'
 
 
-# Qabullar's Sana as a real day: a date cell as it is, a date typed as text
-# ("2026-09-26" -- two rows on the live sheet) read as one, anything else 0,
-# which no month matches. Inside ARRAYFORMULA because LET does not spread
-# IF over a range by itself.
-_DAYS = (
-    f"ARRAYFORMULA(IF(ISNUMBER({APPOINTMENT_SHEET}!C2:C), {APPOINTMENT_SHEET}!C2:C, "
-    f"IFERROR(DATEVALUE({APPOINTMENT_SHEET}!C2:C), 0)))"
-)
+def _link(book_gid: int, year: int, month: int, text: str) -> str:
+    return f'HYPERLINK("#gid={book_gid}&range=A" & {_where(year, month)}, {text})'
 
 
-def month_formula(year: int, month: int) -> str:
-    """The month's bookings as eight grid columns, B to I.
+def tile_name(book_gid: int, year: int, month: int) -> str:
+    """The month's name: a link to its line once it has one, plain before."""
+    name = f'"{MONTHS_UZ[month - 1]}"'
+    return f"=IFERROR({_link(book_gid, year, month, name)}, {name})"
 
-    Sorted by day and time. UNIQUE because the live book holds hand-made
-    copies of rows; a copy that matches exactly is one booking, and a copy
-    that differs stays visible so the difference can be seen. The gap
-    columns get empty strings, so the table lines up under the tiles.
-    """
-    first, after = _month_dates(year, month)
-    book = APPOINTMENT_SHEET
-    when = (
-        f'INDEX(SPLIT("{WEEKDAYS}", ","), 1, WEEKDAY(day, 2)) & ", " & '
-        f'TEXT(day, "dd.mm") & "  ·  " & TEXT(slot, "hh:mm")'
+
+def tile_count(book_gid: int, year: int, month: int) -> str:
+    """ "12 ta qabul →" under a month with a line; "Tez orada" before."""
+    days = f"{APPOINTMENT_SHEET}!C:C"
+    count = (
+        f'COUNTIFS({days}, ">=" & DATE({year}, {month}, 1), '
+        f'{days}, "<" & DATE({year}, {month + 1}, 1))'
     )
-    return (
-        f"=LET(d, {_DAYS}, "
-        f"s, SORT(UNIQUE(FILTER(HSTACK(d, {book}!D2:D, {book}!A2:A, {book}!B2:B, {book}!F2:G), "
-        f"d >= {first}, d < {after})), 1, TRUE, 2, TRUE), "
-        f'gap, MAP(CHOOSECOLS(s, 1), LAMBDA(x, "")), '
-        f"IFERROR(HSTACK("
-        f"MAP(CHOOSECOLS(s, 1), CHOOSECOLS(s, 2), LAMBDA(day, slot, {when})), gap, "
-        f"CHOOSECOLS(s, 3), gap, CHOOSECOLS(s, 4), gap, CHOOSECOLS(s, 5), CHOOSECOLS(s, 6)"
-        f'), "{EMPTY_MONTH}"))'
-    )
+    text = f'{count} & " ta qabul  →"'
+    return f'=IFERROR({_link(book_gid, year, month, text)}, "Tez orada")'
 
 
-def month_title(year: int, month: int) -> str:
-    return f"{MONTHS_UZ[month - 1]} {year}"
+def _has_line(year: int, month: int) -> str:
+    """For a colour rule, which can reach another sheet only through INDIRECT."""
+    return f'ISNUMBER(MATCH("{label(year, month)}", INDIRECT("{APPOINTMENT_SHEET}!A:A"), 0))'
 
 
-def _a1(row: int, column: int) -> str:
-    """0-based (row, column) as an A1 reference."""
-    return f"{chr(ord('A') + column)}{row + 1}"
-
-
-def _jump(home_gid: int, row: int, column: int, text: str) -> str:
-    return f'=HYPERLINK("#gid={home_gid}&range={_a1(row, column)}", "{text}")'
+def _is_now(year: int, month: int) -> str:
+    return f"AND(YEAR(TODAY()) = {year}, MONTH(TODAY()) = {month})"
 
 
 # --- what goes where -------------------------------------------------------------------
@@ -187,69 +117,21 @@ def tile_position(month: int) -> tuple[int, int]:
     return _FIRST_TILE_ROW + (index // 4) * 3, _TILE_COLUMNS[index % 4]
 
 
-def section_rows(months: Sequence[int]) -> dict[int, int]:
-    """The first row of each month's section, in calendar order."""
-    return {
-        month: FIRST_SECTION_ROW + index * SECTION_ROWS
-        for index, month in enumerate(sorted(set(months)))
-    }
-
-
-def _status_range(top: int) -> str:
-    first = top + _DATA
-    column = chr(ord("A") + _STATUS)
-    return f"{column}{first + 1}:{column}{first + SECTION_ROWS - _DATA}"
-
-
-def home_values(year: int, months: Sequence[int], home_gid: int) -> dict[tuple[int, int], str]:
-    """Cell (row, column) -> what it holds, for the whole of Home."""
-    sections = section_rows(months)
+def home_values(year: int, book_gid: int) -> dict[tuple[int, int], str]:
+    """Cell (row, column) -> what it holds."""
     cells: dict[tuple[int, int], str] = {
         (1, 1): "Dr. Temur — qabullar",
-        (2, 1): "Oyni tanlang: o‘sha oyning qabullari shu sahifada ochiladi.",
+        (2, 1): "Oyni tanlang: o‘sha oyning qabullari Qabullar varag‘ida ochiladi.",
         (_YEAR_ROW, 1): str(year),
     }
     for month in range(1, 13):
         row, column = tile_position(month)
-        name = MONTHS_UZ[month - 1]
-        top = sections.get(month)
-        if top is None:
-            cells[(row, column)] = name
-            cells[(row + 1, column)] = "Tez orada"
-            continue
-        cells[(row, column)] = _jump(home_gid, top, 0, name)
-        # The section's own "Jami", so the tile and the table cannot disagree.
-        total = _a1(top + _KPI_VALUES, _WHEN)
-        cells[(row + 1, column)] = (
-            f'=HYPERLINK("#gid={home_gid}&range={_a1(top, 0)}", {total} & " ta qabul  →")'
-        )
+        cells[(row, column)] = tile_name(book_gid, year, month)
+        cells[(row + 1, column)] = tile_count(book_gid, year, month)
     footer = tile_position(12)[0] + 3
     cells[(footer, 1)] = (
-        "Yangi qabullar bot orqali Qabullar varag‘iga tushadi va shu yerda o‘zi paydo bo‘ladi."
+        "Yangi qabullar bot orqali o‘z oyiga tushadi; yangi oy boshlansa, u shu yerda o‘zi yonadi."
     )
-
-    for month, top in sections.items():
-        statuses = _status_range(top)
-        cells[(top + _TITLE, _WHEN)] = f"{month_title(year, month)} — qabullar"
-        # To the page title, B2, not A1: a link to A1 on the page already
-        # open did not take the clinic back up, where one to B2 -- like the
-        # tile's own link down -- does.
-        cells[(top + _TITLE, _STATUS)] = _jump(home_gid, _TOP[0], _TOP[1], CLOSE)
-        cells[(top + _KPI_LABELS, _WHEN)] = "Jami"
-        cells[(top + _KPI_LABELS, _PATIENT)] = "Kutilmoqda"
-        cells[(top + _KPI_LABELS, _PHONE)] = "Keldi · Kelmadi"
-        cells[(top + _KPI_LABELS, _STATUS)] = "Bekor qilindi"
-        # Counted on Status: every booking has one, and an empty month's
-        # one line of text is in the first column, not this one.
-        cells[(top + _KPI_VALUES, _WHEN)] = f"=COUNTA({statuses})"
-        cells[(top + _KPI_VALUES, _PATIENT)] = f'=COUNTIF({statuses}, "Kutilmoqda")'
-        cells[(top + _KPI_VALUES, _PHONE)] = (
-            f'=COUNTIF({statuses}, "Keldi") & "  ·  " & COUNTIF({statuses}, "Kelmadi")'
-        )
-        cells[(top + _KPI_VALUES, _STATUS)] = f'=COUNTIF({statuses}, "Bekor qilindi")'
-        for column, label in TABLE_HEADER.items():
-            cells[(top + _HEADER, column)] = label
-        cells[(top + _DATA, _WHEN)] = month_formula(year, month)
     return cells
 
 
@@ -270,14 +152,12 @@ def _format(range_: dict[str, int], fmt: dict[str, Any], fields: str) -> dict[st
     return {"repeatCell": {"range": range_, "cell": {"userEnteredFormat": fmt}, "fields": fields}}
 
 
-def _text(
-    size: int = 10, bold: bool = False, colour: str = INK, underline: bool = False
-) -> dict[str, Any]:
+def _text(size: int = 10, bold: bool = False, colour: str = INK) -> dict[str, Any]:
     return {
         "fontFamily": "Inter",
         "fontSize": size,
         "bold": bold,
-        "underline": underline,
+        "underline": False,
         "foregroundColorStyle": {"rgbColor": _rgb(colour)},
     }
 
@@ -307,216 +187,90 @@ def _width(gid: int, column: int, pixels: int) -> dict[str, Any]:
     }
 
 
+def _rule(
+    range_: dict[str, int], formula: str, fill: str, ink: str, bold: bool, separator: str
+) -> dict[str, Any]:
+    return {
+        "addConditionalFormatRule": {
+            "rule": {
+                "ranges": [range_],
+                "booleanRule": {
+                    "condition": {
+                        "type": "CUSTOM_FORMULA",
+                        "values": [{"userEnteredValue": localise("=" + formula, separator)}],
+                    },
+                    "format": {
+                        "backgroundColorStyle": {"rgbColor": _rgb(fill)},
+                        "textFormat": {
+                            "foregroundColorStyle": {"rgbColor": _rgb(ink)},
+                            "bold": bold,
+                        },
+                    },
+                },
+            },
+            "index": 0,
+        }
+    }
+
+
 _TEXT_FIELDS = "userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment)"
-_FILL_FIELDS = (
-    "userEnteredFormat(backgroundColorStyle,textFormat,horizontalAlignment,verticalAlignment)"
-)
 _TILE_FIELDS = (
     "userEnteredFormat(backgroundColorStyle,textFormat,horizontalAlignment,"
     "verticalAlignment,padding)"
 )
 
 
-def _tile_requests(gid: int, pages: set[int], current: int | None) -> list[dict[str, Any]]:
-    """Twelve tiles. The current month solid teal; a month with a section
-    white with a teal edge; a month without one grey."""
-    requests: list[dict[str, Any]] = []
-    for month in range(1, 13):
-        row, column = tile_position(month)
-        built = month in pages
-        if month == current and built:
-            fill, name_colour, count_colour, edge = TEAL, WHITE, TEAL_SOFT, TEAL
-        elif built:
-            fill, name_colour, count_colour, edge = WHITE, TEAL, MUTED, TEAL
-        else:
-            fill, name_colour, count_colour, edge = NOT_YET, FAINT, FAINT, LINE
-        background = {"backgroundColorStyle": {"rgbColor": _rgb(fill)}}
-        requests += [
-            _format(
-                _cell_range(gid, row, column),
-                {
-                    **background,
-                    "textFormat": _text(15, True, name_colour),
-                    "horizontalAlignment": "LEFT",
-                    "verticalAlignment": "BOTTOM",
-                    "padding": {"left": 14, "top": 6},
-                },
-                _TILE_FIELDS,
-            ),
-            _format(
-                _cell_range(gid, row + 1, column),
-                {
-                    **background,
-                    "textFormat": _text(10, False, count_colour),
-                    "horizontalAlignment": "LEFT",
-                    "verticalAlignment": "TOP",
-                    "padding": {"left": 14, "bottom": 6},
-                },
-                _TILE_FIELDS,
-            ),
-            {
-                "updateBorders": {
-                    "range": _cell_range(gid, row, column, rows=2),
-                    **{
-                        side: {"style": "SOLID", "colorStyle": {"rgbColor": _rgb(edge)}}
-                        for side in ("top", "bottom", "left", "right")
-                    },
-                }
-            },
-        ]
-    for block in range(3):
-        top = _FIRST_TILE_ROW + block * 3
-        requests += [
-            _height(gid, top, top + 1, 46),
-            _height(gid, top + 1, top + 2, 30),
-            _height(gid, top + 2, top + 3, 18),
-        ]
-    return requests
-
-
-def _section_requests(gid: int, top: int) -> list[dict[str, Any]]:
-    """A month's section: title and ✕, the numbers, then the table."""
-    data = top + _DATA
-    rows = SECTION_ROWS - _DATA
-    table = _cell_range(gid, data, 1, rows=rows, cols=8)
-    requests: list[dict[str, Any]] = [
-        {
-            "mergeCells": {
-                "range": _cell_range(gid, top + _TITLE, 1, cols=5),
-                "mergeType": "MERGE_ALL",
-            }
-        },
+def _tile(gid: int, year: int, month: int, separator: str) -> list[dict[str, Any]]:
+    """One tile: grey until its month has a line in Qabullar; then white
+    with teal; solid teal while the calendar is in that month."""
+    row, column = tile_position(month)
+    name, count = _cell_range(gid, row, column), _cell_range(gid, row + 1, column)
+    grey = {"backgroundColorStyle": {"rgbColor": _rgb(NOT_YET)}}
+    exists = _has_line(year, month)
+    now = f"AND({exists}, {_is_now(year, month)})"
+    return [
         _format(
-            _cell_range(gid, top + _TITLE, 1),
-            {"textFormat": _text(20, True), "verticalAlignment": "MIDDLE"},
-            _TEXT_FIELDS,
+            name,
+            {
+                **grey,
+                "textFormat": _text(15, True, FAINT),
+                "horizontalAlignment": "LEFT",
+                "verticalAlignment": "BOTTOM",
+                "padding": {"left": 14, "top": 6},
+            },
+            _TILE_FIELDS,
         ),
-        # The ✕: a pill, at the top right of the table.
         _format(
-            _cell_range(gid, top + _TITLE, _STATUS),
+            count,
             {
-                "backgroundColorStyle": {"rgbColor": _rgb(NOT_YET)},
-                "textFormat": _text(11, True, INK),
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE",
+                **grey,
+                "textFormat": _text(10, False, FAINT),
+                "horizontalAlignment": "LEFT",
+                "verticalAlignment": "TOP",
+                "padding": {"left": 14, "bottom": 6},
             },
-            _FILL_FIELDS,
+            _TILE_FIELDS,
         ),
         {
             "updateBorders": {
-                "range": _cell_range(gid, top + _TITLE, _STATUS),
+                "range": _cell_range(gid, row, column, rows=2),
                 **{
                     side: {"style": "SOLID", "colorStyle": {"rgbColor": _rgb(LINE)}}
                     for side in ("top", "bottom", "left", "right")
                 },
             }
         },
-        {
-            "updateBorders": {
-                "range": _cell_range(gid, top + _TITLE, 1, cols=8),
-                "top": {"style": "SOLID_MEDIUM", "colorStyle": {"rgbColor": _rgb(TEAL)}},
-            }
-        },
-        _format(
-            _cell_range(gid, top + _KPI_LABELS, 1, cols=8),
-            {"textFormat": _text(9, True, MUTED), "horizontalAlignment": "LEFT"},
-            _TEXT_FIELDS,
-        ),
-        _format(
-            _cell_range(gid, top + _KPI_VALUES, 1, cols=8),
-            {"textFormat": _text(18, True), "horizontalAlignment": "LEFT"},
-            _TEXT_FIELDS,
-        ),
-        _format(
-            _cell_range(gid, top + _HEADER, 1, cols=8),
-            {
-                "backgroundColorStyle": {"rgbColor": _rgb(TEAL)},
-                "textFormat": _text(10, True, WHITE),
-                "horizontalAlignment": "LEFT",
-                "verticalAlignment": "MIDDLE",
-            },
-            _FILL_FIELDS,
-        ),
-        _format(
-            table,
-            {
-                "textFormat": _text(10),
-                "horizontalAlignment": "LEFT",
-                "verticalAlignment": "MIDDLE",
-                "wrapStrategy": "CLIP",
-            },
-            "userEnteredFormat(textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)",
-        ),
-        _format(
-            _cell_range(gid, data, _WHEN, rows=rows),
-            {"textFormat": _text(10, True, TEAL)},
-            "userEnteredFormat.textFormat",
-        ),
-        _height(gid, top + _TITLE, top + _TITLE + 1, 56),
-        _height(gid, top + _TITLE + 1, top + _KPI_LABELS, 10),
-        _height(gid, top + _KPI_VALUES, top + _KPI_VALUES + 1, 36),
-        _height(gid, top + _HEADER, top + _HEADER + 1, 32),
-        _height(gid, data, data + rows, 28),
-        # Quiet stripes on filled rows only; a formula with no separator in
-        # it, so the locale cannot break it.
-        {
-            "addConditionalFormatRule": {
-                "rule": {
-                    "ranges": [table],
-                    "booleanRule": {
-                        "condition": {
-                            "type": "CUSTOM_FORMULA",
-                            "values": [{"userEnteredValue": f'=($H{data + 1}<>"")*ISEVEN(ROW())'}],
-                        },
-                        "format": {"backgroundColorStyle": {"rgbColor": _rgb(BAND)}},
-                    },
-                },
-                "index": 0,
-            }
-        },
+        # Each added at index 0, so the one added last is checked first:
+        # "this month" wins over "has a line".
+        _rule(name, exists, WHITE, TEAL, True, separator),
+        _rule(count, exists, WHITE, MUTED, False, separator),
+        _rule(name, now, TEAL, WHITE, True, separator),
+        _rule(count, now, TEAL, TEAL_SOFT, False, separator),
     ]
-    for name in STATUS_CHOICES:
-        fill, text = STATUS_COLOURS[name]
-        requests.append(
-            {
-                "addConditionalFormatRule": {
-                    "rule": {
-                        "ranges": [_cell_range(gid, data, _STATUS, rows=rows)],
-                        "booleanRule": {
-                            "condition": {
-                                "type": "TEXT_EQ",
-                                "values": [{"userEnteredValue": name}],
-                            },
-                            "format": {
-                                "backgroundColorStyle": {"rgbColor": _rgb(fill)},
-                                "textFormat": {
-                                    "foregroundColorStyle": {"rgbColor": _rgb(text)},
-                                    "bold": True,
-                                },
-                            },
-                        },
-                    },
-                    "index": 0,
-                }
-            }
-        )
-    # The numbers in their status colours, read at a glance.
-    for column, name in ((_PATIENT, "Kutilmoqda"), (_STATUS, "Bekor qilindi")):
-        requests.append(
-            _format(
-                _cell_range(gid, top + _KPI_VALUES, column),
-                {"textFormat": _text(18, True, STATUS_COLOURS[name][1])},
-                "userEnteredFormat.textFormat",
-            )
-        )
-    return requests
 
 
-def home_requests(
-    gid: int, year: int, months: Sequence[int], current: int | None
-) -> list[dict[str, Any]]:
-    """The look of Home, top to bottom."""
-    sections = section_rows(months)
+def home_requests(gid: int, year: int, separator: str) -> list[dict[str, Any]]:
+    """The look of Home: title, year, twelve tiles, a footnote."""
     requests: list[dict[str, Any]] = [
         {
             "updateSheetProperties": {
@@ -562,13 +316,19 @@ def home_requests(
         _height(gid, _YEAR_ROW + 1, _YEAR_ROW + 2, 18),
     ]
     requests.extend(_width(gid, index, width) for index, width in enumerate(_WIDTHS))
-    requests += _tile_requests(gid, set(sections), current)
+    for month in range(1, 13):
+        requests += _tile(gid, year, month, separator)
+    for block in range(3):
+        top = _FIRST_TILE_ROW + block * 3
+        requests += [
+            _height(gid, top, top + 1, 46),
+            _height(gid, top + 1, top + 2, 30),
+            _height(gid, top + 2, top + 3, 18),
+        ]
     footer = tile_position(12)[0] + 3
     requests.append(
         _format(_cell_range(gid, footer, 1), {"textFormat": _text(9, colour=FAINT)}, _TEXT_FIELDS)
     )
-    for top in sections.values():
-        requests += _section_requests(gid, top)
     return requests
 
 
@@ -584,11 +344,6 @@ def _grid(cells: dict[tuple[int, int], str], separator: str) -> list[list[str]]:
     return grid
 
 
-def rows_needed(months: Sequence[int]) -> int:
-    sections = section_rows(months)
-    return max(sections.values(), default=FIRST_SECTION_ROW) + SECTION_ROWS
-
-
 class SheetPages:
     """Builds Home in the clinic's spreadsheet."""
 
@@ -600,17 +355,14 @@ class SheetPages:
     ) -> dict[str, Any]:
         return await self._mirror._call(client, "POST", ":batchUpdate", json={"requests": requests})
 
-    async def publish(self, year: int, months: Sequence[int], current: int | None = None) -> int:
-        """Rebuild Home with a section for each of `months`. Returns Home's id.
+    async def publish(self, year: int) -> int:
+        """Rebuild Home for `year`. Returns Home's id.
 
-        Home keeps its id -- links point at it, and somebody may have
-        bookmarked it -- and is cleared in place: values, formats, merges,
-        colour rules. A month tab from the earlier design, one tab per month,
-        is removed: the month lives on Home now.
+        Home keeps its id and is cleared in place -- values, formats,
+        merges, colour rules -- so a second run draws it once, not twice.
+        Month tabs from an earlier design are removed: the months live in
+        Qabullar now.
         """
-        for month in months:
-            if not 1 <= month <= 12:
-                raise ValueError(f"no month {month}")
         async with httpx.AsyncClient(timeout=30) as client:
             body = await self._mirror._call(
                 client,
@@ -623,10 +375,13 @@ class SheetPages:
             )
             separator = separator_for(body.get("properties", {}).get("locale"))
             sheets = {s["properties"]["title"]: s for s in body.get("sheets", [])}
+            if APPOINTMENT_SHEET not in sheets:
+                raise ValueError(f"no {APPOINTMENT_SHEET} sheet to point the months at")
+            book_gid = int(sheets[APPOINTMENT_SHEET]["properties"]["sheetId"])
 
             old_tabs = [
                 sheets[title]["properties"]["sheetId"]
-                for title in (month_title(year, m) for m in range(1, 13))
+                for title in (label(year, m) for m in range(1, 13))
                 if title in sheets
             ]
             if old_tabs:
@@ -634,15 +389,14 @@ class SheetPages:
 
             if HOME_SHEET in sheets:
                 home = sheets[HOME_SHEET]
-                gid = home["properties"]["sheetId"]
+                gid = int(home["properties"]["sheetId"])
             else:
                 reply = await self._batch(
                     client, [{"addSheet": {"properties": {"title": HOME_SHEET, "index": 0}}}]
                 )
                 home = {}
-                gid = reply["replies"][0]["addSheet"]["properties"]["sheetId"]
+                gid = int(reply["replies"][0]["addSheet"]["properties"]["sheetId"])
 
-            have = home.get("properties", {}).get("gridProperties", {}).get("rowCount", 1000)
             reset: list[dict[str, Any]] = [
                 {"deleteConditionalFormatRule": {"sheetId": gid, "index": 0}}
                 for _ in home.get("conditionalFormats") or []
@@ -656,17 +410,10 @@ class SheetPages:
                     }
                 }
             )
-            need = rows_needed(months)
-            if have < need:
-                reset.append(
-                    {
-                        "appendDimension": {
-                            "sheetId": gid,
-                            "dimension": "ROWS",
-                            "length": need - have,
-                        }
-                    }
-                )
+            # Row heights below the tiles back to ordinary: an earlier design
+            # drew month sections there.
+            grid = home.get("properties", {}).get("gridProperties", {})
+            reset.append(_height(gid, 17, int(grid.get("rowCount", 1000)), 21))
             await self._batch(client, reset)
 
             await self._mirror._call(
@@ -674,22 +421,21 @@ class SheetPages:
                 "PUT",
                 f"/values/'{HOME_SHEET}'!A1",
                 params={"valueInputOption": "USER_ENTERED"},
-                json={"values": _grid(home_values(year, months, gid), separator)},
+                json={"values": _grid(home_values(year, book_gid), separator)},
             )
-            await self._batch(client, home_requests(gid, year, months, current))
-            logger.info("sheet_home_built months=%s removed_tabs=%d", sorted(months), len(old_tabs))
-            return int(gid)
+            await self._batch(client, home_requests(gid, year, separator))
+            logger.info("sheet_home_built year=%d removed_tabs=%d", year, len(old_tabs))
+            return gid
 
 
 async def _main(argv: Sequence[str]) -> None:
-    year, *months = (int(value) for value in argv)
-    await SheetPages().publish(year, months, current=months[-1] if months else None)
+    await SheetPages().publish(int(argv[0]))
 
 
 if __name__ == "__main__":  # pragma: no cover - a command, run by hand
     logging.basicConfig(level=logging.INFO)
-    if len(sys.argv) < 3:
-        print("usage: python -m app.services.sheet_pages YEAR MONTH [MONTH ...]")
+    if len(sys.argv) != 2:
+        print("usage: python -m app.services.sheet_pages YEAR")
         sys.exit(2)
     asyncio.run(_main(sys.argv[1:]))
     print("done")
