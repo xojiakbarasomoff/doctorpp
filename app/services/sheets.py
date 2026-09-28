@@ -41,7 +41,7 @@ import httpx
 from google.oauth2 import service_account
 
 from app.core.config import Settings, get_settings
-from app.services import sheet_months
+from app.services import complaint_terms, sheet_months
 from app.services.appointment import CLINIC_TIMEZONE
 from app.services.conversation_signals import looks_like_a_greeting, looks_like_a_phone_number
 
@@ -610,7 +610,9 @@ class AppointmentRow:
         parts = []
         if self.cancel_reason and self.status == "cancelled":
             parts.append(f"Bekor: {self.cancel_reason.strip()}")
-        note = (self.note or "").strip()
+        # Under its medical name, so one condition is one word in the column
+        # (see app.services.complaint_terms).
+        note = complaint_terms.canonical((self.note or "").strip())
         if note:
             parts.append(note)
         comment = " \u00b7 ".join(parts).replace(chr(10), " ")
