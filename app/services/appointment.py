@@ -3,7 +3,7 @@ import uuid
 from collections import Counter
 from collections.abc import Collection, Iterator, Sequence
 from datetime import UTC, date, datetime, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ class DoctorDayOffError(Exception):
         super().__init__(f"doctor is off that day: {scheduled_at.isoformat()}")
 
 
-def days_off_from(settings: dict) -> set[date]:
+def days_off_from(settings: dict[str, Any]) -> set[date]:
     days: set[date] = set()
     for raw in settings.get(DAYS_OFF_KEY, []) or []:
         try:

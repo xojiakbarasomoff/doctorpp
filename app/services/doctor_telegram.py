@@ -274,7 +274,9 @@ def _allowed(username: str | None, settings: Settings) -> bool:
         for name in settings.doctor_telegram_usernames.split(",")
         if name.strip()
     }
-    return bool(username) and username.lstrip("@").lower() in wanted
+    if not username:
+        return False
+    return username.lstrip("@").lower() in wanted
 
 
 async def _tenant(session: AsyncSession, settings: Settings) -> Tenant | None:

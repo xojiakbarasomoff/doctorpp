@@ -13,7 +13,9 @@ Every time is bucketed in the clinic's own time zone. A patient who writes at
 import statistics
 import uuid
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -119,7 +121,9 @@ def _percent(part: int, whole: int) -> float:
     return round(100 * part / whole, 1) if whole else 0.0
 
 
-async def _figures(session: AsyncSession, tenant_id: uuid.UUID, start: date, end: date) -> dict:
+async def _figures(
+    session: AsyncSession, tenant_id: uuid.UUID, start: date, end: date
+) -> dict[str, Any]:
     """Everything the report counts, for one period."""
     since, until = _bounds(start, end)
 
@@ -135,8 +139,9 @@ async def _figures(session: AsyncSession, tenant_id: uuid.UUID, start: date, end
             .order_by(Message.conversation_id, Message.created_at)
         )
     ).all()
-    conversation_user = dict(
-        (
+    conversation_user: dict[uuid.UUID, uuid.UUID] = {
+        conversation_id: user_id
+        for conversation_id, user_id in (
             await session.execute(
                 select(Conversation.id, Conversation.user_id).where(
                     Conversation.tenant_id == tenant_id,
@@ -144,7 +149,7 @@ async def _figures(session: AsyncSession, tenant_id: uuid.UUID, start: date, end
                 )
             )
         ).all()
-    )
+    }
 
     patient_texts: dict[uuid.UUID, list[str]] = defaultdict(list)
     first_seen: dict[uuid.UUID, datetime] = {}
@@ -182,8 +187,9 @@ async def _figures(session: AsyncSession, tenant_id: uuid.UUID, start: date, end
                 waiting_since = None
 
     active = set(patient_texts)
-    earliest = dict(
-        (
+    earliest: dict[uuid.UUID, datetime] = {
+        user_id: first
+        for user_id, first in (
             await session.execute(
                 select(Conversation.user_id, func.min(Message.created_at))
                 .join(Message, Message.conversation_id == Conversation.id)
@@ -195,7 +201,7 @@ async def _figures(session: AsyncSession, tenant_id: uuid.UUID, start: date, end
                 .group_by(Conversation.user_id)
             )
         ).all()
-    )
+    }
     new_patients = {u for u in active if earliest.get(u) and earliest[u] >= since}
 
     appointments = (
@@ -317,7 +323,7 @@ async def report(
         reverse=True,
     )[:12]
 
-    def kpi(key: str, value_of=lambda v: v) -> Kpi:
+    def kpi(key: str, value_of: Callable[[Any], Any] = lambda v: v) -> Kpi:
         return Kpi(value=value_of(now[key]), previous=value_of(before[key]))
 
     return Report(

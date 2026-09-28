@@ -59,7 +59,7 @@ class OpenAILLMProvider(LLMProvider):
             messages=payload,
             **extra,
         )
-        content = response.choices[0].message.content
+        content: str | None = response.choices[0].message.content
         if content is None:
             raise ValueError("OpenAI chat completion returned no text content")
         return content

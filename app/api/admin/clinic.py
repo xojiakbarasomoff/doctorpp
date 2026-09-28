@@ -150,7 +150,7 @@ async def list_leads(
         if user_ids
         else {}
     )
-    return [_lead_out(lead, users.get(lead.user_id)) for lead in leads]
+    return [_lead_out(lead, users.get(lead.user_id) if lead.user_id else None) for lead in leads]
 
 
 @router.post(

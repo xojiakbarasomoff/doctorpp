@@ -94,8 +94,8 @@ async def ingest_faqs(
         faq
         for faq in validated
         if reembed_existing
-        or existing_rows[faq.question] is None
-        or existing_rows[faq.question].embedding_model != EMBEDDING_MODEL
+        or (row := existing_rows[faq.question]) is None
+        or row.embedding_model != EMBEDDING_MODEL
     ]
     provider = embedding_provider or get_embedding_provider()
     fresh = dict(
