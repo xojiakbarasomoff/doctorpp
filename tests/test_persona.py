@@ -100,9 +100,7 @@ def test_a_continuing_conversation_is_told_not_to_restart() -> None:
 
 
 def test_a_conversation_gone_quiet_for_a_day_is_told_to_greet_again() -> None:
-    state = PatientState(
-        name="Ali Valiyev", phone="+998901234567", continuing=True, long_gap=True
-    )
+    state = PatientState(name="Ali Valiyev", phone="+998901234567", continuing=True, long_gap=True)
 
     prompt = _render(state=state)
 

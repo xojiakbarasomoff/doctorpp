@@ -107,9 +107,7 @@ _NOT_A_NAME = frozenset(
 
 # A name is one to four words of letters. Somebody who types a sentence is
 # not answering "what is your name".
-_NAME_SHAPE = re.compile(
-    r"^[^\W\d_][\w'’ʻʼ`-]*(?:\s+[^\W\d_][\w'’ʻʼ`-]*){0,3}$", re.UNICODE
-)
+_NAME_SHAPE = re.compile(r"^[^\W\d_][\w'’ʻʼ`-]*(?:\s+[^\W\d_][\w'’ʻʼ`-]*){0,3}$", re.UNICODE)
 _MAX_NAME_LENGTH = 48
 
 # A correction: "ismim aslida ...", "yo'q, ismim ...". Only this replaces a
@@ -148,15 +146,21 @@ def looks_like_a_name(text: str) -> bool:
 # then answers "ok" was being answered in Uzbek again, because the language
 # was read out of each message rather than remembered.
 _ASKS_FOR = (
-    ("ru", re.compile(
-        r"rus(?:cha|\s*tilida|\s*tilda)|по[\s-]?русски|на\s+русском|русск\w*\s+язык",
-        re.IGNORECASE,
-    )),
-    ("uz-latn", re.compile(
-        r"o[o'’ʻ]?zbek(?:cha)?(?:\s*til\w*)?\s*(?:yoz|gapir|javob)"
-        r"|lotin(?:cha)?da|на\s+узбекском",
-        re.IGNORECASE,
-    )),
+    (
+        "ru",
+        re.compile(
+            r"rus(?:cha|\s*tilida|\s*tilda)|по[\s-]?русски|на\s+русском|русск\w*\s+язык",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "uz-latn",
+        re.compile(
+            r"o[o'’ʻ]?zbek(?:cha)?(?:\s*til\w*)?\s*(?:yoz|gapir|javob)"
+            r"|lotin(?:cha)?da|на\s+узбекском",
+            re.IGNORECASE,
+        ),
+    ),
     ("uz-cyrl", re.compile(r"кирилл(?:ча|ицей|ица)|кирил\w*\s*(?:ёз|яз)", re.IGNORECASE)),
 )
 
@@ -198,9 +202,7 @@ def read_turn(message: str, *, asked_for_name: bool) -> Found:
     if said is not None:
         name = said.group("name") or said.group("cyr") or said.group("ru")
         if name and looks_like_a_name(name):
-            return Found(
-                name=name.strip(), phone=phone, corrects=corrects, language=language
-            )
+            return Found(name=name.strip(), phone=phone, corrects=corrects, language=language)
 
     if not asked_for_name and phone is not None:
         # "Asadbek Risqiyev 93 951 11 11, buyrak og'rig'i, payshanba 12:00" --
@@ -210,9 +212,7 @@ def read_turn(message: str, *, asked_for_name: bool) -> Found:
         run = _PHONE_RUN.search(message)
         before = message[: run.start()].strip(" ,.-—\n") if run is not None else ""
         if before and looks_like_a_name(before):
-            return Found(
-                name=before, phone=phone, corrects=corrects, language=language
-            )
+            return Found(name=before, phone=phone, corrects=corrects, language=language)
 
     if asked_for_name:
         # The answer to "ismingizni yozing" is whatever is left once the
@@ -225,9 +225,7 @@ def read_turn(message: str, *, asked_for_name: bool) -> Found:
                 without_number = message.replace(run.group(0), " ")
         candidate = without_number.strip(" ,.-—\n")
         if looks_like_a_name(candidate):
-            return Found(
-                name=candidate, phone=phone, corrects=corrects, language=language
-            )
+            return Found(name=candidate, phone=phone, corrects=corrects, language=language)
         # "Asadbek Risqiyev, qabulga yozilmoqchiman" -- the name and then the
         # errand in one breath, which is how people answer this question. The
         # clause before the comma is the answer; the rest is the sentence

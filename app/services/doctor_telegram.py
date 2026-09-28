@@ -873,9 +873,7 @@ async def announce_new_bookings(api: BotAPI, session: AsyncSession, tenant: Tena
         # there is no chat to send to, and a clinic waiting for a booking
         # notification has no way of knowing that is why. The watermark is
         # still moved on below, exactly as when there is somebody to tell.
-        logger.warning(
-            "doctor_telegram_no_chats", extra={"tenant_id": str(tenant.id)}
-        )
+        logger.warning("doctor_telegram_no_chats", extra={"tenant_id": str(tenant.id)})
     if since is None or leads_since is None:
         # First run: start from now rather than announcing the whole history.
         tenant.settings = {

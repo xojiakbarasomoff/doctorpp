@@ -102,7 +102,7 @@ def test_the_doctor_is_told_who_sent_the_photo() -> None:
 
 
 def test_a_named_weekday_next_week_is_inside_the_book() -> None:
-    """"Man kelasi seshanba 10:00ga yozilmoqchiman" was answered "seshanba
+    """ "Man kelasi seshanba 10:00ga yozilmoqchiman" was answered "seshanba
     11:00 bu jadvalda yo'q" on a Friday, with next Tuesday entirely free:
     the book only looked three days ahead. People book around their own
     week, and a named weekday is further off than "ertaga" every time.

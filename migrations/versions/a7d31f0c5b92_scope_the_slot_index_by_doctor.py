@@ -49,6 +49,5 @@ def downgrade() -> None:
     # booked two doctors into the same slot cannot downgrade without first
     # cancelling one of them. Left to fail loudly rather than deleting rows.
     op.execute(
-        f"CREATE UNIQUE INDEX {_OLD} ON appointments "
-        f"(tenant_id, scheduled_at) WHERE {_ACTIVE}"
+        f"CREATE UNIQUE INDEX {_OLD} ON appointments " f"(tenant_id, scheduled_at) WHERE {_ACTIVE}"
     )

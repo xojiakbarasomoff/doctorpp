@@ -62,9 +62,7 @@ class Message(Base):
     # questions and no answers, and could not tell a bot that said nothing
     # from a bot whose answer never arrived. It is stored either way now,
     # and this column says which happened.
-    delivery_status: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="sent"
-    )
+    delivery_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="sent")
     delivery_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

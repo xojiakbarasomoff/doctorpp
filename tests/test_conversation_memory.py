@@ -234,14 +234,12 @@ async def test_a_reply_that_could_not_be_delivered_is_still_visible(
             .scalars()
             .all()
         )
-        for_the_model = await MessageRepository(db_session).list_recent(
-            seed.a.conversation.id, 20
-        )
+        for_the_model = await MessageRepository(db_session).list_recent(seed.a.conversation.id, 20)
 
     kept = [row for row in rows if row.content == text]
     assert len(kept) == 1, "the clinic must be able to see it"
     assert kept[0].delivery_status == str(DeliveryStatus.UNDELIVERABLE)
     assert kept[0].delivery_error == "outside the 24-hour window"
-    assert not any(m.content == text for m in for_the_model), (
-        "the model must not be told a turn the patient never received"
-    )
+    assert not any(
+        m.content == text for m in for_the_model
+    ), "the model must not be told a turn the patient never received"

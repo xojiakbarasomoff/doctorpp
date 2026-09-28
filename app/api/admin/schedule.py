@@ -212,9 +212,13 @@ async def cancel(
     await session.commit()
 
     told = await notify_patient_of_cancellation(session, appointment, settings=settings)
-    note = "Bemorga bekor qilingani haqida xabar yuborildi." if told else (
-        "Bemorga xabar yetkazilmadi (yozishma yopiq yoki telefon orqali yozilgan) "
-        "-- qo'ng'iroq qiling."
+    note = (
+        "Bemorga bekor qilingani haqida xabar yuborildi."
+        if told
+        else (
+            "Bemorga xabar yetkazilmadi (yozishma yopiq yoki telefon orqali yozilgan) "
+            "-- qo'ng'iroq qiling."
+        )
     )
     appointment.notes = f"{appointment.notes}\n{note}" if appointment.notes else note
     await session.commit()

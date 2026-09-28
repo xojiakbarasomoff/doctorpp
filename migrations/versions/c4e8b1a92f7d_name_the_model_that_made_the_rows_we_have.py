@@ -55,6 +55,5 @@ def downgrade() -> None:
     # ingest_faqs, which stamps the same name -- is not silently unclaimed and
     # then re-embedded for no reason.
     op.execute(
-        "UPDATE knowledge_base SET embedding_model = NULL "
-        f"WHERE embedding_model = '{_MODEL}'"
+        f"UPDATE knowledge_base SET embedding_model = NULL WHERE embedding_model = '{_MODEL}'"
     )

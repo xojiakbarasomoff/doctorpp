@@ -48,13 +48,9 @@ def upgrade() -> None:
             ["tenant_id"], ["tenants.id"], name=op.f("fk_knowledge_documents_tenant_id_tenants")
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_knowledge_documents")),
-        sa.UniqueConstraint(
-            "tenant_id", "filename", name="uq_knowledge_documents_tenant_filename"
-        ),
+        sa.UniqueConstraint("tenant_id", "filename", name="uq_knowledge_documents_tenant_filename"),
     )
-    op.create_index(
-        op.f("ix_knowledge_documents_tenant_id"), "knowledge_documents", ["tenant_id"]
-    )
+    op.create_index(op.f("ix_knowledge_documents_tenant_id"), "knowledge_documents", ["tenant_id"])
 
     op.create_table(
         "knowledge_chunks",

@@ -38,12 +38,8 @@ def upgrade() -> None:
             server_default="sent",
         ),
     )
-    op.add_column(
-        "messages", sa.Column("delivery_error", sa.String(length=255), nullable=True)
-    )
-    op.add_column(
-        "users", sa.Column("preferred_language", sa.String(length=16), nullable=True)
-    )
+    op.add_column("messages", sa.Column("delivery_error", sa.String(length=255), nullable=True))
+    op.add_column("users", sa.Column("preferred_language", sa.String(length=16), nullable=True))
 
 
 def downgrade() -> None:

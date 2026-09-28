@@ -152,9 +152,7 @@ async def test_uploading_a_name_again_replaces_the_old_file_rather_than_adding_t
     as_tenant: Callable[[UUID], AbstractContextManager[None]],
 ) -> None:
     first = await _upload(db_session, seed, as_tenant, "narxlar.csv", PRICES)
-    second = await _upload(
-        db_session, seed, as_tenant, "narxlar.csv", b"Xizmat,Narx\nUZI,999000"
-    )
+    second = await _upload(db_session, seed, as_tenant, "narxlar.csv", b"Xizmat,Narx\nUZI,999000")
 
     with as_tenant(seed.tenant_a.id):
         documents = await KnowledgeDocumentRepository(db_session).list_newest()

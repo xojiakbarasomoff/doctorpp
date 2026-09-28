@@ -77,8 +77,9 @@ async def _out(session: AsyncSession, suggestions: list[Suggestion]) -> list[Sug
 
 async def _own(session: AsyncSession, suggestion_id: uuid.UUID) -> Suggestion:
     suggestion = await session.scalar(
-        select(Suggestion)
-        .where(Suggestion.id == suggestion_id, Suggestion.tenant_id == get_current_tenant())
+        select(Suggestion).where(
+            Suggestion.id == suggestion_id, Suggestion.tenant_id == get_current_tenant()
+        )
         # Two people deciding the same card at once: the second waits, then
         # finds it decided.
         .with_for_update()

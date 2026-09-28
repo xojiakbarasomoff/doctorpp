@@ -97,7 +97,7 @@ def test_ordinary_replies_are_never_flagged(reply: str) -> None:
 
 
 def test_a_clock_is_never_read_as_a_dose() -> None:
-    """"16:20" once read as twenty grams; the class is closed, not the one report."""
+    """ "16:20" once read as twenty grams; the class is closed, not the one report."""
     assert check("Sizni 16:20ga yozdim.") is None
     assert check("Ertaga 9.20 da keling.") is None
 

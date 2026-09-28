@@ -220,9 +220,7 @@ def _confirmation(
     facts_stored: bool,
 ) -> str:
     lines: list[str] = []
-    changed = bool(
-        change.added or change.removed or (interpretation.facts and facts_stored)
-    )
+    changed = bool(change.added or change.removed or (interpretation.facts and facts_stored))
     if not interpretation.understood:
         lines.append(
             "Matnni tahlil qila olmadim, shuning uchun yozganingizni aynan shu "
@@ -233,8 +231,7 @@ def _confirmation(
         # over a list that did not change, is an admin told "done" about
         # something that was not -- the one thing this reply must not do.
         lines.append(
-            "Hech narsa o'zgarmadi. "
-            + (interpretation.summary or "Bu allaqachon qoidalarda bor.")
+            "Hech narsa o'zgarmadi. " + (interpretation.summary or "Bu allaqachon qoidalarda bor.")
         )
     elif interpretation.summary:
         lines.append(f"Tushundim: {interpretation.summary}")
@@ -242,9 +239,7 @@ def _confirmation(
     if change.added:
         lines.append("Eslab qoldim:\n" + "\n".join(f"- {rule}" for rule in change.added))
     if change.removed:
-        lines.append(
-            "Endi amal qilmayman:\n" + "\n".join(f"- {rule}" for rule in change.removed)
-        )
+        lines.append("Endi amal qilmayman:\n" + "\n".join(f"- {rule}" for rule in change.removed))
     if interpretation.facts:
         if facts_stored:
             lines.append(

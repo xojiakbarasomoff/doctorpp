@@ -41,9 +41,7 @@ def _pdf(pages: list[str]) -> bytes:
                 "/Resources << /Font << /F1 3 0 R >> >> >>"
             ).encode()
         )
-        objects.append(
-            f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream"
-        )
+        objects.append(f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream")
     out = bytearray(b"%PDF-1.4\n")
     offsets: list[int] = []
     for number, body in enumerate(objects, start=1):
@@ -129,7 +127,7 @@ def test_markdown_headings_label_what_follows_them() -> None:
 
 @pytest.mark.parametrize("delimiter", [",", ";", "\t"])
 def test_a_price_list_is_written_one_labelled_row_per_line(delimiter: str) -> None:
-    """"150000" is not an answer; "Xizmat: UZI; Narx: 150000" is."""
+    """ "150000" is not an answer; "Xizmat: UZI; Narx: 150000" is."""
     rows = [["Xizmat", "Narx"], ["UZI", "150000"], ["EKG", "80000"]]
     data = "\n".join(delimiter.join(row) for row in rows).encode()
 

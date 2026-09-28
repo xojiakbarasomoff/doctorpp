@@ -45,7 +45,7 @@ pytestmark = pytest.mark.skipif(
 # knows nothing -- and duly reports that it answers "bizda ma'lumot yo'q".
 CLINIC_RULES = [
     "UZI ni shifokorning o'zi qiladi (buyrak, siydik pufagi, prostata). "
-    "Bemor \"UZI qilasizmi?\" deb so'rasa, aniq \"ha, shifokorning o'zi qiladi\" deb javob bering.",
+    'Bemor "UZI qilasizmi?" deb so\'rasa, aniq "ha, shifokorning o\'zi qiladi" deb javob bering.',
     "Shifokor kattalarni qabul qiladi — erkaklarni ham, ayollarni ham, urologik "
     "muammolar bilan. Bolalar uchun bolalar urologiga murojaat qilish kerakligini "
     "ayting va klinika raqamini bering.",
@@ -54,7 +54,7 @@ CLINIC_RULES = [
     "vaqtga yozilgan bemor o'z vaqtida kiradi.",
     "Klinika yonida mashina qo'yish joyi bor.",
     "Narx, UZI ga tayyorgarlik va shunga o'xshash aniq savollar telefon orqali hal "
-    "qilinadi: +998 70 310 40 40. Hech qachon \"tekshirib beraman\", \"aniqlab beraman\" "
+    'qilinadi: +998 70 310 40 40. Hech qachon "tekshirib beraman", "aniqlab beraman" '
     "deb va'da bermang — buni qila olmaysiz.",
 ]
 

@@ -133,6 +133,4 @@ async def retrieve_knowledge(
         for match in await KnowledgeBaseRepository(session).search(query_embedding, limit=5)
         if match.distance <= DEFAULT_MAX_DISTANCE
     ]
-    return Knowledge(
-        faqs=faqs, chunks=await retrieve_relevant_chunks(session, query_embedding)
-    )
+    return Knowledge(faqs=faqs, chunks=await retrieve_relevant_chunks(session, query_embedding))

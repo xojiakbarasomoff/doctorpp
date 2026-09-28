@@ -33,11 +33,11 @@ def test_one_patient_is_one_number_however_they_type_it(written: str) -> None:
 @pytest.mark.parametrize(
     "written",
     [
-        "2026-09-24",          # a date
-        "12:00",               # a time
-        "35 yoshdaman",        # an age
-        "narxi 350000 so'm",   # a price
-        "123456789",           # nine digits, no operator code
+        "2026-09-24",  # a date
+        "12:00",  # a time
+        "35 yoshdaman",  # an age
+        "narxi 350000 so'm",  # a price
+        "123456789",  # nine digits, no operator code
         "salom",
     ],
 )

@@ -394,8 +394,8 @@ async def settle(
     # two bookings for one visit. So a second row is written only when the
     # caller says so (allow_second). Everything else moves the booking they
     # already have.
-    existing = None if allow_second else await _active_for_conversation(
-        session_repo, conversation_id
+    existing = (
+        None if allow_second else await _active_for_conversation(session_repo, conversation_id)
     )
     if existing is not None:
         _record_details(existing, phone, reason)
