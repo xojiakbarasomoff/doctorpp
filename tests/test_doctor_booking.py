@@ -119,4 +119,4 @@ def test_a_time_that_starts_in_two_minutes_is_not_offered() -> None:
     """
     from app.services.booking import BOOKING_LEAD
 
-    assert BOOKING_LEAD >= timedelta(minutes=20)
+    assert timedelta(minutes=20) <= BOOKING_LEAD

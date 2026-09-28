@@ -54,4 +54,7 @@ def downgrade() -> None:
     # Only the rows this migration claimed, so a row embedded after it -- by
     # ingest_faqs, which stamps the same name -- is not silently unclaimed and
     # then re-embedded for no reason.
-    op.execute(f"UPDATE knowledge_base SET embedding_model = NULL WHERE embedding_model = '{_MODEL}'")
+    op.execute(
+        "UPDATE knowledge_base SET embedding_model = NULL "
+        f"WHERE embedding_model = '{_MODEL}'"
+    )
