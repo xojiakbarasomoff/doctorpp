@@ -38,7 +38,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/dental_ig_assistant
       REDIS_URL: redis://localhost:6379/0
-            OPENAI_API_KEY: sk-test-placeholder
+      OPENAI_API_KEY: sk-test-placeholder
       WEBHOOK_VERIFY_TOKEN: ci-test-verify-token
       META_APP_SECRET: ci-test-app-secret
       SESSION_SECRET_KEY: ci-test-session-secret-key-not-for-real-use
