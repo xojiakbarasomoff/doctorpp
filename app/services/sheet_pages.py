@@ -77,6 +77,8 @@ WHITE = "#FFFFFF"
 _WIDTHS = (32, 190, 18, 190, 18, 190, 18, 190, 420)
 _TILE_COLUMNS = (1, 3, 5, 7)
 _YEAR_ROW, _FIRST_TILE_ROW = 4, 6
+# Where the ✕ goes back to: the page title.
+_TOP = (1, 1)
 # Where the first month's section starts (0-based), and how many rows each
 # month is given: a busy month is twenty patients a day, six days a week.
 FIRST_SECTION_ROW = 40
@@ -229,7 +231,10 @@ def home_values(year: int, months: Sequence[int], home_gid: int) -> dict[tuple[i
     for month, top in sections.items():
         statuses = _status_range(top)
         cells[(top + _TITLE, _WHEN)] = f"{month_title(year, month)} — qabullar"
-        cells[(top + _TITLE, _STATUS)] = _jump(home_gid, 0, 0, CLOSE)
+        # To the page title, B2, not A1: a link to A1 on the page already
+        # open did not take the clinic back up, where one to B2 -- like the
+        # tile's own link down -- does.
+        cells[(top + _TITLE, _STATUS)] = _jump(home_gid, _TOP[0], _TOP[1], CLOSE)
         cells[(top + _KPI_LABELS, _WHEN)] = "Jami"
         cells[(top + _KPI_LABELS, _PATIENT)] = "Kutilmoqda"
         cells[(top + _KPI_LABELS, _PHONE)] = "Keldi · Kelmadi"

@@ -117,7 +117,7 @@ def test_a_tile_jumps_down_to_its_section_on_the_same_page() -> None:
 
 def test_the_close_button_at_the_top_of_a_section_goes_back_to_the_top() -> None:
     cells = home_values(2026, [9], HOME)
-    assert cells[(FIRST_SECTION_ROW, 7)] == f'=HYPERLINK("#gid={HOME}&range=A1", "{CLOSE}")'
+    assert cells[(FIRST_SECTION_ROW, 7)] == f'=HYPERLINK("#gid={HOME}&range=B2", "{CLOSE}")'
     assert cells[(FIRST_SECTION_ROW, 1)] == "Sentabr 2026 — qabullar"
     assert "✕" in CLOSE
 
@@ -261,7 +261,7 @@ async def test_publishing_removes_the_month_tab_and_builds_everything_on_home() 
     home = mirror.home()
     row, column = tile_position(9)
     assert home[row][column] == f'=HYPERLINK("#gid={HOME}&range=A41"; "Sentabr")'
-    assert home[FIRST_SECTION_ROW][7] == f'=HYPERLINK("#gid={HOME}&range=A1"; "{CLOSE}")'
+    assert home[FIRST_SECTION_ROW][7] == f'=HYPERLINK("#gid={HOME}&range=B2"; "{CLOSE}")'
     assert "DATE(2026; 9; 1)" in home[FIRST_SECTION_ROW + 6][1]
     [put] = [kw for method, _, kw in mirror.calls if method == "PUT"]
     assert put["params"]["valueInputOption"] == "USER_ENTERED"
