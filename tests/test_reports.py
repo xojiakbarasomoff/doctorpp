@@ -53,7 +53,11 @@ async def test_the_period_counts_patients_messages_bookings_and_response_time(
     db_session: AsyncSession, seed: Seed
 ) -> None:
     today = datetime.now(CLINIC_TIMEZONE).date()
-    written = datetime.now(UTC) - timedelta(hours=1)
+    # An hour ago -- but never before today's midnight in Tashkent, or in
+    # the first hour of the clinic's day the messages land on yesterday and
+    # the period being reported has no reply to time.
+    midnight = datetime.combine(today, datetime.min.time(), tzinfo=CLINIC_TIMEZONE)
+    written = max(datetime.now(UTC) - timedelta(hours=1), midnight + timedelta(minutes=1))
     conversation = seed.a.conversation
     db_session.add_all(
         [
