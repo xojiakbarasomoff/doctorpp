@@ -1,31 +1,136 @@
 <!doctype html>
-<html lang="en">
+<html lang="uz">
 <head>
   <meta charset="utf-8" />
-  <title>Clinic Dashboard — Log in</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Kirish · Dr. Temur</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%230f766e%27/%3E%3Cpath d=%27M9 16h3l2-4 3 8 2-4h4%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272.4%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E" />
   <style>
-    body { font-family: system-ui, sans-serif; background: #f4f5f7; display: flex;
-           align-items: center; justify-content: center; height: 100vh; margin: 0; }
-    form { background: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.1);
-           width: 20rem; }
-    h1 { font-size: 1.1rem; margin: 0 0 1.25rem; }
-    label { display: block; font-size: .85rem; margin: .75rem 0 .25rem; color: #333; }
-    input { width: 100%; padding: .5rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
-    button { width: 100%; margin-top: 1.25rem; padding: .6rem; border: none; border-radius: 4px;
-             background: #2563eb; color: #fff; font-size: 1rem; cursor: pointer; }
-    .error { background: #fee2e2; color: #991b1b; padding: .5rem .75rem; border-radius: 4px;
-              font-size: .85rem; margin-bottom: .5rem; }
+    /* The dashboard's own font files, same origin: the CSP allows nothing else. */
+    @font-face { font-family: "Manrope"; font-weight: 200 800; font-display: swap; src: url("/admin/fonts/manrope-latin.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+    @font-face { font-family: "Manrope"; font-weight: 200 800; font-display: swap; src: url("/admin/fonts/manrope-latin-ext.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+2C60-2C7F, U+A720-A7FF; }
+    @font-face { font-family: "Manrope"; font-weight: 200 800; font-display: swap; src: url("/admin/fonts/manrope-cyrillic.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+    :root {
+      --bg: #f5f6f8; --panel: #ffffff; --ink: #0f172a; --ink-2: #334155; --ink-3: #64748b; --ink-4: #94a3b8;
+      --rule: #e6e8ec; --rule-strong: #d5d9e0; --accent: #0f766e; --accent-hover: #115e59; --accent-ink: #fff;
+      --accent-ring: rgba(15, 118, 110, .22); --danger: #c8283f; --danger-soft: rgba(200, 40, 63, .09);
+      --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 12px 32px -12px rgba(16, 24, 40, .16);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0e14; --panel: #121720; --ink: #e8ecf3; --ink-2: #c1c8d4; --ink-3: #8b95a7; --ink-4: #636d7e;
+        --rule: #232a36; --rule-strong: #2e3644; --accent: #2dd4bf; --accent-hover: #5eead4; --accent-ink: #042f2e;
+        --accent-ring: rgba(45, 212, 191, .28); --danger: #fb7185; --danger-soft: rgba(251, 113, 133, .13);
+        --shadow: 0 16px 40px -12px rgba(0, 0, 0, .6);
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); background: var(--bg); color: var(--ink);
+           font-family: "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+    .aside { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; padding: 40px 48px;
+             background: linear-gradient(155deg, #0f766e 0%, #115e59 55%, #134e4a 100%); color: #ecfdf5; }
+    .aside::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+             background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, .14) 1px, transparent 0); background-size: 22px 22px;
+             -webkit-mask-image: linear-gradient(to bottom, #000, transparent 85%); mask-image: linear-gradient(to bottom, #000, transparent 85%); }
+    .aside > * { position: relative; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 17px; }
+    .brand-mark { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: rgba(255, 255, 255, .14); border: 1px solid rgba(255, 255, 255, .2); }
+    .brand-mark svg, .feat svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .pitch h2 { font-size: clamp(26px, 2.6vw, 34px); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 14px; font-weight: 800; max-width: 460px; }
+    .pitch p { margin: 0 0 28px; color: rgba(236, 253, 245, .78); max-width: 440px; font-size: 15px; }
+    .feats { display: grid; gap: 14px; max-width: 440px; }
+    .feat { display: flex; gap: 12px; align-items: center; font-size: 14px; font-weight: 600; }
+    .feat span { width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; display: grid; place-items: center; background: rgba(255, 255, 255, .1); }
+    .feat svg { width: 17px; height: 17px; }
+    .aside small { color: rgba(236, 253, 245, .6); font-size: 12.5px; }
+    .main { display: grid; place-items: center; padding: 32px 20px; }
+    form { width: min(380px, 100%); }
+    .mobile-brand { display: none; }
+    h1 { font-size: 26px; letter-spacing: -.02em; margin: 0 0 6px; font-weight: 800; }
+    .lead { color: var(--ink-3); margin: 0 0 28px; }
+    .error { display: flex; gap: 10px; align-items: flex-start; background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+             padding: 10px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 600; margin-bottom: 18px; }
+    .error svg { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; margin-top: 1px; }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; }
+    input { font: inherit; font-size: 15px; width: 100%; height: 44px; padding: 0 14px; border: 1px solid var(--rule-strong); border-radius: 10px; background: var(--panel); color: var(--ink);
+            box-shadow: 0 1px 2px rgba(16, 24, 40, .05); transition: border-color .12s, box-shadow .12s; }
+    input:hover { border-color: var(--ink-4); }
+    input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+    .pw { position: relative; }
+    .pw input { padding-right: 76px; }
+    .pw button { position: absolute; right: 6px; top: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+    .pw button:hover { background: rgba(100, 116, 139, .1); color: var(--ink); }
+    button[type=submit] { width: 100%; height: 46px; margin-top: 8px; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+             font: inherit; font-size: 15px; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px rgba(16, 24, 40, .1); transition: background .12s; }
+    button[type=submit]:hover { background: var(--accent-hover); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .foot { margin-top: 28px; text-align: center; color: var(--ink-3); font-size: 12.5px; }
+    @media (max-width: 880px) {
+      body { grid-template-columns: minmax(0, 1fr); }
+      .aside { display: none; }
+      .mobile-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; margin-bottom: 32px; }
+      .mobile-brand .brand-mark { background: var(--accent); color: var(--accent-ink); border: 0; width: 36px; height: 36px; }
+    }
   </style>
 </head>
 <body>
-  <form method="post" action="/login">
-    <h1>Clinic Dashboard</h1>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    <label for="username">Username</label>
-    <input id="username" name="username" autocomplete="username" required autofocus />
-    <label for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required />
-    <button type="submit">Log in</button>
-  </form>
+  <aside class="aside" aria-hidden="true">
+    <div class="brand">
+      <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M12 21s-7.5-4.6-9.3-9.6C1.5 8 3.6 4.5 7.2 4.5c2 0 3.5 1.1 4.8 2.8 1.3-1.7 2.8-2.8 4.8-2.8 3.6 0 5.7 3.5 4.5 6.9C19.5 16.4 12 21 12 21z"/><path d="M7.5 12h2.5l1.5-2.5 2 5 1.5-2.5h1.5"/></svg></span>
+      Dr. Temur
+    </div>
+    <div class="pitch">
+      <h2>Bemorlar bilan ishlash — bitta oynada</h2>
+      <p>Instagram va Telegram yozishmalari, qabullar jadvali va klinika hisobotlari bir joyda.</p>
+      <div class="feats">
+        <div class="feat"><span><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></span>Suhbatlar va bot javoblari nazorati</div>
+        <div class="feat"><span><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg></span>Kunlik qabullar va eslatmalar</div>
+        <div class="feat"><span><svg viewBox="0 0 24 24"><path d="M4 20V11M10 20V5M16 20v-6M21 20H3"/></svg></span>Murojaatlar bo'yicha tahlil</div>
+      </div>
+    </div>
+    <small>&copy; Dr. Temur klinikasi</small>
+  </aside>
+
+  <main class="main">
+    <form method="post" action="/login">
+      <div class="mobile-brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-9.3-9.6C1.5 8 3.6 4.5 7.2 4.5c2 0 3.5 1.1 4.8 2.8 1.3-1.7 2.8-2.8 4.8-2.8 3.6 0 5.7 3.5 4.5 6.9C19.5 16.4 12 21 12 21z"/></svg></span>
+        Dr. Temur
+      </div>
+      <h1>Xush kelibsiz</h1>
+      <p class="lead">Boshqaruv paneliga kirish uchun login va parolingizni kiriting.</p>
+      {#- The server's messages are in English; the page speaks Uzbek. Anything
+          not listed here is shown as the server wrote it. -#}
+      {%- set error_uz = {
+        "Invalid username or password": "Login yoki parol noto'g'ri",
+        "Too many failed attempts. Try again in a few minutes.": "Juda ko'p urinish bo'ldi. Bir necha daqiqadan keyin qayta urinib ko'ring.",
+      } %}
+      {% if error %}<div class="error" role="alert"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5M12 16h.01"/></svg><span>{{ error_uz.get(error, error) }}</span></div>{% endif %}
+      <div class="field">
+        <label for="username">Login</label>
+        <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus />
+      </div>
+      <div class="field">
+        <label for="password">Parol</label>
+        <div class="pw">
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+          <button type="button" id="pwToggle" aria-controls="password" aria-pressed="false">Ko'rsatish</button>
+        </div>
+      </div>
+      <button type="submit">Kirish</button>
+      <p class="foot">Parolni unutdingizmi? Klinika administratoriga murojaat qiling.</p>
+    </form>
+  </main>
+  <script>
+    document.getElementById("pwToggle").addEventListener("click", function () {
+      var input = document.getElementById("password");
+      var show = input.type === "password";
+      input.type = show ? "text" : "password";
+      this.textContent = show ? "Yashirish" : "Ko'rsatish";
+      this.setAttribute("aria-pressed", String(show));
+    });
+  </script>
 </body>
 </html>
