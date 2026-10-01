@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Dr. Temur · Boshqaruv</title>
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%230f766e%27/%3E%3Cpath d=%27M9 16h3l2-4 3 8 2-4h4%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272.4%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%234f46e5%27/%3E%3Cpath d=%27M9 16h3l2-4 3 8 2-4h4%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272.4%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
 <script>try{var t=localStorage.getItem("theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
   /* No CDN: the dashboard is served from the same origin as the API and has
@@ -18,47 +18,54 @@
   @font-face { font-family: "Manrope"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("fonts/manrope-cyrillic.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
 
   /* ---- design tokens --------------------------------------------------
-     One neutral surface system and a single teal accent. Every component
-     below reads these, so the dark theme is only a second set of values. */
+     A pastel morning palette: lavender page with peach, violet and sky light
+     behind frosted white cards, an indigo accent for "selected / next", and
+     near-black for the main call to action. Every component reads these, so
+     the dark theme is only a second set of values. */
   :root {
     color-scheme: light;
-    --bg: #f5f6f8;
+    --bg: #f3f0f7;
     --bg-solid: #ffffff;
-    --panel: #ffffff;
+    --panel: rgba(255, 255, 255, .72);
     --panel-solid: #ffffff;
-    --panel-2: rgba(15, 23, 42, .045);
-    --surface-sunk: #f8f9fb;
-    --ink: #0f172a;
-    --ink-2: #334155;
-    --ink-3: #64748b;
-    --ink-4: #94a3b8;
-    --rule: #e6e8ec;
-    --rule-strong: #d5d9e0;
-    --glass-border: #e6e8ec;
-    --shadow-xs: 0 1px 2px rgba(16, 24, 40, .05);
-    --shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
-    --shadow-lg: 0 12px 32px -8px rgba(16, 24, 40, .18), 0 4px 8px -4px rgba(16, 24, 40, .06);
-    --accent: #0f766e;
-    --accent-hover: #115e59;
+    --panel-2: rgba(26, 28, 42, .05);
+    --surface-sunk: rgba(26, 28, 42, .025);
+    --ink: #1a1c2a;
+    --ink-2: #3a3d52;
+    --ink-3: #5b5e73;
+    --ink-4: #8d8fa3;
+    --rule: rgba(26, 28, 42, .08);
+    --rule-strong: rgba(26, 28, 42, .15);
+    --glass-border: rgba(255, 255, 255, .9);
+    --shadow-xs: 0 1px 2px rgba(60, 40, 90, .05);
+    --shadow: 0 8px 30px rgba(60, 40, 90, .07);
+    --shadow-lg: 0 24px 60px -12px rgba(40, 20, 70, .25), 0 4px 10px -4px rgba(40, 20, 70, .08);
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
     --accent-ink: #ffffff;
-    --accent-soft: rgba(15, 118, 110, .09);
-    --accent-ring: rgba(15, 118, 110, .22);
+    --accent-soft: rgba(79, 70, 229, .10);
+    --accent-ring: rgba(79, 70, 229, .22);
+    --cta: #1a1c2a;
+    --cta-ink: #ffffff;
     --good: #047857;
-    --good-soft: rgba(16, 185, 129, .12);
-    --warn: #b45309;
-    --warn-soft: rgba(245, 158, 11, .14);
-    --danger: #c8283f;
-    --danger-soft: rgba(200, 40, 63, .09);
-    --ig: #be185d;
-    --ig-soft: rgba(190, 24, 93, .09);
-    --tg: #0369a1;
-    --tg-soft: rgba(3, 105, 161, .09);
-    --side-bg: #ffffff;
+    --good-soft: rgba(16, 185, 129, .14);
+    --warn: #92400e;
+    --warn-soft: rgba(245, 158, 11, .16);
+    --danger: #c2263d;
+    --danger-soft: rgba(194, 38, 61, .10);
+    --ig: #b4235a;
+    --ig-soft: rgba(180, 35, 90, .09);
+    --tg: #1d7fb8;
+    --tg-soft: rgba(29, 127, 184, .10);
+    --side-bg: rgba(255, 255, 255, .62);
+    --blob-1: rgba(253, 186, 116, .55);
+    --blob-2: rgba(196, 181, 253, .62);
+    --blob-3: rgba(125, 211, 252, .45);
     --font: "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
     --r-sm: 8px;
     --r-md: 10px;
-    --r-lg: 14px;
+    --r-lg: 16px;
     --pad: 20px;
     --side-w: 256px;
     --topbar-h: 64px;
@@ -66,33 +73,45 @@
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       color-scheme: dark;
-      --bg: #0b0e14; --bg-solid: #11151d; --panel: #121720; --panel-solid: #161c26;
-      --panel-2: rgba(255, 255, 255, .05); --surface-sunk: #0f131b;
-      --ink: #e8ecf3; --ink-2: #c1c8d4; --ink-3: #8b95a7; --ink-4: #636d7e;
-      --rule: #232a36; --rule-strong: #2e3644; --glass-border: #232a36;
-      --shadow-xs: none; --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, .6);
-      --accent: #2dd4bf; --accent-hover: #5eead4; --accent-ink: #042f2e; --accent-soft: rgba(45, 212, 191, .12); --accent-ring: rgba(45, 212, 191, .28);
-      --good: #34d399; --good-soft: rgba(52, 211, 153, .13);
-      --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .13);
-      --danger: #fb7185; --danger-soft: rgba(251, 113, 133, .13);
-      --ig: #f472b6; --ig-soft: rgba(244, 114, 182, .12); --tg: #38bdf8; --tg-soft: rgba(56, 189, 248, .12);
-      --side-bg: #0e121a;
+      --bg: #0f1020; --bg-solid: #15162a; --panel: rgba(34, 36, 60, .58); --panel-solid: #1b1d33;
+      --panel-2: rgba(255, 255, 255, .06); --surface-sunk: rgba(255, 255, 255, .035);
+      --ink: #ecedf5; --ink-2: #c3c5d6; --ink-3: #9a9db2; --ink-4: #6f7290;
+      --rule: rgba(255, 255, 255, .09); --rule-strong: rgba(255, 255, 255, .16); --glass-border: rgba(255, 255, 255, .10);
+      --shadow-xs: none; --shadow: 0 10px 30px rgba(0, 0, 0, .28); --shadow-lg: 0 24px 60px -12px rgba(0, 0, 0, .65);
+      --accent: #8b85ff; --accent-hover: #a5a0ff; --accent-ink: #ffffff; --accent-soft: rgba(139, 133, 255, .16); --accent-ring: rgba(139, 133, 255, .32);
+      --cta: #ecedf5; --cta-ink: #15162a;
+      --good: #6ee7b7; --good-soft: rgba(110, 231, 183, .14);
+      --warn: #f5c26b; --warn-soft: rgba(245, 194, 107, .14);
+      --danger: #ff8a9b; --danger-soft: rgba(255, 138, 155, .14);
+      --ig: #f28ab8; --ig-soft: rgba(242, 138, 184, .14); --tg: #7cc4f0; --tg-soft: rgba(124, 196, 240, .14);
+      --side-bg: rgba(21, 22, 42, .62);
+      --blob-1: rgba(180, 83, 9, .26); --blob-2: rgba(109, 40, 217, .32); --blob-3: rgba(14, 116, 144, .26);
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #0b0e14; --bg-solid: #11151d; --panel: #121720; --panel-solid: #161c26;
-    --panel-2: rgba(255, 255, 255, .05); --surface-sunk: #0f131b;
-    --ink: #e8ecf3; --ink-2: #c1c8d4; --ink-3: #8b95a7; --ink-4: #636d7e;
-    --rule: #232a36; --rule-strong: #2e3644; --glass-border: #232a36;
-    --shadow-xs: none; --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, .6);
-    --accent: #2dd4bf; --accent-hover: #5eead4; --accent-ink: #042f2e; --accent-soft: rgba(45, 212, 191, .12); --accent-ring: rgba(45, 212, 191, .28);
-    --good: #34d399; --good-soft: rgba(52, 211, 153, .13);
-    --warn: #fbbf24; --warn-soft: rgba(251, 191, 36, .13);
-    --danger: #fb7185; --danger-soft: rgba(251, 113, 133, .13);
-    --ig: #f472b6; --ig-soft: rgba(244, 114, 182, .12); --tg: #38bdf8; --tg-soft: rgba(56, 189, 248, .12);
-    --side-bg: #0e121a;
+    --bg: #0f1020; --bg-solid: #15162a; --panel: rgba(34, 36, 60, .58); --panel-solid: #1b1d33;
+    --panel-2: rgba(255, 255, 255, .06); --surface-sunk: rgba(255, 255, 255, .035);
+    --ink: #ecedf5; --ink-2: #c3c5d6; --ink-3: #9a9db2; --ink-4: #6f7290;
+    --rule: rgba(255, 255, 255, .09); --rule-strong: rgba(255, 255, 255, .16); --glass-border: rgba(255, 255, 255, .10);
+    --shadow-xs: none; --shadow: 0 10px 30px rgba(0, 0, 0, .28); --shadow-lg: 0 24px 60px -12px rgba(0, 0, 0, .65);
+    --accent: #8b85ff; --accent-hover: #a5a0ff; --accent-ink: #ffffff; --accent-soft: rgba(139, 133, 255, .16); --accent-ring: rgba(139, 133, 255, .32);
+    --cta: #ecedf5; --cta-ink: #15162a;
+    --good: #6ee7b7; --good-soft: rgba(110, 231, 183, .14);
+    --warn: #f5c26b; --warn-soft: rgba(245, 194, 107, .14);
+    --danger: #ff8a9b; --danger-soft: rgba(255, 138, 155, .14);
+    --ig: #f28ab8; --ig-soft: rgba(242, 138, 184, .14); --tg: #7cc4f0; --tg-soft: rgba(124, 196, 240, .14);
+    --side-bg: rgba(21, 22, 42, .62);
+    --blob-1: rgba(180, 83, 9, .26); --blob-2: rgba(109, 40, 217, .32); --blob-3: rgba(14, 116, 144, .26);
   }
+
+  /* The coloured light the frosted surfaces sit on. Fixed, so it stays put
+     while the page scrolls, and behind everything so it never takes a click. */
+  body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(42vw 42vw at 12% -4%, var(--blob-1), transparent 70%),
+      radial-gradient(46vw 46vw at 100% 8%, var(--blob-2), transparent 70%),
+      radial-gradient(44vw 44vw at 55% 112%, var(--blob-3), transparent 70%); }
 
   /* ---- base ------------------------------------------------------------ */
   * { box-sizing: border-box; }
@@ -480,14 +499,14 @@
   /* ---- Hisobot ---------------------------------------------------------
      Series colours are the reference palette's first three categorical
      slots, validated as a set against this page's own surfaces (#ffffff
-     light, #121720 dark). Slot 3 is under 3:1 on white, so wherever it is
+     light, #1b1d33 dark), indigo first to match the accent. Slot 3 is under 3:1 on white, so wherever it is
      used its value is also written out beside it. Status colours are the
      fixed status palette and only ever mean an appointment's outcome. */
-  .viz { --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --viz-muted: #dfe3e9; --viz-track: #cde2fb;
-    --st-good: #0ca30c; --st-serious: #ec835a; --st-critical: #d03b3b; --st-pending: #86b6ef;
-    --good: #006300; --bad: #b42318; --grid: #eceef2; --axis: #d5d9e0; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .viz { --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --viz-muted: #2b3340; --viz-track: #1c2b44; --st-pending: #256abf; --good: #0ca30c; --bad: #f08a7e; --grid: #1f2530; --axis: #2e3644; } }
-  :root[data-theme="dark"] .viz { --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --viz-muted: #2b3340; --viz-track: #1c2b44; --st-pending: #256abf; --good: #0ca30c; --bad: #f08a7e; --grid: #1f2530; --axis: #2e3644; }
+  .viz { --series-1: #4f46e5; --series-2: #eb6834; --series-3: #1baf7a; --viz-muted: #e4e1ee; --viz-track: #e0e7ff;
+    --st-good: #0ca30c; --st-serious: #ec835a; --st-critical: #d03b3b; --st-pending: #c9ccd8;
+    --good: #006300; --bad: #b42318; --grid: rgba(26, 28, 42, .07); --axis: rgba(26, 28, 42, .15); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .viz { --series-1: #7f78f8; --series-2: #d95926; --series-3: #199e70; --viz-muted: #2d2f4a; --viz-track: #2a2852; --st-pending: #4a4f66; --good: #0ca30c; --bad: #f08a7e; --grid: rgba(255, 255, 255, .07); --axis: rgba(255, 255, 255, .14); } }
+  :root[data-theme="dark"] .viz { --series-1: #7f78f8; --series-2: #d95926; --series-3: #199e70; --viz-muted: #2d2f4a; --viz-track: #2a2852; --st-pending: #4a4f66; --good: #0ca30c; --bad: #f08a7e; --grid: rgba(255, 255, 255, .07); --axis: rgba(255, 255, 255, .14); }
 
   .rp-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
   .report-range { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-md); background: var(--panel-2); border: 1px solid var(--rule); }
@@ -501,18 +520,31 @@
   .rp-body { transition: opacity .15s; }
   .rp-body.loading { opacity: .45; pointer-events: none; }
 
-  .rp-hero { display: grid; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); gap: 28px; padding: 24px; }
-  .rp-hero-num { display: flex; flex-direction: column; gap: 6px; padding-right: 24px; border-right: 1px solid var(--rule); }
+  .rp-hero { display: flex; flex-direction: column; gap: 22px; padding: 24px; }
+  .rp-figures { display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap; padding-bottom: 22px; border-bottom: 1px solid var(--rule); }
+  .rp-fig { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
+  .rp-fig-side { margin-left: auto; padding-left: 28px; border-left: 1px solid var(--rule); }
+  .rp-arrow { align-self: center; color: var(--ink-4); padding-top: 18px; }
+  .rp-arrow svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .rp-eyebrow { font-size: 13px; font-weight: 600; color: var(--ink-3); }
-  .rp-big { font-size: 56px; font-weight: 800; letter-spacing: -.04em; line-height: 1; color: var(--ink); margin: 4px 0 6px; }
+  .rp-big { font-size: 48px; font-weight: 800; letter-spacing: -.04em; line-height: 1; color: var(--ink); margin: 4px 0 6px; }
+  .rp-of { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+  .rp-of small { font-size: 12.5px; color: var(--ink-3); font-weight: 500; }
   .rp-delta { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--ink-3); flex-wrap: wrap; }
   .rp-delta b { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 8px; border-radius: 999px; font-size: 12.5px; font-weight: 700; background: var(--panel-2); color: var(--ink-2); }
   .rp-delta b.up { background: var(--good-soft); color: var(--good); }
   .rp-delta b.down { background: var(--danger-soft); color: var(--bad); }
-  .rp-mini { margin: auto 0 0; padding-top: 20px; display: grid; gap: 10px; }
-  .rp-mini div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; padding-top: 10px; border-top: 1px solid var(--rule); }
-  .rp-mini dt { color: var(--ink-3); font-weight: 500; }
-  .rp-mini dd { margin: 0; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .rp-note { margin: 14px 0 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.5; }
+  .rp-note:empty { display: none; }
+  #whenMode button { height: 26px; padding: 0 12px; font-size: 12.5px; }
+  @media (max-width: 640px) {
+    .rp-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 16px; }
+    .rp-fig { min-width: 0; }
+    .rp-fig:first-child { grid-column: 1 / -1; }
+    .rp-arrow { display: none; }
+    .rp-fig-side { margin: 0; padding: 0 0 0 16px; }
+    .rp-big { font-size: 36px; }
+  }
   .rp-hero-chart { min-width: 0; display: flex; flex-direction: column; }
   .rp-chart-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
   .rp-chart-head h3 { margin: 0; }
@@ -530,10 +562,11 @@
   .rp-line .ln { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
   .rp-line .ln.s1 { stroke: var(--series-1); }
   .rp-line .ln.s2 { stroke: var(--series-2); }
+  .rp-line .ln.partial { stroke-dasharray: 4 5; opacity: .7; }
   .rp-line .ar.s1 { fill: var(--series-1); opacity: .1; }
   .rp-line .ar.s2 { fill: var(--series-2); opacity: .08; }
   .rp-line .cross { stroke: var(--ink-4); stroke-width: 1; shape-rendering: crispEdges; }
-  .rp-line .dot { stroke: var(--panel); stroke-width: 2; }
+  .rp-line .dot { stroke: var(--panel-solid); stroke-width: 2; }
   .rp-line .dot.s1 { fill: var(--series-1); }
   .rp-line .dot.s2 { fill: var(--series-2); }
   .rp-line .end { fill: var(--ink-2); font-size: 11.5px; font-weight: 700; font-family: var(--font); }
@@ -546,21 +579,12 @@
   .rp-table td:not(:first-child), .rp-table th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
   .rp-table thead th { position: sticky; top: 0; }
 
-  .rp-stats { display: grid; gap: 16px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 20px; }
-  .kpi { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r-lg); padding: 18px 20px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 4px; }
-  .kpi > span { font-size: 13px; font-weight: 600; color: var(--ink-3); }
-  .kpi > b { font-size: 30px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; color: var(--ink); margin: 2px 0 4px; }
-  .kpi .rp-delta { font-size: 12px; }
-  .kpi .rp-delta b { height: 22px; font-size: 12px; }
-  .kpi .meter { height: 6px; border-radius: 999px; background: var(--viz-track); overflow: hidden; margin: 2px 0 6px; }
-  .kpi .meter i { display: block; height: 100%; border-radius: 999px; background: var(--series-1); }
 
   .rp-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 16px; align-items: start; }
   .rp-grid .panel { margin: 0; }
   .rp-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .rp-peak { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
   .rp-peak b { color: var(--ink); }
-  .rp-gap { margin-top: 26px !important; padding-top: 22px; border-top: 1px solid var(--rule); }
 
   .hbars { display: grid; gap: 14px; }
   .hbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: baseline; font-size: 13px; cursor: default; }
@@ -573,17 +597,6 @@
   .hbar.muted-row .fill { background: var(--viz-muted); }
   .hbar:hover .fill { filter: brightness(1.1); }
 
-  /* One 100% bar per question, split into its parts with a 2px surface gap,
-     and the legend underneath carrying every number. */
-  .rp-stack .bar100 { display: flex; gap: 2px; height: 14px; border-radius: 4px; overflow: hidden; margin-bottom: 14px; background: var(--panel); }
-  .rp-stack .bar100 span { min-width: 3px; transition: filter .12s; }
-  .rp-stack .bar100 span:hover { filter: brightness(1.12); }
-  .rp-stack ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 20px; }
-  .rp-stack li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .rp-stack li .sw { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-  .rp-stack li span { color: var(--ink-2); flex: 1; min-width: 0; }
-  .rp-stack li b { font-variant-numeric: tabular-nums; font-weight: 700; }
-  .rp-stack li small { color: var(--ink-3); font-weight: 600; font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
 
   .cols { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 150px; border-bottom: 1px solid var(--axis); }
   .cols .slot { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; min-width: 0; cursor: default; }
@@ -594,15 +607,6 @@
   .cols-axis { display: flex; gap: 3px; font-size: 11px; color: var(--ink-3); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .cols-axis span { flex: 1; text-align: center; min-width: 0; overflow: visible; white-space: nowrap; }
 
-  .complaint-list { display: grid; gap: 0; }
-  .complaint { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; padding: 12px 0; border-bottom: 1px solid var(--rule); font-size: 13.5px; line-height: 1.5; }
-  .complaint:first-child { padding-top: 0; }
-  .complaint:last-child { border-bottom: 0; padding-bottom: 0; }
-  .complaint .rp-who { font-weight: 700; color: var(--ink); }
-  .complaint .when { font-size: 12px; color: var(--ink-3); white-space: nowrap; text-align: right; }
-  .complaint .what { grid-column: 1 / -1; color: var(--ink-2); }
-  .complaint .tags { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
-  .complaint .tags span { height: 22px; padding: 0 8px; border-radius: 6px; display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; background: var(--panel-2); color: var(--ink-2); }
   .rp-more { margin-top: 14px; width: 100%; }
   .report-empty { color: var(--ink-3); font-size: 13px; padding: 28px 0; text-align: center; }
 
@@ -614,22 +618,12 @@
   .viz-tip .tt-row span { color: var(--ink-3); font-weight: 500; }
 
   @media (max-width: 1100px) {
-    .rp-hero { grid-template-columns: minmax(0, 1fr); gap: 20px; }
-    .rp-hero-num { padding-right: 0; border-right: 0; padding-bottom: 20px; border-bottom: 1px solid var(--rule); }
-    .rp-mini { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .rp-mini div { flex-direction: column; align-items: flex-start; gap: 2px; }
-    .rp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .rp-grid { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 640px) {
     .rp-hero { padding: 18px 16px; }
     .rp-big { font-size: 44px; }
     .rp-line { height: 200px; }
-    .rp-stats { gap: 10px; }
-    .kpi { padding: 14px; }
-    .kpi > b { font-size: 24px; }
-    .rp-mini { grid-template-columns: minmax(0, 1fr); }
-    .rp-mini div { flex-direction: row; align-items: baseline; }
     #reportPrint { display: none; }
     .report-period { width: 100%; }
     .cols { height: 120px; }
@@ -834,6 +828,22 @@
   .media-foot { flex-wrap: wrap; }
   .media-foot .muted { flex-basis: 100%; margin: 0 0 2px; }
   .media-foot .act { flex: 1; }
+
+  /* ---- frosted surfaces over the page light ------------------------------ */
+  .panel, .stat, .sidebar, .who { -webkit-backdrop-filter: blur(22px) saturate(170%); backdrop-filter: blur(22px) saturate(170%); }
+  .panel, .stat { border-color: var(--glass-border); }
+  .sidebar { border-right-color: var(--glass-border); }
+  .brand { border-bottom-color: var(--rule); }
+  .who { background: var(--panel); border-color: var(--glass-border); }
+  /* Sticky headers scroll over rows, so they must not be see-through. */
+  .chat-workspace.open > .panel > .scroll thead th, .rp-table thead th { background: var(--panel-solid); }
+  th { background: rgba(255, 255, 255, .35); }
+  :root[data-theme="dark"] th { background: rgba(255, 255, 255, .03); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) th { background: rgba(255, 255, 255, .03); } }
+  /* The main call to action is near-black; indigo is kept for "selected" and "next". */
+  button.primary, button.act.primary, .btn-lg.dark { background: var(--cta); border-color: var(--cta); color: var(--cta-ink); }
+  button.act.primary:hover, .btn-lg.dark:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-lg.glass { background: var(--panel); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); border-color: var(--glass-border); }
   @media (max-width: 640px) { .hero-actions { width: 100%; } .hero-actions > * { flex: 1; justify-content: center; } }
   .ui-dialog { width: min(440px, calc(100vw - 32px)); }
   .ui-dialog h2 { font-size: 16.5px; margin-bottom: 8px; line-height: 1.4; }
@@ -1059,68 +1069,61 @@
     </div>
 
     <div class="rp-body" id="reportBody">
-      <!-- The headline: how many patients wrote, and how that moved day by day. -->
+      <!-- Three numbers that tell the period's story, and how it moved. -->
       <div class="panel rp-hero">
-        <div class="rp-hero-num">
-          <span class="rp-eyebrow">Yozgan bemorlar</span>
-          <b class="rp-big" id="rpActive">—</b>
-          <span id="rpActiveDelta"></span>
-          <dl class="rp-mini" id="rpMini"></dl>
+        <div class="rp-figures">
+          <div class="rp-fig">
+            <span class="rp-eyebrow">Yozgan bemorlar</span>
+            <b class="rp-big" id="rpActive">—</b>
+            <span id="rpActiveDelta"></span>
+          </div>
+          <span class="rp-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+          <div class="rp-fig">
+            <span class="rp-eyebrow">Qabulga yozildi</span>
+            <b class="rp-big" id="rpBooked">—</b>
+            <span class="rp-of" id="rpBookedOf"></span>
+          </div>
+          <div class="rp-fig rp-fig-side">
+            <span class="rp-eyebrow">Bot yozgan qabullar</span>
+            <b class="rp-big" id="rpBot">—</b>
+            <span class="rp-of" id="rpBotOf"></span>
+          </div>
         </div>
         <div class="rp-hero-chart">
           <div class="rp-chart-head">
-            <h3>Kunlar bo'yicha</h3>
+            <h3 id="rpChartTitle">Kunlar bo'yicha</h3>
             <div class="legend" aria-hidden="true">
               <span><i class="k-line s1"></i>Yozgan bemorlar</span>
               <span><i class="k-line s2"></i>Yaratilgan qabullar</span>
             </div>
           </div>
-          <div class="rp-line" id="reportDaily" role="img" aria-label="Kunlik bemorlar va qabullar grafigi"></div>
+          <div class="rp-line" id="reportDaily" role="img" aria-label="Bemorlar va qabullar grafigi"></div>
           <details class="rp-table">
             <summary>Jadval ko'rinishida</summary>
-            <div class="scroll"><table><thead><tr><th>Kun</th><th>Bemorlar</th><th>Qabullar</th></tr></thead><tbody id="reportDailyTable"></tbody></table></div>
+            <div class="scroll"><table><thead><tr><th id="rpTableHead">Kun</th><th>Bemorlar</th><th>Qabullar</th></tr></thead><tbody id="reportDailyTable"></tbody></table></div>
           </details>
         </div>
       </div>
 
-      <div class="rp-stats" id="reportKpis"></div>
-
       <div class="rp-grid">
         <div class="panel">
-          <h3>Nima bilan murojaat qilishyapti</h3>
+          <h3>Murojaat sabablari</h3>
           <p class="sub" id="reportComplaintSub"></p>
           <div class="hbars" id="reportComplaints"></div>
-        </div>
-        <div class="panel rp-appts">
-          <h3>Qabullar natijasi</h3>
-          <p class="sub" id="reportStatusSub">Davrda yaratilgan qabullar</p>
-          <div class="rp-stack" id="reportStatus"></div>
-          <h3 class="rp-gap">Qabul qayerdan kelgan</h3>
-          <p class="sub">Qabulni kim yaratgan</p>
-          <div class="rp-stack" id="reportSource"></div>
-        </div>
-      </div>
-
-      <div class="rp-grid">
-        <div class="panel">
-          <div class="rp-card-head"><h3>Qaysi soatlarda yozishadi</h3><span class="rp-peak" id="reportHoursPeak"></span></div>
-          <p class="sub">Bemor xabarlari, Toshkent vaqti</p>
-          <div class="cols" id="reportHours"></div>
-          <div class="cols-axis" id="reportHoursAxis"></div>
+          <p class="rp-note" id="reportUnknown"></p>
         </div>
         <div class="panel">
-          <div class="rp-card-head"><h3>Hafta kunlari</h3><span class="rp-peak" id="reportWeekdaysPeak"></span></div>
-          <p class="sub">Bemor xabarlari</p>
-          <div class="cols" id="reportWeekdays"></div>
-          <div class="cols-axis" id="reportWeekdaysAxis"></div>
+          <div class="rp-card-head">
+            <h3>Qachon yozishadi</h3>
+            <div class="seg" role="group" aria-label="Ko'rinish" id="whenMode">
+              <button type="button" data-mode="hour" aria-pressed="true">Soat</button>
+              <button type="button" data-mode="day" aria-pressed="false">Kun</button>
+            </div>
+          </div>
+          <p class="sub"><span id="whenSub">Bemor xabarlari, Toshkent vaqti</span> · <span class="rp-peak" id="reportWhenPeak"></span></p>
+          <div class="cols" id="reportWhen"></div>
+          <div class="cols-axis" id="reportWhenAxis"></div>
         </div>
-      </div>
-
-      <div class="panel">
-        <div class="rp-card-head"><h3>So'nggi shikoyatlar</h3><span class="muted" id="reportRecentCount"></span></div>
-        <p class="sub">Qabulga yozilganda aytilgan sabab</p>
-        <div class="complaint-list" id="reportRecent"></div>
-        <button class="act rp-more" id="reportRecentMore" type="button" hidden>Hammasini ko'rsatish</button>
       </div>
     </div>
   </section>
@@ -3203,12 +3206,6 @@ function fmtDay(iso) {
   return `${d.getDate()}-${MONTHS_SHORT[d.getMonth()]}`;
 }
 
-function fmtDuration(seconds) {
-  if (seconds < 60) return `${Math.round(seconds)} soniya`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)} daqiqa`;
-  return `${fmtNumber(seconds / 3600)} soat`;
-}
-
 const vizTip = document.getElementById("vizTip");
 // The tooltip is built from nodes, never markup: labels come from the API.
 function showTipAt(x, y, children) {
@@ -3249,16 +3246,6 @@ function delta(kpi, lowerIsBetter) {
   return el("span", { class: "rp-delta" },
     el("b", { class: better ? "up" : "down" }, `${change > 0 ? "▲" : "▼"} ${fmtNumber(Math.abs(change))}%`),
     "oldingi davrga nisbatan");
-}
-
-function kpiTile(label, value, kpi, options = {}) {
-  return el("div", { class: "kpi" },
-    el("span", {}, label),
-    el("b", {}, value),
-    options.meter !== undefined
-      ? el("div", { class: "meter", role: "presentation" }, el("i", { style: `width:${Math.max(0, Math.min(100, options.meter))}%` }))
-      : null,
-    delta(kpi, options.lowerIsBetter));
 }
 
 // --- line chart ------------------------------------------------------------
@@ -3310,7 +3297,7 @@ function drawLine() {
   const labelEvery = Math.max(1, Math.ceil(points.length / Math.max(2, Math.floor(w / 70))));
   points.forEach((p, i) => {
     if (i % labelEvery === 0 || i === points.length - 1 && points.length <= 14) {
-      root.append(svg("text", { class: "tick", x: x(i), y: height - 6, "text-anchor": "middle" }, fmtDay(p.day)));
+      root.append(svg("text", { class: "tick", x: x(i), y: height - 6, "text-anchor": "middle" }, p.label));
     }
   });
   // Areas first, then lines, so neither wash covers the other's stroke.
@@ -3318,9 +3305,16 @@ function drawLine() {
     const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join("");
     root.append(svg("path", { class: `ar ${s.cls}`, d: `${line}L${x(points.length - 1)},${y(0)}L${x(0)},${y(0)}Z` }));
   }
+  const partial = points.length > 1 && points[points.length - 1].partial;
+  const solid = partial ? points.slice(0, -1) : points;
   for (const s of DAILY_SERIES) {
-    const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join("");
+    const line = solid.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join("");
     root.append(svg("path", { class: `ln ${s.cls}`, d: line }));
+    if (partial) {
+      const n = points.length - 1;
+      root.append(svg("path", { class: `ln ${s.cls} partial`,
+        d: `M${x(n - 1).toFixed(1)},${y(points[n - 1][s.key]).toFixed(1)}L${x(n).toFixed(1)},${y(points[n][s.key]).toFixed(1)}` }));
+    }
   }
   // Direct labels on the last point only; nudged apart when they would collide.
   const last = points[points.length - 1];
@@ -3330,7 +3324,7 @@ function drawLine() {
     const [hi, lo] = ends[0].v >= ends[1].v ? [ends[0], ends[1]] : [ends[1], ends[0]];
     hi.ty = mid - 7; lo.ty = mid + 7;
   }
-  for (const e of ends) {
+  for (const e of ends.some((e) => e.v) ? ends : []) {
     root.append(
       svg("circle", { class: `dot ${e.s.cls}`, cx: x(points.length - 1), cy: y(e.v), r: 4 }),
       svg("text", { class: "end", x: x(points.length - 1) + 9, y: e.ty }, fmtNumber(e.v)));
@@ -3350,7 +3344,7 @@ function drawLine() {
       dots[k].setAttribute("visibility", "visible");
     });
     showTipAt(clientX, clientY, [
-      el("div", { class: "tt-head" }, fmtDay(p.day)),
+      el("div", { class: "tt-head" }, p.tip),
       ...DAILY_SERIES.map((s) => el("div", { class: "tt-row" },
         el("i", { style: `background:var(--series-${s.cls.slice(1)})` }), el("b", {}, fmtNumber(p[s.key])), el("span", {}, s.label))),
     ]);
@@ -3372,6 +3366,56 @@ function drawLine() {
 new ResizeObserver(() => { if (!document.getElementById("tab-report").hidden) drawLine(); })
   .observe(document.getElementById("reportDaily"));
 
+// --- the line chart's buckets ------------------------------------------------
+// A day per point up to a month; past that a year of days is a saw blade, so
+// 90 days are drawn by week and a year by month, summed.
+
+// The period ends today, so its last week or month is usually still running:
+// drawn dashed and called out, rather than read as a collapse.
+function markPartial(points, daysIn) {
+  if (!daysIn || points.length < 2) return;
+  const last = points[points.length - 1];
+  last.partial = true;
+  last.tip += ` (${daysIn} kun, to'liq emas)`;
+}
+
+function bucketDaily(daily, days) {
+  const point = (day, label, tip, rows) => ({
+    day, label, tip,
+    patients: rows.reduce((n, r) => n + r.patients, 0),
+    appointments: rows.reduce((n, r) => n + r.appointments, 0),
+  });
+  if (days <= 31) {
+    return { unit: "Kun", title: "Kunlar bo'yicha", points: daily.map((d) => point(d.day, fmtDay(d.day), fmtDay(d.day), [d])) };
+  }
+  if (days <= 120) {
+    const points = [];
+    for (let i = 0; i < daily.length; i += 7) {
+      const chunk = daily.slice(i, i + 7);
+      const first = chunk[0].day, last = chunk[chunk.length - 1].day;
+      points.push(point(first, fmtDay(first), `${fmtDay(first)} – ${fmtDay(last)}`, chunk));
+    }
+    markPartial(points, daily.length % 7);
+    return { unit: "Hafta", title: "Haftalar bo'yicha", points };
+  }
+  const months = new Map();
+  for (const d of daily) {
+    const key = d.day.slice(0, 7);
+    if (!months.has(key)) months.set(key, []);
+    months.get(key).push(d);
+  }
+  const points = [...months.entries()].map(([key, rows]) => {
+    const m = Number(key.slice(5, 7)) - 1;
+    const p = point(rows[0].day, MONTHS_SHORT[m], `${MONTHS_LONG[m]} ${key.slice(0, 4)}`, rows);
+    p.days = rows.length;
+    return p;
+  });
+  const lastMonth = points[points.length - 1];
+  const [y, mo] = lastMonth.day.slice(0, 7).split("-").map(Number);
+  markPartial(points, lastMonth.days < new Date(y, mo, 0).getDate() ? lastMonth.days : 0);
+  return { unit: "Oy", title: "Oylar bo'yicha", points };
+}
+
 // --- columns: one bar per hour / weekday, the busiest one in colour ---------
 
 function columns(containerId, axisId, points, axisLabel, tipText, peakId, peakText) {
@@ -3385,7 +3429,7 @@ function columns(containerId, axisId, points, axisLabel, tipText, peakId, peakTe
   document.getElementById(axisId).replaceChildren(...points.map((p, i) =>
     el("span", {}, i % every === 0 ? axisLabel(p) : "")));
   document.getElementById(peakId).replaceChildren(
-    ...(hasData ? ["Eng faol: ", el("b", {}, peakText(peak))] : ["Ma'lumot yo'q"]));
+    ...(hasData ? ["eng faol: ", el("b", {}, peakText(peak))] : ["ma'lumot yo'q"]));
 }
 
 function hbars(containerId, rows, total, mutedKey) {
@@ -3405,64 +3449,34 @@ function hbars(containerId, rows, total, mutedKey) {
   }));
 }
 
-// A single 100% bar and its legend. Parts are drawn in a fixed order so a
-// colour always means the same outcome, whichever parts this period has.
-const STATUS_PARTS = [
-  ["completed", "var(--st-good)"],
-  ["confirmed", "var(--series-1)"],
-  ["scheduled", "var(--st-pending)"],
-  ["no_show", "var(--st-serious)"],
-  ["cancelled", "var(--st-critical)"],
-];
-const SOURCE_PARTS = [
-  ["bot", "var(--series-1)"],
-  ["operator", "var(--series-2)"],
-  ["webapp", "var(--series-3)"],
-];
-
-function stack(containerId, rows, parts) {
-  const node = document.getElementById(containerId);
-  const total = rows.reduce((n, r) => n + r.count, 0);
-  if (!total) {
-    node.replaceChildren(el("div", { class: "report-empty" }, "Bu davrda qabul yo'q"));
-    return;
+// "Qachon yozishadi": one card, by hour or by weekday.
+let WHEN = { hour: [], day: [] };
+let WHEN_MODE = "hour";
+function renderWhen() {
+  const hh = (h) => String(h).padStart(2, "0");
+  for (const b of document.querySelectorAll("#whenMode button")) b.setAttribute("aria-pressed", String(b.dataset.mode === WHEN_MODE));
+  if (WHEN_MODE === "hour") {
+    document.getElementById("whenSub").textContent = "Soat bo'yicha, Toshkent vaqti";
+    columns("reportWhen", "reportWhenAxis", WHEN.hour.map((count, hour) => ({ hour, count })),
+      (p) => hh(p.hour),
+      (p) => `${hh(p.hour)}:00–${hh(p.hour)}:59 — ${p.count} xabar`,
+      "reportWhenPeak", (p) => `${hh(p.hour)}:00–${hh((p.hour + 1) % 24)}:00`);
+  } else {
+    document.getElementById("whenSub").textContent = "Hafta kunlari bo'yicha";
+    columns("reportWhen", "reportWhenAxis", WHEN.day.map((count, day) => ({ day, count })),
+      (p) => WEEKDAYS_SHORT[p.day],
+      (p) => `${WEEKDAYS_LONG[(p.day + 1) % 7]}: ${p.count} xabar`,
+      "reportWhenPeak", (p) => WEEKDAYS_LONG[(p.day + 1) % 7]);
   }
-  const order = new Map(parts.map(([key], i) => [key, i]));
-  const colour = new Map(parts);
-  const sorted = [...rows].sort((a, b) => (order.get(a.key) ?? 99) - (order.get(b.key) ?? 99));
-  const fill = (r) => colour.get(r.key) || "var(--viz-muted)";
-  const pct = (r) => Math.round((r.count / total) * 100);
-  node.replaceChildren(
-    el("div", { class: "bar100", role: "presentation" }, sorted.map((r) =>
-      withTip(el("span", { style: `flex:${r.count};background:${fill(r)}` }), `${r.label}: ${r.count} (${pct(r)}%)`))),
-    el("ul", {}, sorted.map((r) => el("li", {},
-      el("i", { class: "sw", style: `background:${fill(r)}` }),
-      el("span", {}, r.label),
-      el("b", {}, r.count),
-      el("small", {}, `${pct(r)}%`)))));
 }
-
-const RECENT_LIMIT = 5;
-let RECENT_EXPANDED = false;
-let RECENT_ROWS = [];
-
-function renderRecent() {
-  const rows = RECENT_EXPANDED ? RECENT_ROWS : RECENT_ROWS.slice(0, RECENT_LIMIT);
-  document.getElementById("reportRecent").replaceChildren(...(rows.length
-    ? rows.map((c) => el("div", { class: "complaint" },
-        el("span", { class: "rp-who" }, c.patient),
-        el("span", { class: "when" }, localDateTime(c.at)),
-        el("span", { class: "what" }, c.text),
-        c.categories.length ? el("span", { class: "tags" }, c.categories.map((t) => el("span", {}, t))) : null))
-    : [el("div", { class: "report-empty" }, "Bu davrda shikoyat yozilgan qabul yo'q")]));
-  const more = document.getElementById("reportRecentMore");
-  more.hidden = RECENT_ROWS.length <= RECENT_LIMIT;
-  more.textContent = RECENT_EXPANDED ? "Kamroq ko'rsatish" : `Hammasini ko'rsatish (${RECENT_ROWS.length})`;
-}
-document.getElementById("reportRecentMore").addEventListener("click", () => {
-  RECENT_EXPANDED = !RECENT_EXPANDED;
-  renderRecent();
+document.getElementById("whenMode").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-mode]");
+  if (!b) return;
+  WHEN_MODE = b.dataset.mode;
+  renderWhen();
 });
+
+const TOP_COMPLAINTS = 5;
 
 async function loadReport() {
   for (const chip of document.querySelectorAll("#tab-report .chip[data-days]")) {
@@ -3483,53 +3497,49 @@ async function loadReport() {
   document.getElementById("reportPeriod").textContent =
     `${withYear(r.start)} – ${withYear(r.end)} · oldingi ${r.days} kun bilan solishtirilgan`;
 
-  document.getElementById("rpActive").textContent = fmtNumber(r.active_patients.value);
+  // 1. Wrote -> booked -> how much of the booking the bot did.
+  const active = r.active_patients.value;
+  document.getElementById("rpActive").textContent = fmtNumber(active);
   document.getElementById("rpActiveDelta").replaceChildren(delta(r.active_patients));
-  const mini = [
-    ["Bemor xabarlari", fmtNumber(r.patient_messages.value)],
-    ["Rasm yuborganlar", fmtNumber(r.photo_patients.value)],
-    ["Operator javoblari", `${fmtNumber(r.human_share_percent.value)}%`],
-  ];
-  document.getElementById("rpMini").replaceChildren(...mini.map(([k, v]) => el("div", {}, el("dt", {}, k), el("dd", {}, v))));
 
-  DAILY_POINTS = r.daily;
+  const pct = r.conversion_percent.value;
+  const booked = Math.round((active * pct) / 100);
+  document.getElementById("rpBooked").textContent = active ? `${fmtNumber(pct)}%` : "—";
+  const before = r.conversion_percent.previous;
+  document.getElementById("rpBookedOf").replaceChildren(
+    active ? `${fmtNumber(active)} tadan ${fmtNumber(booked)} tasi` : "bu davrda bemor yozmagan",
+    active && before ? el("small", {}, ` · oldin ${fmtNumber(before)}%`) : "");
+
+  const sources = r.appointment_source;
+  const allBooked = sources.reduce((n, s) => n + s.count, 0);
+  const byBot = (sources.find((s) => s.key === "bot") || { count: 0 }).count;
+  document.getElementById("rpBot").textContent = allBooked ? `${Math.round((byBot / allBooked) * 100)}%` : "—";
+  document.getElementById("rpBotOf").textContent = allBooked ? `${fmtNumber(allBooked)} ta qabuldan ${fmtNumber(byBot)} tasi` : "bu davrda qabul yo'q";
+
+  const series = bucketDaily(r.daily, r.days);
+  document.getElementById("rpChartTitle").textContent = series.title;
+  document.getElementById("rpTableHead").textContent = series.unit;
+  DAILY_POINTS = series.points;
   drawLine();
-  fill("reportDailyTable", r.daily.map((p) => el("tr", {},
-    el("td", {}, fmtDay(p.day)), el("td", {}, p.patients), el("td", {}, p.appointments))));
+  fill("reportDailyTable", series.points.map((p) => el("tr", {},
+    el("td", {}, p.tip), el("td", {}, p.patients), el("td", {}, p.appointments))));
 
-  const tiles = [
-    kpiTile("Yangi bemorlar", fmtNumber(r.new_patients.value), r.new_patients),
-    kpiTile("Yaratilgan qabullar", fmtNumber(r.appointments_created.value), r.appointments_created),
-    kpiTile("Qabulga yozilganlar", `${fmtNumber(r.conversion_percent.value)}%`, r.conversion_percent, { meter: r.conversion_percent.value }),
-    r.median_response_seconds
-      ? kpiTile("Javob vaqti (mediana)", fmtDuration(r.median_response_seconds.value), r.median_response_seconds, { lowerIsBetter: true })
-      : el("div", { class: "kpi" }, el("span", {}, "Javob vaqti (mediana)"), el("b", {}, "—"), el("span", { class: "rp-delta" }, "bu davrda javob yo'q")),
-  ];
-  document.getElementById("reportKpis").replaceChildren(...tiles);
-
+  // 2. What they come with: the top few, the rest folded, the unknown a note.
+  const known = r.complaints.filter((c) => c.key !== "unknown");
+  const unknown = r.complaints.find((c) => c.key === "unknown");
+  const rows = known.slice(0, TOP_COMPLAINTS);
+  const rest = known.slice(TOP_COMPLAINTS).reduce((n, c) => n + c.count, 0);
+  if (rest) rows.push({ key: "other", label: "Boshqalar", count: rest });
   document.getElementById("reportComplaintSub").textContent =
-    `${r.complaint_patients} bemor muammosini aytgan · ${r.enquiry_patients} bemor narx yoki qabul haqida so'ragan`;
-  hbars("reportComplaints", r.complaints, r.active_patients.value, "unknown");
+    `${r.complaint_patients} bemor muammosini aytgan · ${r.enquiry_patients} tasi narx yoki qabul haqida so'ragan`;
+  hbars("reportComplaints", rows, active, "other");
+  document.getElementById("reportUnknown").textContent = unknown && unknown.count
+    ? `${unknown.count} bemorning murojaati aniqlanmadi — yozganidan muammo tushunarli emas.`
+    : "";
 
-  document.getElementById("reportStatusSub").textContent =
-    `Davrda yaratilgan ${fmtNumber(r.appointments_created.value)} ta qabul`;
-  stack("reportStatus", r.appointment_status, STATUS_PARTS);
-  stack("reportSource", r.appointment_source, SOURCE_PARTS);
-
-  const hh = (h) => String(h).padStart(2, "0");
-  columns("reportHours", "reportHoursAxis", r.by_hour.map((count, hour) => ({ hour, count })),
-    (p) => hh(p.hour),
-    (p) => `${hh(p.hour)}:00–${hh(p.hour)}:59 — ${p.count} xabar`,
-    "reportHoursPeak", (p) => `${hh(p.hour)}:00–${hh(p.hour + 1 === 24 ? 0 : p.hour + 1)}:00`);
-  columns("reportWeekdays", "reportWeekdaysAxis", r.by_weekday.map((count, day) => ({ day, count })),
-    (p) => WEEKDAYS_SHORT[p.day],
-    (p) => `${WEEKDAYS_LONG[(p.day + 1) % 7]}: ${p.count} xabar`,
-    "reportWeekdaysPeak", (p) => WEEKDAYS_LONG[(p.day + 1) % 7]);
-
-  RECENT_ROWS = r.recent_complaints;
-  RECENT_EXPANDED = false;
-  document.getElementById("reportRecentCount").textContent = RECENT_ROWS.length ? `${RECENT_ROWS.length} ta` : "";
-  renderRecent();
+  // 3. When they write.
+  WHEN = { hour: r.by_hour, day: r.by_weekday };
+  renderWhen();
 }
 
 document.querySelector("#tab-report .report-range").addEventListener("click", (e) => {
