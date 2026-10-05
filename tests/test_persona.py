@@ -56,6 +56,17 @@ def test_the_default_persona_never_states_a_price_and_asks_for_variety() -> None
     assert "aynan bir xil so'zlar bilan ikki marta yozmang" in prompt
 
 
+def test_a_price_the_clinics_own_rules_give_is_the_one_exception() -> None:
+    """The clinic tells patients asking about surgery that it costs about
+    30 million so'm. That is a rule, and the persona has to let it through
+    while still keeping prices out of the knowledge base's mouth."""
+    prompt = _render()
+
+    assert "Bitta istisno" in prompt
+    assert "Klinikaning qo'shimcha\n  qoidalari\"da biror xizmat narxini" in prompt
+    assert prompt.index("Bitta istisno") > prompt.index("hech qachon aniq raqam aytmang")
+
+
 def test_facts_reach_the_model() -> None:
     prompt = _render()
 
