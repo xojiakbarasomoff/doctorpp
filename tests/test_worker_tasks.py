@@ -193,7 +193,7 @@ async def test_process_inbound_message_passes_prior_turns_to_the_llm(
     text they were turned into.
     """
     embedding_provider = FakeEmbeddingProvider(QUERY_VECTOR)
-    llm_provider = FakeLLMProvider(reply="Implant narxi 5 000 000 so'm.")
+    llm_provider = FakeLLMProvider(reply="Ha, implant qilamiz.")
 
     with as_tenant(seed.tenant_a.id):
         await KnowledgeBaseRepository(db_session).create(

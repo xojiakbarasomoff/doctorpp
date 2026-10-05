@@ -27,7 +27,7 @@ from app.repositories.appointment import AppointmentRepository
 from app.repositories.doctor import DoctorRepository
 from app.repositories.knowledge_base import KnowledgeBaseMatch
 from app.repositories.knowledge_document import ChunkMatch
-from app.services import medical_safety
+from app.services import medical_safety, price_guard
 from app.services import persona as persona_service
 from app.services.language import conversation_script, reply_fits
 from app.services.patient_profile import Profile
@@ -68,6 +68,19 @@ patient already uses is safe, harmful or fine to keep using -- those are the \
 doctor's, at an examination. Ask at most two short questions about the \
 complaint; you are not taking a medical history. Then offer the appointment, \
 or a call if they cannot come."""
+
+# Here and not only in the persona: a clinic that saved its own copy of the
+# persona before the exception existed still forbids every price, and its
+# rules telling the assistant to quote one would lose to it.
+_PRICE_CONTRACT = """\
+Prices: never state one from the knowledge base or the uploaded files. The \
+only prices you may state are the ones the clinic's own rules ("Klinikaning \
+qo'shimcha qoidalari") tell you to state, and only when the patient asks the \
+price of that service -- not when they ask about something else, not \
+unprompted, and not for a different service. Say it as the rule does \
+(approximate if the rule says approximate), and invent no discount, range or \
+other figure, whatever the patient offers or insists on. This holds over \
+anything above that forbids all prices."""
 
 _BOOKING_CONTRACT = """\
 You can book appointments yourself, from THE APPOINTMENT BOOK below. Only \
@@ -171,6 +184,7 @@ def _build_system_prompt(
     prompt += "\n\n" + _CALLBACK_CONTRACT
     prompt += "\n\n" + _DOCTOR_CONTRACT
     prompt += "\n\n" + _MEDICAL_BOUNDS_CONTRACT
+    prompt += "\n\n" + _PRICE_CONTRACT
     if appointment_book is not None:
         prompt += "\n\n" + _BOOKING_CONTRACT + appointment_book
     return prompt
@@ -315,11 +329,10 @@ async def generate_answer(
         recent_replies=_recent_replies(history),
         long_gap=long_gap,
     )
+    rules = await clinic_rules_for(session, tenant_id)
     system_prompt = _build_system_prompt(
         persona_service.from_settings(tenant.settings if tenant is not None else None),
-        facts=_clinic_facts(
-            tenant, resolved_settings, doctors, await clinic_rules_for(session, tenant_id)
-        ),
+        facts=_clinic_facts(tenant, resolved_settings, doctors, rules),
         matches=knowledge.faqs,
         chunks=knowledge.chunks,
         state=state,
@@ -345,13 +358,64 @@ async def generate_answer(
         conversation=conversation,
         script=script,
     )
+    reply = await _enforce_price(
+        reply,
+        provider=provider,
+        system_prompt=system_prompt,
+        conversation=conversation,
+        script=script,
+        rules=rules,
+    )
     return await _enforce_script(
         reply,
         provider=provider,
         system_prompt=system_prompt,
         conversation=conversation,
         script=script,
+        rules=rules,
     )
+
+
+_PRICE_CORRECTION = """
+
+YOUR LAST REPLY STATED A PRICE THE CLINIC HAS NOT GIVEN YOU
+It said {written}. The only sums you may ever write are the ones in the \
+clinic's own rules, and only for the service they name. Write the reply \
+again without that sum -- tell the patient the exact price is given by \
+telephone, with the clinic's number -- keeping everything else, and any \
+[[...]] marker, the same. Send only the corrected reply."""
+
+
+async def _enforce_price(
+    reply: str,
+    *,
+    provider: LLMProvider,
+    system_prompt: str,
+    conversation: Sequence[ChatMessage],
+    script: str,
+    rules: Sequence[str],
+) -> str:
+    """The reply, with no sum of money the clinic's rules do not give.
+
+    The prompt alone let the knowledge base's price list through two times in
+    eight once a rule allowed one price -- see app.services.price_guard. One
+    rewrite, like the medical guard; a second miss is replaced by a line that
+    sends the patient to the telephone, never sent.
+    """
+    wrong = price_guard.check(reply, rules)
+    if not wrong:
+        return reply
+    logger.warning("price_not_allowed", extra={"amounts": wrong, "reply": reply[:300]})
+    instruction = _PRICE_CORRECTION.format(written=", ".join(wrong))
+    try:
+        second = await provider.generate(system_prompt + instruction, list(conversation))
+    except Exception:
+        logger.exception("price_rewrite_failed")
+        return price_guard.SAFE_REPLIES.get(script, price_guard.SAFE_REPLIES["uz-latn"])
+    if medical_safety.check(second) is None and not price_guard.check(second, rules):
+        return second
+    logger.error("price_not_allowed_again", extra={"reply": second[:300]})
+    return price_guard.SAFE_REPLIES.get(script, price_guard.SAFE_REPLIES["uz-latn"])
 
 
 async def _enforce_script(
@@ -361,6 +425,7 @@ async def _enforce_script(
     system_prompt: str,
     conversation: Sequence[ChatMessage],
     script: str,
+    rules: Sequence[str] = (),
 ) -> str:
     """The reply, rewritten once if it came back in the wrong language or
     alphabet.
@@ -381,7 +446,7 @@ async def _enforce_script(
     except Exception:
         logger.exception("reply_script_rewrite_failed")
         return reply
-    if medical_safety.check(second) is not None:
+    if medical_safety.check(second) is not None or price_guard.check(second, rules):
         return reply
     if not reply_fits(second, script):
         logger.warning("reply_wrong_script_again", extra={"script": script})

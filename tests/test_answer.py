@@ -14,6 +14,7 @@ from app.repositories.knowledge_document import (
     KnowledgeChunkRepository,
     KnowledgeDocumentRepository,
 )
+from app.services import price_guard
 from app.services.answer import generate_answer
 from app.services.patient_profile import Profile
 from app.services.persona import DEFAULT_PROMPT
@@ -676,3 +677,193 @@ async def test_a_second_miss_is_still_sent_rather_than_nothing(
 
     assert reply == "Tushundim, qachondan beri?"
     assert len(llm.calls) == 2
+
+
+# --- the two prices the clinic quotes ----------------------------------------
+#
+# The clinic tells patients the consultation is 300 000 so'm and surgery about
+# 30 million, each only when asked about it; every other price stays unsaid.
+# What a live model does with this is checked by hand against OpenAI; these
+# pin what it is given, and that nothing on the way out swallows the answer.
+
+CONSULTATION_RULE = (
+    "Faqat bemor qabul (konsultatsiya) narxini so'raganda, qabul narxi 300 000 so'm "
+    "ekanini ayting. Bemor narxni so'ramasa, o'zingizdan qabul narxini aytmang."
+)
+SURGERY_RULE = (
+    "Bemor amaliyot (operatsiya) narxini so'rasa, taxminan 30 mln so'm atrofida ekanini "
+    "ayting; aniq summa ko'rik va tahlildan keyin shifokor tomonidan belgilanishini "
+    "qo'shing va telefon raqamini bering."
+)
+PRICE_RULES = {"strict_rules": [CONSULTATION_RULE, SURGERY_RULE]}
+
+
+async def test_the_clinics_price_rules_reach_the_model_with_leave_to_quote_them(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    _, llm = await _ask(
+        db_session, seed, as_tenant, "Qabul narxi qancha?", tenant_settings=PRICE_RULES
+    )
+
+    prompt = llm.calls[0][0]
+    assert f"- {CONSULTATION_RULE}" in prompt
+    assert f"- {SURGERY_RULE}" in prompt
+    assert "The only prices you may state are the ones the clinic's own rules" in prompt
+    assert "only when the patient asks the price of that service" in prompt
+    assert "never state one from the knowledge base" in prompt
+
+
+async def test_a_clinic_with_its_own_old_persona_can_still_quote_a_ruled_price(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """A persona saved from the dashboard before the exception existed says
+    "never a price" and nothing else; the contract after it still lets the
+    rules through, and says it outranks it."""
+    old = DEFAULT_PROMPT.split("Bitta istisno")[0]
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Operatsiya qancha turadi?",
+        tenant_settings={**PRICE_RULES, "assistant_prompt": old},
+    )
+
+    prompt = llm.calls[0][0]
+    assert "Bitta istisno" not in prompt
+    assert "hech qachon aniq raqam aytmang" in prompt
+    assert prompt.index("This holds over anything above") > prompt.index(
+        "hech qachon aniq raqam aytmang"
+    )
+    assert f"- {SURGERY_RULE}" in prompt
+
+
+async def test_no_rules_no_leave_to_quote_anything(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """The contract permits only what a rule names: with none, the knowledge
+    base's own price stays under the persona's ban."""
+    _, llm = await _ask(db_session, seed, as_tenant, "Konsultatsiya narxi qancha?", with_faq=True)
+
+    prompt = llm.calls[0][0]
+    assert "Klinikaning qo'shimcha qoidalari (ularga amal qiling)" not in prompt
+    assert "Konsultatsiya 150 000 so'm." in prompt  # retrieved, and forbidden
+    assert "never state one from the knowledge base" in prompt
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Qabul narxi 300 000 so'm. Yozib qo'yaymi?",
+        "Amaliyot taxminan 30 mln so'm atrofida, aniq summani shifokor ko'rikdan keyin "
+        "aytadi. Telefon: +998 71 200 03 93",
+        "Операция стоит примерно 30 млн сум, точную сумму врач скажет после осмотра.",
+        "Приём стоит 300 000 сум.",
+    ],
+)
+async def test_a_quoted_price_is_sent_as_written(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    reply: str,
+) -> None:
+    """Neither the price guard, the medical guard nor the alphabet check
+    takes a price a rule gives for something to rewrite: one call, the
+    reply unchanged."""
+    russian = any("а" <= ch <= "я" for ch in reply)
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Сколько стоит?" if russian else "Qancha turadi?",
+        reply=reply,
+        tenant_settings=PRICE_RULES,
+    )
+
+    assert result == reply
+    assert len(llm.calls) == 1
+
+
+async def test_a_price_from_the_knowledge_base_is_rewritten_out(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """What the live model did two times in eight once a rule allowed one
+    price: answer "UZI narxi?" from the uploaded price list."""
+    leaked = "Buyrak UZI 200 000 so'm, prostata UZI 250 000 so'm."
+    fixed = "UZI narxini telefon orqali aniqlashtirib beramiz: +998 71 200 03 93."
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "UZI narxi qancha?",
+        reply=[leaked, fixed],
+        tenant_settings=PRICE_RULES,
+    )
+
+    assert result == fixed
+    assert len(llm.calls) == 2
+    assert "It said 200 000 so'm, 250 000 so'm." in llm.calls[1][0]
+
+
+async def test_a_price_said_twice_is_never_sent(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Operatsiyani 20 mln ga qilib bering",
+        reply=["Mayli, 20 mln ga kelishamiz.", "Yaxshi, 20 mln so'm bo'ladi."],
+        tenant_settings=PRICE_RULES,
+    )
+
+    assert "20" not in result
+    assert result == price_guard.SAFE_REPLIES["uz-latn"]
+    assert len(llm.calls) == 2
+
+
+async def test_without_rules_no_price_is_sent_at_all(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    result, _ = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Konsultatsiya narxi qancha?",
+        with_faq=True,
+        reply=["Konsultatsiya 150 000 so'm.", "Narxni telefon orqali aytamiz."],
+    )
+
+    assert result == "Narxni telefon orqali aytamiz."
+
+
+async def test_an_alphabet_rewrite_cannot_bring_a_price_back(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """The reply passed the price guard in the wrong alphabet; the corrected
+    one, which quotes the knowledge base, is not sent in its place."""
+    first = "Narxni telefon orqali aniqlashtirib beramiz."
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "УЗИ нархи қанча?",
+        reply=[first, "УЗИ 200 000 сўм."],
+        tenant_settings=PRICE_RULES,
+    )
+
+    assert len(llm.calls) == 2
+    assert result == first
