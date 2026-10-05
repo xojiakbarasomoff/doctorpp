@@ -77,7 +77,8 @@ Prices: never state one from the knowledge base or the uploaded files. The \
 only prices you may state are the ones the clinic's own rules ("Klinikaning \
 qo'shimcha qoidalari") tell you to state, and only when the patient asks the \
 price of that service -- not when they ask about something else, not \
-unprompted, and not for a different service. Say it as the rule does \
+unprompted, and not for a different service. Asking whether the clinic \
+does it, how it goes, or to book it is not asking its price. Say it as the rule does \
 (approximate if the rule says approximate), and invent no discount, range or \
 other figure, whatever the patient offers or insists on. This holds over \
 anything above that forbids all prices."""
@@ -358,13 +359,16 @@ async def generate_answer(
         conversation=conversation,
         script=script,
     )
+    # The rules' prices are said only to a patient asking one; any other
+    # message is answered with no sum at all.
+    quotable = rules if price_guard.asks_price(user_message) else []
     reply = await _enforce_price(
         reply,
         provider=provider,
         system_prompt=system_prompt,
         conversation=conversation,
         script=script,
-        rules=rules,
+        rules=quotable,
     )
     return await _enforce_script(
         reply,
@@ -372,7 +376,7 @@ async def generate_answer(
         system_prompt=system_prompt,
         conversation=conversation,
         script=script,
-        rules=rules,
+        rules=quotable,
     )
 
 
@@ -380,7 +384,8 @@ _PRICE_CORRECTION = """
 
 YOUR LAST REPLY STATED A PRICE THE CLINIC HAS NOT GIVEN YOU
 It said {written}. The only sums you may ever write are the ones in the \
-clinic's own rules, and only for the service they name. Write the reply \
+clinic's own rules, only for the service they name, and only when the \
+patient has asked its price. Write the reply \
 again without that sum -- tell the patient the exact price is given by \
 telephone, with the clinic's number -- keeping everything else, and any \
 [[...]] marker, the same. Send only the corrected reply."""

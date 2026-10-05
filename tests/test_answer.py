@@ -695,7 +695,12 @@ SURGERY_RULE = (
     "ayting; aniq summa ko'rik va tahlildan keyin shifokor tomonidan belgilanishini "
     "qo'shing va telefon raqamini bering."
 )
-PRICE_RULES = {"strict_rules": [CONSULTATION_RULE, SURGERY_RULE]}
+DENERVATION_RULE = (
+    "Bemor denervatsiya operatsiyasi (tez bo'shalishni davolash operatsiyasi) narxini "
+    "so'rasa, taxminan $1000 atrofida ekanini ayting; aniq summa ko'rikdan keyin "
+    "belgilanishini qo'shing. Narxini so'ramasa, o'zingizdan aytmang."
+)
+PRICE_RULES = {"strict_rules": [CONSULTATION_RULE, SURGERY_RULE, DENERVATION_RULE]}
 
 
 async def test_the_clinics_price_rules_reach_the_model_with_leave_to_quote_them(
@@ -710,6 +715,7 @@ async def test_the_clinics_price_rules_reach_the_model_with_leave_to_quote_them(
     prompt = llm.calls[0][0]
     assert f"- {CONSULTATION_RULE}" in prompt
     assert f"- {SURGERY_RULE}" in prompt
+    assert f"- {DENERVATION_RULE}" in prompt
     assert "The only prices you may state are the ones the clinic's own rules" in prompt
     assert "only when the patient asks the price of that service" in prompt
     assert "never state one from the knowledge base" in prompt
@@ -764,6 +770,8 @@ async def test_no_rules_no_leave_to_quote_anything(
         "aytadi. Telefon: +998 71 200 03 93",
         "Операция стоит примерно 30 млн сум, точную сумму врач скажет после осмотра.",
         "Приём стоит 300 000 сум.",
+        "Denervatsiya operatsiyasi taxminan $1000 atrofida, aniq summa ko'rikdan keyin.",
+        "Денервация стоит примерно 1000 долларов.",
     ],
 )
 async def test_a_quoted_price_is_sent_as_written(
@@ -867,3 +875,30 @@ async def test_an_alphabet_rewrite_cannot_bring_a_price_back(
 
     assert len(llm.calls) == 2
     assert result == first
+
+
+@pytest.mark.parametrize(
+    "message", ["Denervatsiya operatsiyasini qilasizlarmi?", "Ertaga qabulga yozilsam bo'ladimi?"]
+)
+async def test_a_rules_price_is_not_said_to_a_patient_who_did_not_ask(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+    message: str,
+) -> None:
+    """What the live model did two times in three: "do you do denervation?"
+    answered with the $1000 the rule gives for when its price is asked."""
+    volunteered = "Ha, qilamiz. Denervatsiya taxminan $1000 atrofida. Qachon kelasiz?"
+    fixed = "Ha, qilamiz. Qachon kelishingiz qulay?"
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        message,
+        reply=[volunteered, fixed],
+        tenant_settings=PRICE_RULES,
+    )
+
+    assert result == fixed
+    assert len(llm.calls) == 2
+    assert "only when the patient has asked its price" in llm.calls[1][0]

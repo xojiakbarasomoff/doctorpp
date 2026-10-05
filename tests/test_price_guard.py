@@ -10,6 +10,7 @@ RULES = [
     "Faqat bemor qabul (konsultatsiya) narxini so'raganda, qabul narxi 300 000 so'm "
     "ekanini ayting.",
     "Bemor amaliyot narxini so'rasa, taxminan 30 mln so'm atrofida ekanini ayting.",
+    "Bemor denervatsiya operatsiyasi narxini so'rasa, taxminan $1000 atrofida ekanini ayting.",
 ]
 
 
@@ -27,6 +28,11 @@ RULES = [
         ("200 000", 200_000),
         ("$500", 500),
         ("300 тыс. сум", 300_000),
+        ("300 000 so'mdan", 300_000),
+        ("1000 долларов", 1_000),
+        ("1000 dollarga", 1_000),
+        ("1 000 USD", 1_000),
+        ("30 миллионов сум", 30_000_000),
     ],
 )
 def test_sums_however_they_are_written(text: str, value: int) -> None:
@@ -42,6 +48,7 @@ def test_sums_however_they_are_written(text: str, value: int) -> None:
         "45 yoshdaman, 3 kundan beri og'riyapti",
         "1000 dan ortiq bemor",
         "Klinika metrodan 5 km uzoqda",
+        "Umumiy summa ko'rikdan keyin aytiladi",
         "[[BOOK:2026-10-06T10:00|Ali Valiyev|+998901234567|prostatit]]",
         "Aniq summa ko'rikdan keyin belgilanadi.",
     ],
@@ -59,6 +66,9 @@ def test_what_is_not_money_is_left_alone(text: str) -> None:
         "Операция стоит примерно 30 000 000 сум.",
         "Qabul 300 000, amaliyot esa taxminan 30 mln so'm.",
         "Telefon: +998 71 200 03 93, kutamiz.",
+        "Denervatsiya taxminan $1000 atrofida.",
+        "Денервация стоит примерно 1000 долларов.",
+        "Denervatsiya narxi 1 000 USD atrofida.",
     ],
 )
 def test_the_sums_the_rules_give_pass_in_any_spelling(reply: str) -> None:
@@ -73,6 +83,8 @@ def test_the_sums_the_rules_give_pass_in_any_spelling(reply: str) -> None:
         ("Mayli, 20 mln ga qilib beramiz.", ["20 mln"]),
         ("Операция стоит 5 млн.", ["5 млн."]),
         ("Qabul 250 000.", ["250 000"]),
+        ("Denervatsiya $1500 bo'ladi.", ["$1500"]),
+        ("Mayli, 800 dollarga kelishamiz.", ["800 dollarga"]),
     ],
 )
 def test_a_sum_no_rule_gives_is_caught(reply: str, caught: list[str]) -> None:
@@ -81,3 +93,38 @@ def test_a_sum_no_rule_gives_is_caught(reply: str, caught: list[str]) -> None:
 
 def test_with_no_rules_every_sum_is_caught() -> None:
     assert price_guard.check("Qabul narxi 300 000 so'm.", []) == ["300 000 so'm"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Qabul narxi qancha?",
+        "Konsultatsiya necha pul?",
+        "doktorga ko'rinish qancha turadi",
+        "denervatsiya narxi",
+        "Денервация операцияси нархи қанча?",
+        "Сколько стоит денервация?",
+        "Цена операции?",
+        "Operatsiyani 20 mln ga qilib bering",
+        "Chegirma bormi?",
+    ],
+)
+def test_a_patient_asking_a_price(message: str) -> None:
+    assert price_guard.asks_price(message)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Denervatsiya operatsiyasini qilasizlarmi?",
+        "Denervatsiya qanday o'tadi, og'riqli bo'ladimi?",
+        "Tez bo'shalish bo'yicha shifokorga yozilmoqchiman",
+        "Assalomu alaykum",
+        "Ertaga qabulga yozilsam bo'ladimi?",
+        "Ismim Ali, 90 123 45 67, prostatit bo'yicha",
+        "Manzilingiz qayerda?",
+        "Ish vaqtingiz qanday?",
+    ],
+)
+def test_a_patient_not_asking_one(message: str) -> None:
+    assert not price_guard.asks_price(message)

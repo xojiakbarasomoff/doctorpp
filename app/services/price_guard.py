@@ -37,15 +37,21 @@ _MULTIPLIERS = {
     "млрд": 1_000_000_000,
     "миллиард": 1_000_000_000,
 }
-_CURRENCY = r"so['‘ʻ’`]?m|сўм|сум|sum|uzs|\$|usd|dollar|доллар|руб|rubl|€|eur"
-_MULTIPLIER = "|".join(sorted(map(re.escape, _MULTIPLIERS), key=len, reverse=True))
+# Words take their endings ("so'mdan", "долларов", "millionga", "тысячи");
+# "k", "sum" and the codes do not, so "5 km" and "summa" stay words.
+_CURRENCY = r"(?:so['‘ʻ’`]?m|сўм|сум|dollar|доллар|руб|rubl)\w*" r"|(?:sum|uzs|usd|eur)(?!\w)|\$|€"
+_MULTIPLIER = (
+    "(?:"
+    + "|".join(sorted((re.escape(w) for w in _MULTIPLIERS if w != "k"), key=len, reverse=True))
+    + r")\w*|k(?!\w)"
+)
 _NUMBER = r"\d+(?:[ \u00a0\u202f.,]\d{3})*(?:[.,]\d{1,2})?"
 
 # A number followed by a multiplier and/or a currency, or a currency sign in
-# front of one. The lookarounds keep "k" and "sum" from matching inside words.
+# front of one.
 _WITH_UNIT = re.compile(
     rf"(?<![\w+])(?P<cur>\$|€)?\s?(?P<num>{_NUMBER})\s*"
-    rf"(?:(?P<mul>{_MULTIPLIER})\.?(?![\w]))?\s*(?P<unit>(?:{_CURRENCY})(?![\w]))?",
+    rf"(?:(?P<mul>{_MULTIPLIER})\.?)?\s*(?P<unit>{_CURRENCY})?",
     re.IGNORECASE,
 )
 # "200 000" with nothing after it: thousands groups ending in 000.
@@ -66,7 +72,9 @@ def _value(number: str, multiplier: str | None) -> Decimal | None:
     except InvalidOperation:
         return None
     if multiplier:
-        value *= _MULTIPLIERS[multiplier.lower()]
+        word = multiplier.lower()
+        stem = max((w for w in _MULTIPLIERS if word.startswith(w)), key=len)
+        value *= _MULTIPLIERS[stem]
     return value
 
 
@@ -99,6 +107,23 @@ def check(reply: str, rules: Sequence[str]) -> list[str]:
     """The sums in `reply` that no rule gives, as written. Empty when fine."""
     permitted = allowed(rules)
     return [written for written, value in amounts(reply) if value not in permitted]
+
+
+# Words a patient asking a price uses. "Denervatsiya qilasizlarmi?" is not
+# one, and the live model answered it with the price two times in three
+# although the rule said only when asked -- so a sum is let through only
+# when the message being answered asks for one.
+_ASKS_PRICE = re.compile(
+    r"narx|нарх|qancha|қанча|necha\s*pul|неча\s*пул|\bpul|\bпул|to['‘ʻ’`]?lov|тўлов"
+    r"|сколько|стоим|стоит|цен[аыуе]|поч[её]м|chegirma|чегирма|скидк|arzon|арзон"
+    r"|qimmat|қиммат|price|cost|dollar|доллар|so['‘ʻ’`]m|сўм|\bсум|mln|млн|\$",
+    re.IGNORECASE,
+)
+
+
+def asks_price(message: str) -> bool:
+    """Whether the patient's message asks what something costs."""
+    return bool(_ASKS_PRICE.search(message))
 
 
 SAFE_REPLIES = {
