@@ -290,3 +290,10 @@ def test_the_pieces_of_files_are_cut_off_whole_at_the_limit() -> None:
     assert "[a]" in prompt
     assert "[b]" not in prompt
     assert "[c]" not in prompt
+
+
+def test_the_persona_no_longer_tells_the_assistant_to_promise_to_write_back() -> None:
+    prompt = _render()
+
+    assert "Aniqlab, hozir yozaman." not in prompt
+    assert "shifokorimizga yetkazaman, u shu yerda javob beradi" in prompt

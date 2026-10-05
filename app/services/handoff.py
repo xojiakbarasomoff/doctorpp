@@ -40,7 +40,17 @@ _HANDOVER_WORDS = re.compile(
     r"|(клиника\s+)?бот(и|га|ига)\s+юбор"
     r"|врач\s+(сам|лично)\s+(вам\s+)?(ответ|напиш|позвон)"
     r"|переда(м|дим|л[аи]?)\s+(ваш\w*\s+)?(вопрос\s+|номер\s+|контакт\w*\s+)?врачу"
-    r"|уточн(ю|им)\s+у\s+врача|сообщ(у|им)\s+врачу",
+    r"|уточн(ю|им)\s+у\s+врача|сообщ(у|им)\s+врачу"
+    # Promising to come back. The assistant only speaks when the patient
+    # writes, so "Aniqlab, hozir yozaman" -- which the persona itself once
+    # told it to say -- left a patient waiting on nobody. A person keeps it.
+    r"|hozir\s+(aniqlab\s+)?(yozaman|yozib\s+beraman|aytaman|aytib\s+beraman"
+    r"|xabar\s+beraman|bilib\s+(beraman|aytaman))"
+    r"|aniqlab\s+(beraman|yozaman|aytaman|bilib)"
+    rf"|bir\s+daqiqa|ko{_A}rib\s+(chiqib\s+)?(yozaman|aytaman|beramiz)"
+    r"|ҳозир\s+(аниқлаб\s+)?(ёзаман|айтаман|хабар\s+бераман)|аниқлаб\s+(бераман|ёзаман|айтаман)"
+    r"|бир\s+дақиқа"
+    r"|сейчас\s+(уточн|узна|напиш|отвеч)|минутк|одну\s+минуту|уточню\s+и\s+(напиш|отве)",
     re.IGNORECASE,
 )
 

@@ -78,3 +78,35 @@ def test_a_handover_in_words_is_caught_without_the_marker(reply: str) -> None:
 )
 def test_ordinary_replies_are_not_handovers(reply: str) -> None:
     assert handoff.extract(reply) == (reply, False)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Aniqlab, hozir yozaman.",
+        "Hozir aniqlab beraman.",
+        "Bir daqiqa, ko'rib chiqib yozaman.",
+        "Аниқлаб, ҳозир ёзаман.",
+        "Сейчас уточню и напишу.",
+        "Минутку, узнаю.",
+    ],
+)
+def test_a_promise_to_come_back_is_kept_by_a_person(reply: str) -> None:
+    """The assistant only speaks when the patient writes. "Aniqlab, hozir
+    yozaman" -- which the persona once told it to say -- is a promise only a
+    person can keep, so the conversation goes to the top of the inbox."""
+    assert handoff.extract(reply)[1] is True
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Ertaga 10:00 ga hozir yozib qo'yaman.",
+        "Hozir ish vaqti tugagan, ertaga 09:00 da ochamiz.",
+        "Narxni telefon orqali aniqlashtirib beramiz.",
+        "Telefon orqali aniqlab olishingiz mumkin.",
+        "Записать вас на завтра?",
+    ],
+)
+def test_booking_and_telephone_lines_are_not_promises(reply: str) -> None:
+    assert handoff.extract(reply)[1] is False
