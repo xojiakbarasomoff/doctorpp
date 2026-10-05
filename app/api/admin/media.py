@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
@@ -184,6 +184,37 @@ async def mark_patient_seen(
             PatientMedia.user_id == user_id,
             PatientMedia.tenant_id == get_current_tenant(),
             PatientMedia.status == PatientMediaStatus.NEW,
+        )
+        .values(status=PatientMediaStatus.REVIEWED)
+    )
+    await session.commit()
+    return {"updated": result.rowcount}  # type: ignore[attr-defined]
+
+
+class MarkAllSeen(BaseModel):
+    # The patients the screen showed (a search may have narrowed it), and the
+    # newest photo it showed: one that arrives while somebody reaches for the
+    # button was not seen, and stays new.
+    user_ids: list[uuid.UUID] = Field(max_length=2000)
+    up_to: datetime
+
+
+@router.post("/seen", dependencies=[Depends(verify_csrf_header)])
+async def mark_all_seen(
+    payload: MarkAllSeen,
+    operator: Operator = Depends(require_patient_access),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict[str, int]:
+    """ "Hammasini ko'rildi": every unseen photo on the screen, at once."""
+    if not payload.user_ids:
+        return {"updated": 0}
+    result = await session.execute(
+        update(PatientMedia)
+        .where(
+            PatientMedia.tenant_id == get_current_tenant(),
+            PatientMedia.user_id.in_(payload.user_ids),
+            PatientMedia.status == PatientMediaStatus.NEW,
+            PatientMedia.created_at <= payload.up_to,
         )
         .values(status=PatientMediaStatus.REVIEWED)
     )

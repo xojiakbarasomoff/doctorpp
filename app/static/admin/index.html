@@ -1031,6 +1031,7 @@
       <label class="check"><input type="checkbox" id="mediaUnseen"> Faqat ko'rilmaganlar</label>
       <span class="tb-spacer"></span>
       <span class="media-summary" id="mediaSummary"></span>
+      <button type="button" class="act primary" id="mediaAllSeen" hidden>✓ Hammasini ko'rildi</button>
     </div>
     <div class="media-list" id="mediaList"></div>
   </section>
@@ -3043,6 +3044,7 @@ function renderMedia() {
   const unseen = MEDIA.reduce((n, p) => n + p.unseen, 0);
   document.getElementById("mediaSummary").textContent =
     MEDIA.length ? `${MEDIA.length} bemor · ${photos} rasm · ${unseen} ta ko'rilmagan` : "";
+  document.getElementById("mediaAllSeen").hidden = !unseen;
   if (!MEDIA.length) {
     list.replaceChildren(emptyState("image", "Hozircha rasm yo'q", "Bemor chatda rasm yuborsa, shu yerda paydo bo'ladi"));
     return;
@@ -3072,6 +3074,33 @@ async function markPatientSeen(p) {
     await loadMedia();
   } catch (err) {
     toast(err.message, true);
+  }
+}
+
+// Every unseen photo on the screen at once -- only the patients it shows
+// (a search narrows it) and only up to the newest photo it shows, so one
+// that arrives meanwhile stays new.
+async function markAllMediaSeen() {
+  const people = MEDIA.filter((p) => p.unseen > 0);
+  const photos = people.reduce((n, p) => n + p.unseen, 0);
+  if (!photos) return;
+  if (!await uiConfirm(`${photos} ta rasm ko'rildi deb belgilansinmi?
+
+${people.length} ta bemorning hamma yangi rasmlari ko'rilgan bo'ladi.`)) return;
+  const upTo = MEDIA.reduce((latest, p) => (p.last_at > latest ? p.last_at : latest), "");
+  const button = document.getElementById("mediaAllSeen");
+  button.disabled = true;
+  try {
+    const { updated } = await api("/media/seen", {
+      method: "POST",
+      body: { user_ids: people.map((p) => p.user_id), up_to: upTo },
+    });
+    toast(`${updated} ta rasm ko'rildi deb belgilandi`);
+    await loadMedia();
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -3145,6 +3174,7 @@ document.getElementById("mediaSearch").addEventListener("input", () => {
   clearTimeout(MEDIA_SEARCH_TIMER);
   MEDIA_SEARCH_TIMER = setTimeout(() => loadMedia().catch((err) => toast(err.message, true)), 250);
 });
+document.getElementById("mediaAllSeen").addEventListener("click", markAllMediaSeen);
 document.getElementById("mediaUnseen").addEventListener("change", () => {
   loadMedia().catch((err) => toast(err.message, true));
 });

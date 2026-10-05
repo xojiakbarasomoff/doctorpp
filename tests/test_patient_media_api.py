@@ -6,10 +6,12 @@ Who can fetch them, and what they can be once fetched.
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import CSRF_HEADER
@@ -17,6 +19,7 @@ from app.core.db import get_db_session
 from app.core.session import SESSION_COOKIE_NAME, create_session_cookie
 from app.main import app
 from app.models.patient_media import PatientMedia
+from app.models.user import User
 from app.repositories.operator import OperatorRepository
 from app.services import patient_media
 from tests.conftest import Seed
@@ -166,3 +169,151 @@ async def test_an_oversized_image_is_not_downloaded() -> None:
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         assert await patient_media.download("https://lookaside.fbsbx.com/x", http=http) is None
+
+
+# --- "Hammasini ko'rildi" -----------------------------------------------------
+
+T0 = datetime(2026, 10, 5, 9, 0, tzinfo=UTC)
+
+
+async def _photo_at(
+    session: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID, minutes: int
+) -> uuid.UUID:
+    media = PatientMedia(
+        tenant_id=tenant_id,
+        user_id=user_id,
+        source_url="https://lookaside.fbsbx.com/x",
+        content=PNG,
+        content_type="image/png",
+        size_bytes=len(PNG),
+        created_at=T0 + timedelta(minutes=minutes),
+    )
+    session.add(media)
+    await session.flush()
+    return media.id
+
+
+async def _statuses(session: AsyncSession, *ids: uuid.UUID) -> list[str]:
+    rows = (
+        await session.execute(
+            select(PatientMedia.id, PatientMedia.status).where(PatientMedia.id.in_(ids))
+        )
+    ).all()
+    by_id = dict(rows)
+    return [by_id[i] for i in ids]
+
+
+async def _second_patient(session: AsyncSession, seed: Seed) -> uuid.UUID:
+    user = User(
+        tenant_id=seed.tenant_a.id, channel_id=seed.a.user.channel_id, external_id="ig-second"
+    )
+    session.add(user)
+    await session.flush()
+    return user.id
+
+
+async def test_every_unseen_photo_on_the_screen_is_marked_seen_at_once(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed: Seed, front_desk: Any
+) -> None:
+    other = await _second_patient(db_session, seed)
+    photos = [
+        await _photo_at(db_session, seed.tenant_a.id, seed.a.user.id, 0),
+        await _photo_at(db_session, seed.tenant_a.id, seed.a.user.id, 1),
+        await _photo_at(db_session, seed.tenant_a.id, other, 2),
+    ]
+    csrf = _login(client, front_desk.id)
+
+    screen = (await client.get("/api/admin/media", params={"only_unseen": True})).json()
+    response = await client.post(
+        "/api/admin/media/seen",
+        json={"user_ids": [p["user_id"] for p in screen], "up_to": screen[0]["last_at"]},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"updated": 3}
+    assert await _statuses(db_session, *photos) == ["reviewed"] * 3
+    assert (await client.get("/api/admin/media", params={"only_unseen": True})).json() == []
+
+
+async def test_a_photo_that_arrives_meanwhile_stays_new(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed: Seed, front_desk: Any
+) -> None:
+    shown = await _photo_at(db_session, seed.tenant_a.id, seed.a.user.id, 0)
+    csrf = _login(client, front_desk.id)
+    screen = (await client.get("/api/admin/media")).json()
+    later = await _photo_at(db_session, seed.tenant_a.id, seed.a.user.id, 5)
+
+    await client.post(
+        "/api/admin/media/seen",
+        json={"user_ids": [screen[0]["user_id"]], "up_to": screen[0]["last_at"]},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert await _statuses(db_session, shown, later) == ["reviewed", "new"]
+
+
+async def test_only_the_patients_on_the_screen_are_marked(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed: Seed, front_desk: Any
+) -> None:
+    """A search narrowed the screen to one patient; the other was not seen."""
+    other = await _second_patient(db_session, seed)
+    shown = await _photo_at(db_session, seed.tenant_a.id, seed.a.user.id, 0)
+    hidden = await _photo_at(db_session, seed.tenant_a.id, other, 1)
+    csrf = _login(client, front_desk.id)
+
+    await client.post(
+        "/api/admin/media/seen",
+        json={"user_ids": [str(seed.a.user.id)], "up_to": (T0 + timedelta(hours=1)).isoformat()},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert await _statuses(db_session, shown, hidden) == ["reviewed", "new"]
+
+
+async def test_another_clinics_photos_are_never_marked(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed: Seed, front_desk: Any
+) -> None:
+    theirs = await _photo_at(db_session, seed.tenant_b.id, seed.b.user.id, 0)
+    csrf = _login(client, front_desk.id)
+
+    response = await client.post(
+        "/api/admin/media/seen",
+        json={"user_ids": [str(seed.b.user.id)], "up_to": (T0 + timedelta(hours=1)).isoformat()},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.json() == {"updated": 0}
+    assert await _statuses(db_session, theirs) == ["new"]
+
+
+async def test_marking_all_seen_needs_the_csrf_token_and_patient_access(
+    client: httpx.AsyncClient, db_session: AsyncSession, seed: Seed, front_desk: Any
+) -> None:
+    photo = await _photo_at(db_session, seed.tenant_a.id, seed.a.user.id, 0)
+    body = {"user_ids": [str(seed.a.user.id)], "up_to": (T0 + timedelta(hours=1)).isoformat()}
+
+    _login(client, front_desk.id)
+    no_token = await client.post("/api/admin/media/seen", json=body)
+    view_only_csrf = _login(client, seed.a.operator.id)
+    view_only = await client.post(
+        "/api/admin/media/seen", json=body, headers={CSRF_HEADER: view_only_csrf}
+    )
+
+    assert no_token.status_code == 403
+    assert view_only.status_code == 403
+    assert await _statuses(db_session, photo) == ["new"]
+
+
+async def test_nothing_on_the_screen_marks_nothing(
+    client: httpx.AsyncClient, seed: Seed, front_desk: Any
+) -> None:
+    csrf = _login(client, front_desk.id)
+
+    response = await client.post(
+        "/api/admin/media/seen",
+        json={"user_ids": [], "up_to": T0.isoformat()},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert response.json() == {"updated": 0}
