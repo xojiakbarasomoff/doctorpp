@@ -43,9 +43,12 @@ Resource = Literal["appointments", "leads", "conversations"]
 # a person typing into a browser, and the parameters it can carry should be
 # the ones the endpoint would have accepted from that browser anyway.
 ALLOWED_PARAMS: dict[str, frozenset[str]] = {
-    "appointments": frozenset({"date", "days", "status", "source"}),
-    "leads": frozenset({"status", "limit"}),
-    "conversations": frozenset({"status", "only_taken_over", "limit"}),
+    # "offset" is days from today: a view saved on Monday as "today" means
+    # today when it is opened on Friday. "date" is kept so views saved before
+    # still load; the dashboard reads it as today.
+    "appointments": frozenset({"date", "offset", "days", "status", "source"}),
+    "leads": frozenset({"status", "q", "limit"}),
+    "conversations": frozenset({"status", "only_taken_over", "needs_doctor", "q", "limit"}),
 }
 
 # A filter is a handful of controls, not a document. The cap is here so a

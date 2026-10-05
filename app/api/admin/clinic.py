@@ -138,9 +138,10 @@ async def list_leads(
     operator: Operator = Depends(get_current_operator),
     session: AsyncSession = Depends(get_db_session),
     status_filter: str | None = Query(default=None, alias="status"),
+    q: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[LeadOut]:
-    leads = await LeadRepository(session).list_recent(status=status_filter, limit=limit)
+    leads = await LeadRepository(session).list_recent(status=status_filter, q=q, limit=limit)
     user_ids = {lead.user_id for lead in leads if lead.user_id}
     users = (
         {

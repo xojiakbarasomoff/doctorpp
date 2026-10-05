@@ -689,6 +689,13 @@
   .view-chip .view-x:hover { color: var(--danger); background: var(--danger-soft); }
   .view-add { font: inherit; font-size: 12.5px; font-weight: 600; height: 28px; padding: 0 12px; border: 1px dashed var(--rule-strong); border-radius: 999px; background: transparent; color: var(--ink-3); cursor: pointer; }
   .view-add:hover { border-color: var(--accent); color: var(--accent); }
+  .view-chip.on { border-color: var(--accent); background: var(--accent-soft); }
+  .view-chip.on button { color: var(--accent); }
+  .view-clear { font: inherit; font-size: 12.5px; font-weight: 600; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--surface-sunk); color: var(--ink-2); cursor: pointer; }
+  .view-clear:hover { color: var(--danger); background: var(--danger-soft); }
+  .more-btn { display: block; margin: 12px auto 0; font: inherit; font-size: 13px; font-weight: 600; height: 34px; padding: 0 18px; border: 1px solid var(--rule-strong); border-radius: 999px; background: var(--panel-solid); color: var(--ink-2); cursor: pointer; }
+  .more-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .more-btn[hidden] { display: none; }
 
   /* Empty states: an icon, what is missing, what to do next. */
   .empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 40px 16px; color: var(--ink-3); grid-column: 1 / -1; }
@@ -958,7 +965,8 @@
         </select>
         <select id="apptSource" aria-label="Manba" class="tb-select">
           <option value="">Barcha manbalar</option>
-          <option value="bot">Bot</option>
+          <option value="instagram">Instagram</option>
+          <option value="telegram">Telegram</option>
           <option value="operator">Operator</option>
           <option value="webapp">Web-ilova</option>
         </select>
@@ -987,7 +995,7 @@
     <div class="chat-workspace" id="chatWorkspace">
     <div class="panel">
       <div class="toolbar">
-        <input id="chatSearch" type="search" class="tb-search" placeholder="Ism yoki @username bo'yicha qidirish" autocomplete="off">
+        <input id="chatSearch" type="search" class="tb-search" placeholder="Ism, @username yoki telefon bo'yicha qidirish" autocomplete="off">
         <button id="chatSearchClear" class="act" hidden>Tozalash</button>
         <span id="chatSearchHint" class="muted"></span>
         <span class="tb-spacer"></span>
@@ -1000,6 +1008,7 @@
         <thead><tr><th>Bemor</th><th>Kanal</th><th>Oxirgi xabar</th><th>Bot</th><th></th></tr></thead>
         <tbody id="chatRows"></tbody>
       </table></div>
+      <button type="button" class="more-btn" id="chatMore" hidden>Yana ko'rsatish</button>
     </div>
     <div class="panel" id="threadPanel" hidden>
       <div class="row" style="justify-content:space-between;align-items:flex-start;gap:10px">
@@ -1127,6 +1136,7 @@
         <thead><tr><th>Bemor</th><th>Telefon</th><th>Nima uchun</th><th>Qachon</th><th>Holat</th><th></th></tr></thead>
         <tbody id="leadRows"></tbody>
       </table></div>
+      <button type="button" class="more-btn" id="leadMore" hidden>Yana ko'rsatish</button>
     </div>
   </section>
 
@@ -1342,11 +1352,15 @@ function toast(message, bad) {
 
 async function api(path, options) {
   const opts = Object.assign({ headers: {} }, options || {});
+  // Every write echoes the session's CSRF token back -- a DELETE too, which
+  // has no body: it used to be sent only alongside one, so deleting a saved
+  // view or a staff account was refused with 403. The token is bound into
+  // the signed session cookie, which a cross-site page cannot read.
+  if (!["GET", "HEAD"].includes((opts.method || "GET").toUpperCase())) {
+    opts.headers["X-CSRF-Token"] = CSRF;
+  }
   if (opts.body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
-    // Every write echoes the session's CSRF token back. The token is bound
-    // into the signed session cookie, which a cross-site page cannot read.
-    opts.headers["X-CSRF-Token"] = CSRF;
     opts.body = JSON.stringify(opts.body);
   }
   const response = await fetch(API + path, opts);
@@ -1610,12 +1624,16 @@ document.getElementById("apptRange").addEventListener("click", (e) => {
   const p = rangeParams(button.dataset.range);
   document.getElementById("apptDate").value = p.date;
   document.getElementById("apptDays").value = p.days;
+  forgetActiveView("appointments");
   loadAppointments().catch((err) => toast(err.message, true));
 });
 
 // Filters apply as soon as they change; there is no "show" button to forget.
 for (const id of ["apptDate", "apptStatus", "apptSource"]) {
-  document.getElementById(id).addEventListener("change", () => loadAppointments().catch((err) => toast(err.message, true)));
+  document.getElementById(id).addEventListener("change", () => {
+    forgetActiveView("appointments");
+    loadAppointments().catch((err) => toast(err.message, true));
+  });
 }
 
 document.getElementById("newAppt").addEventListener("click", () => {
@@ -1887,9 +1905,17 @@ function patientLabel(c) {
 // is actually looking for.
 let CHAT_SEARCH = "";
 let CHAT_SEARCH_TIMER = null;
+// How many rows a list asks for; "Yana ko'rsatish" asks for more. The API
+// gives at most LIST_MAX.
+const PAGE = 50;
+const LIST_MAX = 500;
+let CHATS_LIMIT = PAGE;
+let LEADS_LIMIT = 100;
 
 function onChatSearch(value) {
   CHAT_SEARCH = value.trim();
+  CHATS_LIMIT = PAGE;
+  forgetActiveView("conversations");
   document.getElementById("chatSearchClear").hidden = !CHAT_SEARCH;
   // Typed, not submitted: waiting a beat turns "asomov" into one request
   // instead of six.
@@ -1915,8 +1941,11 @@ async function loadChats(options = {}) {
   await loadBotSwitch();
   const params = new URLSearchParams(LIST_PARAMS.conversations);
   if (CHAT_SEARCH) params.set("q", CHAT_SEARCH);
+  params.set("limit", String(CHATS_LIMIT));
   const rows = await api("/conversations?" + params);
   if (seq !== CHATS_SEQ) return;
+  // A full page may have more behind it.
+  document.getElementById("chatMore").hidden = rows.length < CHATS_LIMIT || CHATS_LIMIT >= LIST_MAX;
   document.getElementById("chatSearchHint").textContent =
     CHAT_SEARCH ? `"${CHAT_SEARCH}" bo'yicha ${rows.length} ta suhbat` : "";
 
@@ -2147,25 +2176,30 @@ document.addEventListener("keydown", (e) => {
 const LEAD_STATUSES = { new: "Qo'ng'iroq qilinmagan", contacted: "Qo'ng'iroq qilindi", booked: "Qabulga yozildi", cancelled: "Bekor qilindi" };
 
 async function loadLeads() {
+  // Searched and filtered by the server, over every lead the clinic has --
+  // not over the hundred newest the page happened to hold.
   const params = new URLSearchParams(LIST_PARAMS.leads);
-  const rows = await api("/leads?" + params);
-  const unseen = rows.filter((l) => l.status === "new").length;
+  const q = document.getElementById("leadSearch").value.trim();
+  if (q) params.set("q", q);
+  if (document.getElementById("leadOnlyNew").checked) params.set("status", "new");
+  params.set("limit", String(LEADS_LIMIT));
+  const [rows, waiting] = await Promise.all([
+    api("/leads?" + params),
+    api("/leads?status=new&limit=" + LIST_MAX),
+  ]);
+  const shown = rows;
+  const unseen = waiting.length;
   const badge = document.getElementById("leadsBadge");
-  badge.textContent = String(unseen);
+  badge.textContent = unseen >= LIST_MAX ? LIST_MAX + "+" : String(unseen);
   badge.hidden = !unseen;
-
-  const q = document.getElementById("leadSearch").value.trim().replace(/^@/, "").toLowerCase();
-  const onlyNew = document.getElementById("leadOnlyNew").checked && !params.get("status");
-  const shown = rows.filter((l) =>
-    (!onlyNew || l.status === "new") &&
-    (!q || [l.patient_name, l.username, l.phone, l.topic].some((v) => (v || "").toLowerCase().includes(q))));
+  document.getElementById("leadMore").hidden = rows.length < LEADS_LIMIT || LEADS_LIMIT >= LIST_MAX;
 
   document.getElementById("leadSummary").textContent =
-    `${rows.length} ta so'rov · ${unseen} tasiga hali qo'ng'iroq qilinmagan`;
+    `${rows.length} ta ko'rsatilgan · ${unseen} tasiga hali qo'ng'iroq qilinmagan`;
 
   if (!shown.length) {
     fill("leadRows", [el("tr", {}, el("td", { colspan: "6", class: "muted", style: "text-align:center;padding:28px" },
-      rows.length ? "Filtrga mos so'rov yo'q" : "Hali hech kim qo'ng'iroq qilishni so'ramagan"))]);
+      q || params.get("status") ? "Filtrga mos so'rov yo'q" : "Hali hech kim qo'ng'iroq qilishni so'ramagan"))]);
     return;
   }
   fill("leadRows", shown.map((l) => {
@@ -2210,10 +2244,24 @@ async function updateLead(id, status) {
 
 let LEAD_SEARCH_TIMER = null;
 document.getElementById("leadSearch").addEventListener("input", () => {
+  LEADS_LIMIT = 100;
+  forgetActiveView("leads");
   clearTimeout(LEAD_SEARCH_TIMER);
-  LEAD_SEARCH_TIMER = setTimeout(() => loadLeads().catch((err) => toast(err.message, true)), 200);
+  LEAD_SEARCH_TIMER = setTimeout(() => loadLeads().catch((err) => toast(err.message, true)), 250);
 });
-document.getElementById("leadOnlyNew").addEventListener("change", () => loadLeads().catch((err) => toast(err.message, true)));
+document.getElementById("leadOnlyNew").addEventListener("change", () => {
+  LEADS_LIMIT = 100;
+  forgetActiveView("leads");
+  loadLeads().catch((err) => toast(err.message, true));
+});
+document.getElementById("leadMore").addEventListener("click", () => {
+  LEADS_LIMIT = Math.min(LEADS_LIMIT + 100, LIST_MAX);
+  loadLeads().catch((err) => toast(err.message, true));
+});
+document.getElementById("chatMore").addEventListener("click", () => {
+  CHATS_LIMIT = Math.min(CHATS_LIMIT + PAGE, LIST_MAX);
+  loadChats().catch((err) => toast(err.message, true));
+});
 
 async function loadDoctors() {
   const rows = await api("/doctors?include_inactive=true");
@@ -2744,6 +2792,11 @@ function applyPermissions() {
   // Suggestions quote patients and, once accepted, change the bot: clinic admins only.
   document.querySelector('#tabs button[data-tab="suggest"]').hidden = !canManageClinic();
   for (const node of document.querySelectorAll('[data-perm="clinic"]')) node.hidden = !canManageClinic();
+  // The report and the photos are patient data; a view-only account gets 403
+  // on both, so it is not shown the doors.
+  document.querySelector('#tabs button[data-tab="report"]').hidden = !canManage();
+  document.querySelector('#tabs button[data-tab="media"]').hidden = !canManage();
+  document.getElementById("newAppt").hidden = !canManage();
   for (const id of ["doctorForm", "faqForm", "settingsForm", "assistantForm", "fileForm"]) {
     const form = document.getElementById(id);
     if (form) form.hidden = !canManageClinic();
@@ -2757,13 +2810,20 @@ function applyPermissions() {
 // controls make.
 
 let SAVED_VIEWS = [];
-// Lists whose controls do not live in the page yet still carry parameters —
-// a saved view sets these, the loaders send them.
+// Parameters a saved view carries that have no control on the page (an old
+// view's chat "status", say). Sent with the list's requests while the view
+// is on, and shown as an active view so they are never in force unseen.
 const LIST_PARAMS = { conversations: {}, leads: {} };
+// The view each list is showing, if any: highlighted, with a way back.
+const ACTIVE_VIEW = { appointments: null, conversations: null, leads: null };
 
 async function loadViews() {
   SAVED_VIEWS = await api("/filters");
   renderViews();
+}
+
+function hasHiddenParams(resource) {
+  return resource !== "appointments" && Object.keys(LIST_PARAMS[resource]).length > 0;
 }
 
 function renderViews() {
@@ -2771,13 +2831,17 @@ function renderViews() {
     const holder = document.getElementById("views-" + resource);
     if (!holder) continue;
     const mine = SAVED_VIEWS.filter((v) => v.resource === resource);
+    const active = ACTIVE_VIEW[resource];
     const chips = mine.map((view) =>
-      el("span", { class: "view-chip" },
-        el("button", { type: "button", onclick: () => applyView(view) }, view.name),
+      el("span", { class: "view-chip" + (active === view.id ? " on" : "") },
+        el("button", { type: "button", "aria-pressed": String(active === view.id), onclick: () => applyView(view) }, view.name),
         canManageClinic()
           ? el("button", { type: "button", class: "view-x", title: "Ko'rinishni o'chirish", "aria-label": `${view.name}: o'chirish`, onclick: () => removeView(view) }, "×")
           : null)
     );
+    if (active || hasHiddenParams(resource)) {
+      chips.push(el("button", { type: "button", class: "view-clear", title: "Filtrlarni tozalash", onclick: () => clearView(resource) }, "× Tozalash"));
+    }
     if (canManageClinic()) {
       chips.push(el("button", { type: "button", class: "view-add", onclick: () => saveView(resource) }, "+ Ko'rinishni saqlash"));
     }
@@ -2785,23 +2849,105 @@ function renderViews() {
   }
 }
 
-async function applyView(view) {
-  if (view.resource === "appointments") {
-    applyParams("appointments", view.params);
-    await loadAppointments();
-  } else {
-    LIST_PARAMS[view.resource] = view.params;
-    await (view.resource === "leads" ? loadLeads() : loadChats());
+// A control changed by hand: the screen no longer shows the saved view.
+function forgetActiveView(resource) {
+  if (!ACTIVE_VIEW[resource]) return;
+  ACTIVE_VIEW[resource] = null;
+  renderViews();
+}
+
+// Days from today to a yyyy-mm-dd, in the clinic's own calendar.
+function dayOffset(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const [ty, tm, td] = today().split("-").map(Number);
+  return Math.round((Date.UTC(y, m - 1, d) - Date.UTC(ty, tm - 1, td)) / 86400000);
+}
+
+function dayFromOffset(offset) {
+  const day = new Date();
+  day.setDate(day.getDate() + Number(offset));
+  return isoDay(day);
+}
+
+// What a view saves: the controls as they stand. The day is kept as days
+// from today -- a view saved as "today" is today whenever it is opened, not
+// the date it happened to be saved on.
+function viewParams(resource) {
+  if (resource === "appointments") {
+    const { date, ...rest } = currentParams("appointments");
+    return { ...rest, offset: dayOffset(date) };
   }
+  if (resource === "conversations") {
+    return dropEmpty({ ...LIST_PARAMS.conversations, q: CHAT_SEARCH });
+  }
+  return dropEmpty({
+    ...LIST_PARAMS.leads,
+    q: document.getElementById("leadSearch").value.trim(),
+    status: document.getElementById("leadOnlyNew").checked ? "new" : LIST_PARAMS.leads.status,
+  });
+}
+
+async function applyView(view) {
+  const params = { ...view.params };
+  if (view.resource === "appointments") {
+    // An old view holds a fixed date; it was saved to mean "this day", and
+    // the only day that still means is today.
+    if ("offset" in params) params.date = dayFromOffset(params.offset);
+    else if ("date" in params) params.date = today();
+    applyParams("appointments", params);
+    markRange();
+    await loadAppointments();
+  } else if (view.resource === "conversations") {
+    const { q = "", ...hidden } = params;
+    LIST_PARAMS.conversations = hidden;
+    CHAT_SEARCH = String(q);
+    CHATS_LIMIT = PAGE;
+    document.getElementById("chatSearch").value = CHAT_SEARCH;
+    document.getElementById("chatSearchClear").hidden = !CHAT_SEARCH;
+    await loadChats();
+  } else {
+    const { q = "", status, ...hidden } = params;
+    document.getElementById("leadSearch").value = String(q);
+    document.getElementById("leadOnlyNew").checked = status === "new";
+    LIST_PARAMS.leads = status && status !== "new" ? { ...hidden, status } : hidden;
+    LEADS_LIMIT = 100;
+    await loadLeads();
+  }
+  ACTIVE_VIEW[view.resource] = view.id;
+  renderViews();
   toast(`"${view.name}" qo'llandi`);
+}
+
+// Back to what the list shows when the page opens.
+async function clearView(resource) {
+  ACTIVE_VIEW[resource] = null;
+  if (resource === "appointments") {
+    applyParams("appointments", { ...rangeParams("today"), source: "", status: "" });
+    markRange();
+    await loadAppointments();
+  } else if (resource === "conversations") {
+    LIST_PARAMS.conversations = {};
+    CHAT_SEARCH = "";
+    CHATS_LIMIT = PAGE;
+    document.getElementById("chatSearch").value = "";
+    document.getElementById("chatSearchClear").hidden = true;
+    await loadChats();
+  } else {
+    LIST_PARAMS.leads = {};
+    LEADS_LIMIT = 100;
+    document.getElementById("leadSearch").value = "";
+    document.getElementById("leadOnlyNew").checked = true;
+    await loadLeads();
+  }
+  renderViews();
 }
 
 async function saveView(resource) {
   const name = await uiPrompt("Bu ko'rinishga nom bering:");
   if (!name) return;
-  const params = resource === "appointments" ? currentParams(resource) : LIST_PARAMS[resource];
   try {
-    await api("/filters", { method: "POST", body: { resource, name, params } });
+    const saved = await api("/filters", { method: "POST", body: { resource, name, params: viewParams(resource) } });
+    ACTIVE_VIEW[resource] = saved.id;
     toast("Ko'rinish saqlandi");
     await loadViews();
   } catch (err) {
@@ -3376,18 +3522,28 @@ function uiDialog({ title, text, danger, okText, input }) {
         text ? el("p", { class: "ui-text" }, text) : null,
         field,
         el("div", { class: "actions" },
-          el("button", { class: "act", type: "button", onclick: () => dialog.close("") }, "Bekor qilish"),
+          el("button", { class: "act", type: "button", onclick: () => finish(false) }, "Bekor qilish"),
           ok)));
+    // Answered from the buttons themselves. Waiting for the dialog's "close"
+    // event instead left the promise hanging in a browser that did not fire
+    // it, and every confirmed action -- delete, switch, save a view -- did
+    // nothing at all after "Tasdiqlash".
+    let settled = false;
+    function finish(accepted) {
+      if (settled) return;
+      settled = true;
+      if (dialog.open) dialog.close();
+      dialog.remove();
+      resolve(field ? (accepted ? field.value : null) : accepted);
+    }
     dialog.addEventListener("submit", (e) => {
       e.preventDefault();
       if (field && !field.reportValidity()) return;
-      dialog.close("ok");
+      finish(true);
     });
-    dialog.addEventListener("close", () => {
-      const answer = dialog.returnValue === "ok";
-      dialog.remove();
-      resolve(field ? (answer ? field.value : null) : answer);
-    });
+    // Esc is a cancel.
+    dialog.addEventListener("cancel", (e) => { e.preventDefault(); finish(false); });
+    dialog.addEventListener("close", () => finish(dialog.returnValue === "ok"));
     document.body.append(dialog);
     dialog.showModal();
     (field || ok).focus();

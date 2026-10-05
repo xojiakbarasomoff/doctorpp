@@ -9,6 +9,7 @@ more than a value.
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractContextManager
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -20,8 +21,11 @@ from app.api.admin.deps import CSRF_HEADER
 from app.core.db import get_db_session
 from app.core.session import SESSION_COOKIE_NAME, create_session_cookie
 from app.main import app
+from app.repositories.appointment import AppointmentRepository
+from app.repositories.lead import LeadRepository
 from app.repositories.operator import OperatorRepository
 from app.repositories.saved_filter import SavedFilterRepository
+from app.services import search
 from tests.conftest import Seed
 
 
@@ -316,3 +320,217 @@ async def test_a_deleted_view_is_gone_from_the_list(
 
     assert removed.status_code == 204
     assert (await client.get("/api/admin/filters")).json() == []
+
+
+# --- what the lists' own filters find ----------------------------------------
+#
+# The dashboard used to filter leads in the browser, over the hundred newest
+# it had loaded, and searched conversations by name only. These are the
+# server doing it instead, over everything.
+
+AsTenant = Callable[[UUID], AbstractContextManager[None]]
+
+
+def test_wildcards_typed_into_a_search_are_taken_literally() -> None:
+    assert search.like_pattern("100%") == "%100\\%%"
+    assert search.like_pattern("a_b") == "%a\\_b%"
+    assert search.like_pattern("@Asomov ") == "%asomov%"
+    assert search.like_pattern("c:\\x") == "%c:\\\\x%"
+
+
+@pytest.mark.parametrize(
+    ("typed", "digits"),
+    [("+998 90 123-45-67", "998901234567"), ("90 1234", "901234"), ("Aziza", None), ("12", None)],
+)
+def test_a_search_is_a_phone_number_once_it_has_enough_digits(
+    typed: str, digits: str | None
+) -> None:
+    assert search.phone_digits(typed) == digits
+
+
+async def _leads(db_session: AsyncSession, seed: Seed, as_tenant: AsTenant) -> None:
+    with as_tenant(seed.tenant_a.id):
+        repo = LeadRepository(db_session)
+        await repo.create(patient_name="Bekzod Aliyev", phone="+998 90 111 22 33", topic="buyrak")
+        await repo.create(
+            patient_name="Olim", phone="998935554466", topic="prostatit", status="contacted"
+        )
+        await repo.create(patient_name="Foiz 100% chegirma", phone=None, topic="narx")
+    with as_tenant(seed.tenant_b.id):
+        await LeadRepository(db_session).create(patient_name="Bekzod Boshqa", phone="+998901112233")
+    await db_session.flush()
+
+
+@pytest.mark.parametrize(
+    ("q", "expected"),
+    [
+        ("bekzod", {"Bekzod Aliyev"}),
+        ("BUYRAK", {"Bekzod Aliyev"}),
+        ("90 111 22 33", {"Bekzod Aliyev"}),
+        ("901112233", {"Bekzod Aliyev"}),
+        ("+998-93-555-44-66", {"Olim"}),
+        ("100%", {"Foiz 100% chegirma"}),
+        # Taken literally: the one lead with a "%" in it, not every lead.
+        ("%", {"Foiz 100% chegirma"}),
+        ("hech kim", set()),
+    ],
+)
+async def test_leads_are_searched_by_the_server_over_all_of_them(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    admin: Any,
+    as_tenant: AsTenant,
+    q: str,
+    expected: set[str],
+) -> None:
+    await _leads(db_session, seed, as_tenant)
+    _login_as(client, admin.id)
+
+    found = (await client.get("/api/admin/leads", params={"q": q})).json()
+
+    # The seed's own lead ("Aziza") and the other clinic's never come back.
+    assert {lead["patient_name"] for lead in found} == expected
+
+
+async def test_only_new_leads_with_a_search_is_both_conditions(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    admin: Any,
+    as_tenant: AsTenant,
+) -> None:
+    await _leads(db_session, seed, as_tenant)
+    _login_as(client, admin.id)
+
+    new_olim = (await client.get("/api/admin/leads", params={"q": "olim", "status": "new"})).json()
+    any_olim = (await client.get("/api/admin/leads", params={"q": "olim"})).json()
+
+    assert new_olim == []
+    assert [lead["patient_name"] for lead in any_olim] == ["Olim"]
+
+
+async def test_the_lead_list_can_be_asked_for_more_than_a_hundred(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    admin: Any,
+    as_tenant: AsTenant,
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        repo = LeadRepository(db_session)
+        for n in range(120):
+            await repo.create(patient_name=f"Bemor {n}", phone=f"+99890{n:07d}")
+    await db_session.flush()
+    _login_as(client, admin.id)
+
+    first = (await client.get("/api/admin/leads", params={"status": "new"})).json()
+    more = (await client.get("/api/admin/leads", params={"status": "new", "limit": 200})).json()
+
+    assert len(first) == 100
+    assert len(more) == 121  # and the seed's own
+    assert (await client.get("/api/admin/leads", params={"limit": 501})).status_code == 422
+
+
+async def test_conversations_are_found_by_the_patients_phone_however_it_is_written(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    admin: Any,
+    as_tenant: AsTenant,
+) -> None:
+    with as_tenant(seed.tenant_a.id):
+        seed.a.user.phone = "+998 97 765 43 21"
+        await LeadRepository(db_session).create(
+            patient_name="X", phone="+998 33 123 45 67", conversation_id=seed.a.conversation.id
+        )
+    with as_tenant(seed.tenant_b.id):
+        seed.b.user.phone = "+998977654321"
+    await db_session.flush()
+    _login_as(client, admin.id)
+
+    async def ids(q: str) -> list[str]:
+        rows = (await client.get("/api/admin/conversations", params={"q": q})).json()
+        return [row["id"] for row in rows]
+
+    mine = [str(seed.a.conversation.id)]
+    assert await ids("977654321") == mine  # on the patient
+    assert await ids("97-765-43-21") == mine
+    assert await ids("33 123 45 67") == mine  # on a lead they left
+    assert await ids("1234 9999") == []
+    assert await ids("_") == []  # a wildcard, taken literally
+
+
+async def test_the_conversation_list_can_be_asked_for_more(
+    client: httpx.AsyncClient, seed: Seed, admin: Any
+) -> None:
+    _login_as(client, admin.id)
+
+    assert (await client.get("/api/admin/conversations", params={"limit": 500})).status_code == 200
+    assert (await client.get("/api/admin/conversations", params={"limit": 501})).status_code == 422
+
+
+async def test_the_instagram_source_includes_bookings_written_before_channels_were(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    admin: Any,
+    as_tenant: AsTenant,
+) -> None:
+    """The bot wrote "bot" before it wrote "instagram"; the report already
+    counts both as Instagram, and the filter has to agree with it."""
+    when = datetime.now(UTC).replace(microsecond=0)
+    with as_tenant(seed.tenant_a.id):
+        repo = AppointmentRepository(db_session)
+        for minutes, source in ((5, "instagram"), (6, "bot"), (7, "telegram"), (8, "operator")):
+            await repo.create(
+                scheduled_at=when + timedelta(minutes=minutes),
+                doctor_name="Test",
+                patient_name=f"Manba {source}",
+                source=source,
+                status="scheduled",
+            )
+    await db_session.flush()
+    _login_as(client, admin.id)
+
+    async def names(source: str) -> set[str]:
+        rows = (await client.get("/api/admin/appointments", params={"source": source})).json()
+        return {r["patient_name"] for r in rows if (r["patient_name"] or "").startswith("Manba")}
+
+    assert await names("instagram") == {"Manba instagram", "Manba bot"}
+    assert await names("telegram") == {"Manba telegram"}
+    assert await names("operator") == {"Manba operator"}
+
+
+async def test_a_view_keeps_what_the_screen_shows(
+    client: httpx.AsyncClient, seed: Seed, admin: Any
+) -> None:
+    """Days from today rather than a date, and the search box -- the two
+    things a saved view used to lose."""
+    csrf = _login_as(client, admin.id)
+
+    appointments = await client.post(
+        "/api/admin/filters",
+        json={"resource": "appointments", "name": "Ertangi", "params": {"offset": 1, "days": "1"}},
+        headers={CSRF_HEADER: csrf},
+    )
+    chats = await client.post(
+        "/api/admin/filters",
+        json={
+            "resource": "conversations",
+            "name": "Doktor kutayotganlar",
+            "params": {"q": "asomov", "needs_doctor": True},
+        },
+        headers={CSRF_HEADER: csrf},
+    )
+    leads = await client.post(
+        "/api/admin/filters",
+        json={"resource": "leads", "name": "Buyrak", "params": {"q": "buyrak", "status": "new"}},
+        headers={CSRF_HEADER: csrf},
+    )
+
+    assert appointments.json()["params"] == {"offset": 1, "days": "1"}
+    assert chats.json()["params"] == {"q": "asomov", "needs_doctor": True}
+    assert leads.json()["params"] == {"q": "buyrak", "status": "new"}
+    replay = await client.get("/api/admin/conversations", params=chats.json()["params"])
+    assert replay.status_code == 200

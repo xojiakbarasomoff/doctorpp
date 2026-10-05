@@ -45,6 +45,15 @@ from app.services.sheets import AppointmentRow, mirror_appointment
 
 router = APIRouter(prefix="/api/admin", tags=["Admin — Schedule"])
 
+# A source the filter offers, and the values it covers in the column. A
+# booking the assistant made is written with its channel ("instagram",
+# "telegram"); one from before channels were recorded says "bot", and it
+# was an Instagram booking -- the report counts it as one, so the filter
+# does too.
+SOURCE_GROUPS: dict[str, frozenset[str]] = {
+    "instagram": frozenset({"instagram", "bot"}),
+}
+
 # How far back the dashboard's chart looks. Two weeks is what fits on a
 # screen without becoming unreadable, and long enough to see a week-on-week
 # change.
@@ -98,7 +107,8 @@ async def list_appointments(
     if status_filter:
         appointments = [a for a in appointments if a.status == status_filter]
     if source:
-        appointments = [a for a in appointments if a.source == source]
+        wanted = SOURCE_GROUPS.get(source, frozenset({source}))
+        appointments = [a for a in appointments if a.source in wanted]
     return [_out(appointment) for appointment in appointments]
 
 

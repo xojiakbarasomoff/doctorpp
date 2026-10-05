@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.deps import require_patient_access, verify_csrf_header
@@ -27,12 +27,13 @@ from app.core.redaction import preview
 from app.core.tenant_context import get_current_tenant
 from app.models.channel import Channel
 from app.models.conversation import Conversation
+from app.models.lead import Lead
 from app.models.message import Message, MessageSender
 from app.models.operator import Operator
 from app.models.user import User
 from app.repositories.conversation import ConversationRepository
 from app.repositories.message import MessageRepository
-from app.services import handoff
+from app.services import handoff, search
 from app.services.conversation import (
     record_outbound_message,
     reply_context_for,
@@ -127,7 +128,7 @@ async def list_conversations(
     only_taken_over: bool = Query(default=False),
     needs_doctor: bool = Query(default=False),
     q: str | None = Query(default=None, max_length=100),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=500),
 ) -> list[ConversationSummary]:
     tenant_id = get_current_tenant()
     # When each conversation last heard anything, from either side. The list
@@ -171,14 +172,29 @@ async def list_conversations(
         # from somewhere else can still paste it. The leading "@" people type
         # out of habit is stripped, and matching is case-insensitive because
         # Instagram handles are lowercase and nobody types them that way.
-        needle = f"%{q.strip().lstrip('@').lower()}%"
-        stmt = stmt.join(User, User.id == Conversation.user_id).where(
-            or_(
-                func.lower(User.username).like(needle),
-                func.lower(User.name).like(needle),
-                func.lower(User.external_id).like(needle),
-            )
-        )
+        #
+        # And by telephone, on its digits: the number is what the front desk
+        # has in hand from a callback request or the spreadsheet, written
+        # whichever way. It is on the patient, or on a lead they left here.
+        matches = [
+            search.contains(User.username, q),
+            search.contains(User.name, q),
+            search.contains(User.external_id, q),
+        ]
+        digits = search.phone_digits(q)
+        if digits:
+            matches += [
+                search.phone_contains(User.phone, digits),
+                exists().where(
+                    Lead.tenant_id == tenant_id,
+                    or_(
+                        Lead.conversation_id == Conversation.id,
+                        Lead.user_id == Conversation.user_id,
+                    ),
+                    search.phone_contains(Lead.phone, digits),
+                ),
+            ]
+        stmt = stmt.join(User, User.id == Conversation.user_id).where(or_(*matches))
     # A conversation with no messages yet sorts by when it was opened, and
     # the id breaks exact ties so a refresh never shuffles two rows that
     # arrived in the same instant -- the dashboard polls this, and rows that
