@@ -273,10 +273,12 @@
   .appt .who-col span { display: block; font-size: 12.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .appt .src { width: 80px; flex-shrink: 0; font-size: 12.5px; font-weight: 600; color: var(--ink-3); }
   .appt .pill { width: 116px; justify-content: center; flex-shrink: 0; }
-  .appt .acts { display: flex; gap: 4px; flex-shrink: 0; width: 76px; justify-content: flex-end; }
+  .appt .acts { display: flex; gap: 4px; flex-shrink: 0; width: 184px; justify-content: flex-end; }
   .appt .acts button { width: 34px; height: 34px; padding: 0; }
+  /* "Keldi" / "Kelmadi" are words, not icons: they size to their text. */
+  .appt .acts button.word { width: auto; padding: 0 10px; }
   @media (hover: hover) { .appt .acts button { opacity: 0; transition: opacity .12s; } .appt:hover .acts button, .appt:focus-within .acts button { opacity: 1; } }
-  @media (max-width: 700px) { .appt { gap: 10px; padding: 10px 8px; } .appt .src { display: none; } .appt .t { width: 42px; font-size: 13px; } .appt .av { display: none; } .appt .pill { width: auto; } .appt .acts { width: auto; } }
+  @media (max-width: 700px) { .appt { gap: 10px; padding: 10px 8px; } .appt .src { display: none; } .appt .t { width: 42px; font-size: 13px; } .appt .av { display: none; } .appt .pill { width: auto; } .appt { flex-wrap: wrap; } .appt .acts { width: 100%; justify-content: flex-start; padding-left: 52px; } .appt .acts:empty { display: none; } }
   .agenda-empty { padding: 40px 14px; text-align: center; color: var(--ink-3); margin: 0; }
 
   .more-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 14px; font-size: 13px; font-weight: 700; color: var(--accent); text-decoration: none; }
@@ -1560,10 +1562,10 @@ function appointmentRow(a, next) {
   const outcome = canManage() && due && markable
     ? [
         a.status !== "completed"
-          ? el("button", { class: "act", type: "button", title: "Bemor keldi", "aria-label": `${name}: keldi`, onclick: () => act(`/appointments/${a.id}/complete`, "Keldi deb belgilandi") }, "Keldi")
+          ? el("button", { class: "act word", type: "button", title: "Bemor keldi", "aria-label": `${name}: keldi`, onclick: () => act(`/appointments/${a.id}/complete`, "Keldi deb belgilandi") }, "Keldi")
           : null,
         a.status !== "no_show"
-          ? el("button", { class: "act", type: "button", title: "Bemor kelmadi", "aria-label": `${name}: kelmadi`, onclick: () => act(`/appointments/${a.id}/no-show`, "Kelmadi deb belgilandi") }, "Kelmadi")
+          ? el("button", { class: "act word", type: "button", title: "Bemor kelmadi", "aria-label": `${name}: kelmadi`, onclick: () => act(`/appointments/${a.id}/no-show`, "Kelmadi deb belgilandi") }, "Kelmadi")
           : null,
       ]
     : [];
