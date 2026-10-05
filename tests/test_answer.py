@@ -902,3 +902,28 @@ async def test_a_rules_price_is_not_said_to_a_patient_who_did_not_ask(
     assert result == fixed
     assert len(llm.calls) == 2
     assert "only when the patient has asked its price" in llm.calls[1][0]
+
+
+async def test_a_follow_up_to_a_price_question_gets_the_rules_price(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """ "Qabul narxi qancha?" ... "Operatsiya-chi?" -- the second has no price
+    word, and the live model's right answer was being replaced."""
+    reply = "Operatsiya taxminan 30 mln so'm atrofida, aniq summa ko'rikdan keyin."
+    result, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Operatsiya-chi?",
+        reply=reply,
+        history=[
+            {"role": "user", "content": "Qabul narxi qancha?"},
+            {"role": "assistant", "content": "Qabul narxi 300 000 so'm."},
+        ],
+        tenant_settings=PRICE_RULES,
+    )
+
+    assert result == reply
+    assert len(llm.calls) == 1

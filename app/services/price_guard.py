@@ -28,6 +28,7 @@ _MULTIPLIERS = {
     "тыс": 1_000,
     "тысяч": 1_000,
     "k": 1_000,
+    "к": 1_000,
     "mln": 1_000_000,
     "million": 1_000_000,
     "миллион": 1_000_000,
@@ -39,21 +40,42 @@ _MULTIPLIERS = {
 }
 # Words take their endings ("so'mdan", "долларов", "millionga", "тысячи");
 # "k", "sum" and the codes do not, so "5 km" and "summa" stay words.
-_CURRENCY = r"(?:so['‘ʻ’`]?m|сўм|сум|dollar|доллар|руб|rubl)\w*" r"|(?:sum|uzs|usd|eur)(?!\w)|\$|€"
+_CURRENCY = (
+    r"(?:so['‘ʻ’`]?m|сўм|сум|dollar|доллар|руб|rubl)\w*" r"|(?:sum|uzs|usd|eur)(?!\w)|\$|€|₽"
+)
+_LETTERS = ("k", "к")
 _MULTIPLIER = (
     "(?:"
-    + "|".join(sorted((re.escape(w) for w in _MULTIPLIERS if w != "k"), key=len, reverse=True))
-    + r")\w*|k(?!\w)"
+    + "|".join(
+        sorted((re.escape(w) for w in _MULTIPLIERS if w not in _LETTERS), key=len, reverse=True)
+    )
+    + r")\w*|[kк](?!\w)"
 )
 _NUMBER = r"\d+(?:[ \u00a0\u202f.,]\d{3})*(?:[.,]\d{1,2})?"
 
 # A number followed by a multiplier and/or a currency, or a currency sign in
 # front of one.
 _WITH_UNIT = re.compile(
-    rf"(?<![\w+])(?P<cur>\$|€)?\s?(?P<num>{_NUMBER})\s*"
+    rf"(?<![\w+])(?P<cur>\$|€|₽)?\s?(?P<num>{_NUMBER})\s*"
     rf"(?:(?P<mul>{_MULTIPLIER})\.?)?\s*(?P<unit>{_CURRENCY})?",
     re.IGNORECASE,
 )
+# A sum in words, "ikki yuz ming so'm" / "двести тысяч": the rules give theirs
+# in digits, so one in words is never theirs, whatever it adds up to.
+_NUMBER_WORDS = (
+    r"bir|ikki|uch|to['‘ʻ’`]?rt|besh|olti|yetti|sakkiz|to['‘ʻ’`]?qqiz|o['‘ʻ’`]?n|yigirma"
+    r"|o['‘ʻ’`]?ttiz|qirq|ellik|oltmish|yetmish|sakson|to['‘ʻ’`]?qson|yuz"
+    r"|бир|икки|уч|тўрт|беш|олти|етти|саккиз|тўққиз|ўн|йигирма|ўттиз|қирқ|эллик|юз"
+    r"|один|одна|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|двадцать"
+    r"|тридцать|сорок|пятьдесят|сто|двести|триста|четыреста|пятьсот|полтор\w*"
+)
+_SPELLED = re.compile(
+    rf"(?<!\w)(?:(?:{_NUMBER_WORDS})\s+)*(?:{_NUMBER_WORDS})\s+"
+    rf"(?:(?:{_MULTIPLIER})\s*(?:{_CURRENCY})?|(?:{_CURRENCY}))",
+    re.IGNORECASE,
+)
+# Never one of the rules' amounts: a sum in words is always caught.
+_UNKNOWN = Decimal(-1)
 # "200 000" with nothing after it: thousands groups ending in 000.
 _BARE = re.compile(r"(?<![\w+\d])\d{1,3}(?:[ \u00a0\u202f.,]\d{3})*[ \u00a0\u202f.,]000(?![\d])")
 
@@ -79,7 +101,8 @@ def _value(number: str, multiplier: str | None) -> Decimal | None:
 
 
 def amounts(text: str) -> list[tuple[str, Decimal]]:
-    """Every sum of money in `text`, as written and as a number."""
+    """Every sum of money in `text`, as written and as a number (-1 for one
+    written in words)."""
     found: list[tuple[str, Decimal]] = []
     taken: list[tuple[int, int]] = []
     for match in _WITH_UNIT.finditer(text):
@@ -89,6 +112,9 @@ def amounts(text: str) -> list[tuple[str, Decimal]]:
         if value is not None:
             found.append((match.group(0).strip(), value))
             taken.append(match.span())
+    for match in _SPELLED.finditer(text):
+        found.append((match.group(0).strip(), _UNKNOWN))
+        taken.append(match.span())
     for match in _BARE.finditer(text):
         if any(start <= match.start() < end for start, end in taken):
             continue
@@ -121,9 +147,25 @@ _ASKS_PRICE = re.compile(
 )
 
 
-def asks_price(message: str) -> bool:
-    """Whether the patient's message asks what something costs."""
-    return bool(_ASKS_PRICE.search(message))
+# "Operatsiya-chi?" / "А операция?" right after a price question asks the
+# same thing about something else, and has no price word of its own.
+_FOLLOW_UP = re.compile(r"chi\b|чи\b|^\s*[аa]\s", re.IGNORECASE)
+
+
+def asks_price(message: str, previous: str | None = None) -> bool:
+    """Whether the patient's message asks what something costs.
+
+    `previous` is the patient's message before it: a short follow-up to a
+    price question ("Operatsiya-chi?") asks one too.
+    """
+    if _ASKS_PRICE.search(message):
+        return True
+    return bool(
+        previous
+        and _ASKS_PRICE.search(previous)
+        and _FOLLOW_UP.search(message)
+        and len(message.split()) <= 4
+    )
 
 
 SAFE_REPLIES = {

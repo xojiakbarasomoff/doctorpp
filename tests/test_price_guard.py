@@ -128,3 +128,63 @@ def test_a_patient_asking_a_price(message: str) -> None:
 )
 def test_a_patient_not_asking_one(message: str) -> None:
     assert not price_guard.asks_price(message)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "UZI 200к",
+        "₽5000",
+        "€800",
+        "UZI 200 тыс",
+        "Analiz 80 ming",
+        "Narxi 25-35 mln",
+        "200 000сум",
+        "1.000.000 so'm",
+        "ikki yuz ming so'm",
+        "двести тысяч сум",
+        "o'ttiz million",
+        "полтора миллиона",
+    ],
+)
+def test_found_by_the_audit_however_it_is_written(reply: str) -> None:
+    assert price_guard.check(reply, RULES)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Tel: +998 (71) 200-03-93",
+        "Natija 3-5 kunda tayyor bo'ladi, 1-2 soat davom etadi.",
+        "100% tiklanish kafolatlanmaydi",
+        "Chilonzor 1-kvartal, 15-uy, 2-qavat, kabinet 205",
+        "Shifokor 20 yillik tajribaga ega",
+        "PSA 4 ng/ml dan yuqori bo'lsa",
+        "Bir kun, ikki hafta yoki uch marta -- yuz foiz o'n kun ichida",
+        "Ming rahmat!",
+        "[[CALLBACK:+998 90 123 45 67|qabul|ertaga 10 da]]",
+        "0,3 mln so'm",  # the consultation, written another way
+        "300 000 UZS",
+    ],
+)
+def test_left_alone_by_the_audit(reply: str) -> None:
+    assert price_guard.check(reply, RULES) == []
+
+
+@pytest.mark.parametrize(
+    ("message", "previous", "asks"),
+    [
+        ("Operatsiya-chi?", "Qabul narxi qancha?", True),
+        ("operatsiyachi", "Qabul narxi qancha?", True),
+        ("А денервация?", "Сколько стоит приём?", True),
+        ("Rahmat", "Qabul narxi qancha?", False),
+        ("Yaxshi, ertaga yozilaman", "Qabul narxi qancha?", False),
+        ("Denervatsiya ham qilasizlarmi?", "Qabul narxi qancha?", False),
+        ("Operatsiya-chi?", None, False),
+        ("Operatsiya-chi?", "Salom", False),
+    ],
+)
+def test_a_short_follow_up_to_a_price_question_asks_one_too(
+    message: str, previous: str | None, asks: bool
+) -> None:
+    assert price_guard.asks_price(message, previous) is asks
