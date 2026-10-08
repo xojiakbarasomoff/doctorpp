@@ -17,9 +17,8 @@ from app.models.message import Message
 from app.rag.llm import ChatMessage, LLMProvider
 from app.repositories.message import MessageRepository
 from app.services import message_labels, voice_notes
-from app.services.patient_media import ACKNOWLEDGEMENTS
 from app.workers.tasks import (
-    SHARE_QUESTIONS,
+    ATTACHMENT_GREETINGS,
     answer_attachment,
     answer_voice_note,
     process_inbound_message,
@@ -299,7 +298,7 @@ async def _attachment(
 
 
 @pytest.mark.parametrize("kind", [message_labels.VIDEO, message_labels.FILE])
-async def test_a_video_or_a_file_waits_on_the_doctor_and_is_acknowledged(
+async def test_a_video_or_a_file_waits_on_the_doctor_and_is_greeted(
     db_session: AsyncSession, seed: Seed, as_tenant: AsTenant, kind: str
 ) -> None:
     await _conversation(
@@ -308,12 +307,12 @@ async def test_a_video_or_a_file_waits_on_the_doctor_and_is_acknowledged(
 
     sent = await _attachment(db_session, seed, kind)
 
-    assert [text for _, _, text in sent] == [ACKNOWLEDGEMENTS["uz-latn"]]
+    assert [text for _, _, text in sent] == [ATTACHMENT_GREETINGS["uz-latn"]]
     conversation = await db_session.get(Conversation, seed.a.conversation.id)
     assert conversation is not None and conversation.needs_doctor_since is not None
 
 
-async def test_a_second_video_in_the_same_burst_is_not_acknowledged_twice(
+async def test_a_second_video_the_same_day_is_not_greeted_twice(
     db_session: AsyncSession, seed: Seed, as_tenant: AsTenant
 ) -> None:
     await _conversation(db_session, seed, as_tenant, [("patient", "🎞 Video yubordi")])
@@ -325,7 +324,7 @@ async def test_a_second_video_in_the_same_burst_is_not_acknowledged_twice(
     assert len(first) == 1 and second == []
 
 
-async def test_a_shared_reel_gets_one_question_a_day(
+async def test_a_shared_reel_is_greeted_once_a_day(
     db_session: AsyncSession, seed: Seed, as_tenant: AsTenant
 ) -> None:
     await _conversation(
@@ -338,7 +337,7 @@ async def test_a_shared_reel_gets_one_question_a_day(
     first = await _attachment(db_session, seed, message_labels.SHARE)
     second = await _attachment(db_session, seed, message_labels.SHARE)
 
-    assert [text for _, _, text in first] == [SHARE_QUESTIONS["ru"]]
+    assert [text for _, _, text in first] == [ATTACHMENT_GREETINGS["ru"]]
     assert second == []
     conversation = await db_session.get(Conversation, seed.a.conversation.id)
     assert conversation is not None and conversation.needs_doctor_since is None
@@ -360,13 +359,27 @@ async def test_nothing_is_said_where_staff_have_taken_over_but_a_video_still_pin
     assert conversation.needs_doctor_since is not None
 
 
-@pytest.mark.parametrize("kind", [message_labels.STICKER, message_labels.STORY, "bogus"])
-async def test_nothing_else_is_ever_answered(
+@pytest.mark.parametrize("kind", [message_labels.STICKER, message_labels.STORY, ""])
+async def test_a_sticker_a_story_mention_or_anything_unnamed_is_greeted(
     db_session: AsyncSession, seed: Seed, as_tenant: AsTenant, kind: str
 ) -> None:
+    """The clinic wants every wordless message answered with a greeting and
+    an offer of help -- not a question about what it was for, not silence."""
     await _conversation(db_session, seed, as_tenant, [("patient", "🏷 Stiker yubordi")])
 
-    assert await _attachment(db_session, seed, kind) == []
+    sent = await _attachment(db_session, seed, kind)
+
+    assert [text for _, _, text in sent] == [ATTACHMENT_GREETINGS["uz-latn"]]
+    conversation = await db_session.get(Conversation, seed.a.conversation.id)
+    assert conversation is not None and conversation.needs_doctor_since is None
+
+
+async def test_a_reaction_is_never_answered(
+    db_session: AsyncSession, seed: Seed, as_tenant: AsTenant
+) -> None:
+    await _conversation(db_session, seed, as_tenant, [("patient", "💟 Reaksiya bildirdi: ❤️")])
+
+    assert await _attachment(db_session, seed, message_labels.REACTION) == []
 
 
 async def test_the_voice_note_explanation_is_given_once_a_day(

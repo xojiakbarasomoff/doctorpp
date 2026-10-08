@@ -1008,12 +1008,14 @@ async def answer_attachment(
     session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] = db_session,
     adapter: ChannelAdapter | None = None,
 ) -> None:
-    """ARQ job: a video, a file or a shared post -- answered without the model.
+    """ARQ job: anything sent without words -- a video, a file, a shared reel,
+    a sticker, a story mention -- answered without the model.
 
     The model cannot watch a video or open a reel, so anything it wrote about
-    one would be about something nobody had seen. A video or a file waits on
-    the doctor, as a photo does, and gets the photo's "we'll take a look"; a
-    shared post gets one question, once a day, about what it is for.
+    one would be about something nobody had seen. The clinic's own answer is
+    a greeting and an offer of help, once a day: "Qaysi masala bo'yicha
+    yubordingiz?" under somebody's shared reel read as an interrogation.
+    A video or a file still waits on the doctor, as a photo does.
     """
     tenant_uuid = uuid.UUID(tenant_id)
     conversation_uuid = uuid.UUID(conversation_id)
@@ -1033,21 +1035,14 @@ async def answer_attachment(
                 session, channel_id=uuid.UUID(channel_id), user_id=conversation.user_id
             ):
                 return
-            if for_a_person:
-                await patient_media.acknowledge(
-                    session,
-                    ctx["redis"],
-                    channel_id=uuid.UUID(channel_id),
-                    conversation_id=conversation_uuid,
-                    recipient_external_id=sender_external_id,
-                )
+            if kind == message_labels.REACTION:
                 return
-            if kind != message_labels.SHARE:
+            if await _said_today(session, conversation_uuid, ATTACHMENT_GREETINGS.values()):
+                logger.info("attachment_greeting_skipped_repeat")
                 return
-            if await _said_today(session, conversation_uuid, SHARE_QUESTIONS.values()):
-                logger.info("share_question_skipped_repeat")
-                return
-            text = SHARE_QUESTIONS[await patient_media.patient_script(session, conversation_uuid)]
+            text = ATTACHMENT_GREETINGS[
+                await patient_media.patient_script(session, conversation_uuid)
+            ]
             delivered = await send_reply(
                 session,
                 channel_id=uuid.UUID(channel_id),
@@ -1063,16 +1058,19 @@ async def answer_attachment(
                     session, conversation_id=conversation_uuid, channel_type=delivered, text=text
                 )
                 await session.commit()
-            logger.info("share_answered", extra={"delivered": delivered is not None})
+            logger.info(
+                "attachment_answered", extra={"kind": kind, "delivered": delivered is not None}
+            )
     finally:
         reset_current_tenant(token)
 
 
-# The one thing to say to a shared post or reel: the assistant cannot open it.
-SHARE_QUESTIONS = {
-    "uz-latn": "Qaysi masala bo'yicha yubordingiz? Savolingizni qisqacha yozib qoldiring.",
-    "uz-cyrl": "Қайси масала бўйича юбордингиз? Саволингизни қисқача ёзиб қолдиринг.",
-    "ru": "По какому вопросу вы это отправили? Напишите, пожалуйста, коротко.",
+# What the clinic says to anything sent without words: the assistant cannot
+# open it, so it greets the patient and offers help.
+ATTACHMENT_GREETINGS = {
+    "uz-latn": "Assalomu alaykum! Sizga qanday yordam bera olaman?",
+    "uz-cyrl": "Ассалому алайкум! Сизга қандай ёрдам бера оламан?",
+    "ru": "Здравствуйте! Чем могу вам помочь?",
 }
 
 

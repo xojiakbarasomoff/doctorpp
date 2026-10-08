@@ -465,12 +465,11 @@ async def _handle_attachment(
     label, then:
 
     * a video or a file is looked at by a person: the conversation waits on
-      the doctor, and the patient hears the same "we'll take a look" a photo
-      gets;
-    * a shared post or reel gets one question -- what is it about -- because
-      the assistant cannot open it and must not pretend to;
-    * a story mention, a sticker or anything unnamed gets nothing: there is
-      nothing in it to answer.
+      the doctor;
+    * every one of them -- video, file, reel, sticker, story mention, or
+      something unnamed -- is answered with a greeting and an offer of help,
+      once a day (app.workers.tasks.answer_attachment), because the
+      assistant cannot open it and must not pretend to.
     """
     assert event.message is not None
     if event.message.mid is not None and not await claim_event(
@@ -501,15 +500,14 @@ async def _handle_attachment(
     await pool.enqueue_job(
         "resolve_username", str(channel.tenant_id), str(channel.channel_id), str(inbound.user_id)
     )
-    if kind in _FOR_A_PERSON or kind == message_labels.SHARE:
-        await pool.enqueue_job(
-            "answer_attachment",
-            str(channel.tenant_id),
-            str(channel.channel_id),
-            str(inbound.conversation_id),
-            event.sender.id,
-            kind,
-        )
+    await pool.enqueue_job(
+        "answer_attachment",
+        str(channel.tenant_id),
+        str(channel.channel_id),
+        str(inbound.conversation_id),
+        event.sender.id,
+        kind or "",
+    )
 
 
 async def _handle_reaction(

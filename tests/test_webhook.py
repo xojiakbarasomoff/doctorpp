@@ -390,14 +390,15 @@ async def test_receive_webhook_tenant_b_account_resolves_to_tenant_b_not_a(
     assert info.args[:2] == (str(seed.tenant_b.id), str(seed.b.channel.id))
 
 
-async def test_a_message_instagram_cannot_show_is_recorded_but_not_answered(
+async def test_a_message_instagram_cannot_show_is_recorded_and_greeted(
     client: httpx.AsyncClient,
     seed: Seed,
     redis_pool: ArqRedis,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """No text and nothing we can name: the clinic sees that the patient
-    sent something, and nobody is asked to answer it."""
+    sent something, and the patient gets the clinic's greeting -- never the
+    model, which would be answering something nobody can see."""
     page_id = seed.a.channel.external_id
     body = _messaging_payload(page_id, "user-1", page_id, None)
     signature = _sign(body, "test-app-secret")
@@ -410,7 +411,8 @@ async def test_a_message_instagram_cannot_show_is_recorded_but_not_answered(
     assert response.status_code == 200
     assert "webhook_attachment_received" in caplog.text
     assert "webhook_message_received" not in caplog.text
-    assert await _answer_jobs(redis_pool) == []
+    jobs = [(await job.info()).function for job in await _answer_jobs(redis_pool)]
+    assert jobs == ["answer_attachment"]
 
 
 async def test_a_photo_is_recorded_and_handed_to_the_media_job(
@@ -678,18 +680,18 @@ async def _transcript(
         (
             {"type": "story_mention", "payload": {"url": "https://ig.example/s/1"}},
             "📣 Storisida klinikani belgiladi",
-            False,
+            True,
         ),
-        ({"type": "like_heart"}, "🏷 Stiker yubordi", False),
+        ({"type": "like_heart"}, "🏷 Stiker yubordi", True),
         (
             {
                 "type": "image",
                 "payload": {"url": "https://cdn.example/s.png", "sticker_id": 369239263222822},
             },
             "🏷 Stiker yubordi",
-            False,
+            True,
         ),
-        ({"type": "something_new"}, "📎 Instagram ko'rsatmaydigan xabar yubordi", False),
+        ({"type": "something_new"}, "📎 Instagram ko'rsatmaydigan xabar yubordi", True),
     ],
 )
 async def test_what_a_patient_sends_without_typing_is_recorded_and_routed(
