@@ -119,6 +119,9 @@ def test_booking_and_telephone_lines_are_not_promises(reply: str) -> None:
         "Hozir sizni administratorimizga ulayman.",
         "Албатта, администраторимиз шу ерда сизга жавоб беради.",
         "Конечно, администратор вам здесь ответит.",
+        "Albatta, xodimimiz siz bilan bog'lanadi.",
+        "Ходимимиз сиз билан боғланади.",
+        "Наш сотрудник с вами свяжется.",
     ],
 )
 def test_a_handover_to_the_administrator_flags_the_conversation(reply: str) -> None:

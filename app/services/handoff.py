@@ -54,12 +54,15 @@ _HANDOVER_WORDS = re.compile(
     # Handing over to the administrator -- what the persona tells it to say to
     # "odam bilan gaplashmoqchiman". Unmarked, nobody was told and the
     # patient waited on a promise nobody knew had been made.
-    r"|admin(istrator)?(imiz|lar(imiz)?)?\s+(ham\s+)?(shu\s+yerda\s+|hozir\s+)?(sizga\s+)?"
+    r"|(admin(istrator)?|xodim)(imiz|lar(imiz)?)?\s+(ham\s+)?(shu\s+yerda\s+|hozir\s+)?"
+    r"(sizga\s+|siz\s+bilan\s+)?"
     rf"(javob\s+ber|yoz|bog{_A}lan|qo{_A}ng{_A}iroq)"
     r"|admin(istrator)?(imiz)?ga\s+ula"
-    r"|админ(истратор)?(имиз|лар(имиз)?)?\s+(ҳам\s+)?(шу\s+ерда\s+|ҳозир\s+)?(сизга\s+)?"
+    r"|(админ(истратор)?|ходим)(имиз|лар(имиз)?)?\s+(ҳам\s+)?(шу\s+ерда\s+|ҳозир\s+)?"
+    r"(сизга\s+|сиз\s+билан\s+)?"
     r"(жавоб\s+бер|ёз|боғлан|қўнғироқ)"
-    r"|администратор\w*\s+(вам\s+)?(здесь\s+|сейчас\s+)?(ответ|напиш|свяж|позвон)"
+    r"|(администратор|сотрудник)\w*\s+(вам\s+|с\s+вами\s+)?(здесь\s+|сейчас\s+)?"
+    r"(ответ|напиш|свяж|позвон)"
     r"|соедин\w*\s+(вас\s+)?с\s+администратор",
     re.IGNORECASE,
 )
