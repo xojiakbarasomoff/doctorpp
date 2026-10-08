@@ -64,8 +64,11 @@ class Settings(BaseSettings):
     # open with "Salom", "Alik", "Nmagap" -- too short and too transliterated
     # for a model to place, and it falls back to English, which reads as the
     # wrong clinic answering. Named in English ("Uzbek", "Russian") because
-    # it goes into an English system prompt.
-    default_reply_language: str = Field(default="English", alias="DEFAULT_REPLY_LANGUAGE")
+    # it goes into an English system prompt. Uzbek by default: an English
+    # default is what answered "Nmagap" with "Hi. What do you need help with?".
+    default_reply_language: str = Field(
+        default="Uzbek, in the Latin alphabet", alias="DEFAULT_REPLY_LANGUAGE"
+    )
 
     # The clinic's street address, given to the model as a fact. Free-form,
     # including any landmark worth reading back.

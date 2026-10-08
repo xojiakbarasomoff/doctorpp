@@ -50,7 +50,17 @@ _HANDOVER_WORDS = re.compile(
     rf"|bir\s+daqiqa|ko{_A}rib\s+(chiqib\s+)?(yozaman|aytaman|beramiz)"
     r"|ҳозир\s+(аниқлаб\s+)?(ёзаман|айтаман|хабар\s+бераман)|аниқлаб\s+(бераман|ёзаман|айтаман)"
     r"|бир\s+дақиқа"
-    r"|сейчас\s+(уточн|узна|напиш|отвеч)|минутк|одну\s+минуту|уточню\s+и\s+(напиш|отве)",
+    r"|сейчас\s+(уточн|узна|напиш|отвеч)|минутк|одну\s+минуту|уточню\s+и\s+(напиш|отве)"
+    # Handing over to the administrator -- what the persona tells it to say to
+    # "odam bilan gaplashmoqchiman". Unmarked, nobody was told and the
+    # patient waited on a promise nobody knew had been made.
+    r"|admin(istrator)?(imiz|lar(imiz)?)?\s+(ham\s+)?(shu\s+yerda\s+|hozir\s+)?(sizga\s+)?"
+    rf"(javob\s+ber|yoz|bog{_A}lan|qo{_A}ng{_A}iroq)"
+    r"|admin(istrator)?(imiz)?ga\s+ula"
+    r"|админ(истратор)?(имиз|лар(имиз)?)?\s+(ҳам\s+)?(шу\s+ерда\s+|ҳозир\s+)?(сизга\s+)?"
+    r"(жавоб\s+бер|ёз|боғлан|қўнғироқ)"
+    r"|администратор\w*\s+(вам\s+)?(здесь\s+|сейчас\s+)?(ответ|напиш|свяж|позвон)"
+    r"|соедин\w*\s+(вас\s+)?с\s+администратор",
     re.IGNORECASE,
 )
 

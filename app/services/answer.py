@@ -29,8 +29,13 @@ from app.repositories.knowledge_base import KnowledgeBaseMatch
 from app.repositories.knowledge_document import ChunkMatch
 from app.services import medical_safety, price_guard
 from app.services import persona as persona_service
-from app.services.language import conversation_script, reply_fits
-from app.services.patient_profile import Profile
+from app.services.language import (
+    clear_script,
+    conversation_script,
+    reply_fits,
+    writes_english,
+)
+from app.services.patient_profile import Profile, asks_for_language
 from app.services.persona import ClinicFacts, PatientState, Persona
 from app.services.tenant_resolution import clinic_rules as clinic_rules_for
 
@@ -50,11 +55,11 @@ _DOCTOR_CONTRACT = """\
 When a person from the clinic has to answer this patient themselves -- you \
 told them the doctor will reply or you will pass their question to the \
 doctor, the facts you were given do not answer what they asked and a person \
-must, or they insist on the doctor personally -- end your reply with \
-[[DOCTOR]]. The patient never sees it; it puts the conversation at the top of \
-the clinic's inbox until somebody answers. Do not write it for anything you \
-answered yourself, for a booking, or for the usual advice to come in for an \
-examination.
+must, or they insist on the doctor personally or ask to talk to a real \
+person -- end your reply with [[DOCTOR]]. The patient never sees it; it puts \
+the conversation at the top of the clinic's inbox until somebody answers. \
+Do not write it for anything you answered yourself, for a booking, or for \
+the usual advice to come in for an examination.
 You only ever speak when the patient writes; you cannot come back to them \
 later. So never say "bir daqiqa", "hozir aniqlab beraman", "hozir ko'rib \
 beramiz" or anything else that promises you will follow up. Say instead that \
@@ -65,11 +70,24 @@ You are the clinic's administrator, not a clinician. Beyond never naming a \
 medicine or a dose: give no home treatment, exercises or techniques to try, \
 no vitamins or supplements, and no opinion on whether a medicine or spray the \
 patient already uses is safe, harmful or fine to keep using -- those are the \
-doctor's, at an examination. Ask at most two short questions about the \
-complaint; you are not taking a medical history. Then say that the doctor \
-gives the cause and the treatment at an examination. Offer an appointment only \
-when the patient asks to book or asks when they can come, and a call only when \
-they say they cannot come; a patient who has said no is not asked again."""
+doctor's, at an examination. Do not explain what causes a condition or how it \
+develops, however many times the patient asks: say the doctor will find the \
+cause at the examination. Ask nothing about the symptoms themselves -- how \
+long, where, what kind of pain, fever -- the doctor asks that. If you do not \
+yet know why they are writing, one general question ("what is bothering \
+you?") is enough. Show brief sympathy. When they ask whether the clinic treats \
+a condition its doctors work with, say yes. Offer an appointment only when the \
+patient asks to book or asks when they can come, and a call only when they say \
+they cannot come; a patient who has said no is not asked again."""
+
+_SERVICE_CONTRACT = """\
+Answer every question in the patient's message -- a patient who asks whether \
+it is treated, what it costs and when to come gets all three answered before \
+you ask anything back. The knowledge base shows the records closest to the \
+message, not necessarily what the patient meant: when they name a kind of \
+service without saying which one ("UZI", "analiz", "tahlil", "УЗИ"), do not \
+assume the specific one a record happens to be about -- ask which one they \
+need."""
 
 # Here and not only in the persona: a clinic that saved its own copy of the
 # persona before the exception existed still forbids every price, and its
@@ -94,8 +112,12 @@ confirm it in one short message and end that same message with \
 time exactly as the book gives them. The patient never sees the marker; it \
 is what writes the appointment down. Never write it before they have agreed \
 to a time, and never tell a patient they are booked in a message that does \
-not carry it. Say the day the way a person would ("bugun", "ertaga", \
-"1-sentabr"), never as 2026-09-01."""
+not carry it. The reason can be as general as what they already said \
+("urolog ko'rigi", "konsultatsiya"); if they never said one, write \
+"konsultatsiya" yourself. Never hold a booking up to ask for the reason -- \
+once they have agreed a time and given a name and number, book, in whatever \
+language the conversation is in. Say the day \
+the way a person would ("bugun", "ertaga", "1-sentabr"), never as 2026-09-01."""
 
 _LANGUAGE_CONTRACT = (
     'Reply only in the language and alphabet given as "Javob tili" above: '
@@ -105,6 +127,13 @@ _LANGUAGE_CONTRACT = (
     "another language or alphabet: say what they mean, in the reply's own "
     "language and alphabet, rather than copying them. When the patient's "
     "language is unclear, reply in {default_language}."
+)
+
+_SCRIPT_REWRITES = 2
+
+_REPLY_LANGUAGE_LINE = (
+    "THIS REPLY: write it entirely in {name} -- every word, the greeting too -- "
+    "whatever language the instructions, examples or knowledge above are in."
 )
 
 _SCRIPT_NAMES = {
@@ -187,9 +216,15 @@ def _build_system_prompt(
     prompt += "\n\n" + _CALLBACK_CONTRACT
     prompt += "\n\n" + _DOCTOR_CONTRACT
     prompt += "\n\n" + _MEDICAL_BOUNDS_CONTRACT
+    prompt += "\n\n" + _SERVICE_CONTRACT
     prompt += "\n\n" + _PRICE_CONTRACT
     if appointment_book is not None:
         prompt += "\n\n" + _BOOKING_CONTRACT + appointment_book
+    if state.script in _SCRIPT_NAMES:
+        # Last, so it is the freshest thing the model reads: the persona and
+        # examples above are all Uzbek Latin, and with only "Javob tili" in
+        # the middle of them Russian conversations drifted into Uzbek.
+        prompt += "\n\n" + _REPLY_LANGUAGE_LINE.format(name=_SCRIPT_NAMES[state.script])
     return prompt
 
 
@@ -316,10 +351,18 @@ async def generate_answer(
     )
     doctors = await DoctorRepository(session).list_active()
 
-    # A language the patient asked for outranks the alphabet their latest
-    # message happens to be in: somebody who said "по-русски" and then typed
-    # "ok" was being answered in Uzbek again.
-    script = (patient.language if patient else None) or conversation_script(history, user_message)
+    # A language the patient asked for outranks a message that does not say
+    # which language it is in: somebody who said "по-русски" and then typed
+    # "ok" was being answered in Uzbek again. It does not outrank a whole
+    # sentence plainly written in another language -- a patient whose saved
+    # choice was Russian and who wrote "Assalomu alaykum, qabulga
+    # yozilmoqchiman" was answered in Russian.
+    asked = patient.language if patient else None
+    own = clear_script(user_message)
+    if asked and (own is None or asks_for_language(user_message) is not None):
+        script = asked
+    else:
+        script = conversation_script(history, user_message)
     state = PatientState(
         name=patient.name if patient else None,
         phone=patient.phone if patient else None,
@@ -447,17 +490,25 @@ async def _enforce_script(
     one more call when it is not. A second miss is sent rather than
     withheld; an answer in the wrong alphabet still beats silence.
     """
-    if script not in _SCRIPT_NAMES or reply_fits(reply, script):
+    allow_english = writes_english(conversation[-1]["content"]) if conversation else False
+    if script not in _SCRIPT_NAMES or reply_fits(reply, script, allow_english=allow_english):
         return reply
     logger.warning("reply_wrong_script", extra={"script": script, "reply": reply[:200]})
     instruction = _WRONG_SCRIPT.format(name=_SCRIPT_NAMES[script])
-    try:
-        second = await provider.generate(system_prompt + instruction, list(conversation))
-    except Exception:
-        logger.exception("reply_script_rewrite_failed")
-        return reply
-    if medical_safety.check(second) is not None or price_guard.check(second, rules):
-        return reply
-    if not reply_fits(second, script):
-        logger.warning("reply_wrong_script_again", extra={"script": script})
-    return second
+    # Two rewrites, not one: on mixed Russian-Uzbek conversations the first
+    # rewrite still came back half in the other language about one time in
+    # three, and that half-and-half reply was what the patient got.
+    best = reply
+    for _ in range(_SCRIPT_REWRITES):
+        try:
+            second = await provider.generate(system_prompt + instruction, list(conversation))
+        except Exception:
+            logger.exception("reply_script_rewrite_failed")
+            return best
+        if medical_safety.check(second) is not None or price_guard.check(second, rules):
+            continue
+        best = second
+        if reply_fits(second, script, allow_english=allow_english):
+            return second
+    logger.warning("reply_wrong_script_again", extra={"script": script})
+    return best

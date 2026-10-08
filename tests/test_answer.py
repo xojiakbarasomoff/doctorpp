@@ -306,6 +306,25 @@ async def test_a_language_the_patient_asked_for_outranks_the_alphabet_of_their_m
     assert "Javob tili: rus, kirill yozuvi" in llm.calls[0][0]
 
 
+async def test_a_whole_sentence_in_another_language_outranks_a_saved_choice(
+    db_session: AsyncSession,
+    seed: Seed,
+    as_tenant: Callable[[UUID], AbstractContextManager[None]],
+) -> None:
+    """A patient saved as Russian who writes a plain Uzbek sentence is
+    answered in Uzbek, not held to Russian for the rest of the conversation."""
+    _, llm = await _ask(
+        db_session,
+        seed,
+        as_tenant,
+        "Assalomu alaykum, qabulga yozilmoqchiman",
+        reply="Va alaykum assalom! Qaysi kun qulay?",
+        patient=Profile(name=None, phone=None, language="ru"),
+    )
+
+    assert "Javob tili: o'zbek, lotin yozuvi" in llm.calls[0][0]
+
+
 async def test_the_bots_own_recent_replies_are_shown_back_to_it(
     db_session: AsyncSession,
     seed: Seed,
@@ -676,7 +695,9 @@ async def test_a_second_miss_is_still_sent_rather_than_nothing(
     )
 
     assert reply == "Tushundim, qachondan beri?"
-    assert len(llm.calls) == 2
+    # The first answer and two rewrites: a reply still in the wrong alphabet
+    # after one rewrite gets a second before the best of them is sent.
+    assert len(llm.calls) == 3
 
 
 # --- the two prices the clinic quotes ----------------------------------------
@@ -873,7 +894,8 @@ async def test_an_alphabet_rewrite_cannot_bring_a_price_back(
         tenant_settings=PRICE_RULES,
     )
 
-    assert len(llm.calls) == 2
+    # Both rewrites quoted the price; neither replaced the reply.
+    assert len(llm.calls) == 3
     assert result == first
 
 

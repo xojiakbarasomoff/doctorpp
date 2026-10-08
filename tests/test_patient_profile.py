@@ -6,6 +6,7 @@ from app.rag.llm import ChatMessage
 from app.services.patient_profile import (
     Found,
     asked_for_a_name,
+    asks_for_language,
     looks_like_a_name,
     normalise_phone,
     read_turn,
@@ -105,3 +106,29 @@ def test_the_assistants_last_question_decides_what_a_bare_reply_is() -> None:
     history.append({"role": "assistant", "content": "Telefon raqamingizni yozing."})
 
     assert asked_for_a_name(history) is False
+
+
+@pytest.mark.parametrize(
+    ("message", "language"),
+    [
+        # Refusing Russian is not asking for it. These were all saved as
+        # "ru", and the patient was answered in Russian from then on.
+        ("Ruscha emas, o'zbekcha yozing", "uz-latn"),
+        ("ruscha emas ozbekcha yozing iltimos", "uz-latn"),
+        ("Men ruscha bilmayman", "uz-latn"),
+        ("Rus tilida yozmang", "uz-latn"),
+        # Every way of asking for Uzbek, not only "o'zbekcha yozing".
+        ("uzbekcha yozing", "uz-latn"),
+        ("o'zbek tilida iltimos", "uz-latn"),
+        ("ўзбекча ёзинг", "uz-cyrl"),
+        ("пишите по-узбекски", "uz-cyrl"),
+        # Asking for Russian, and refusing Uzbek, still mean Russian.
+        ("давайте по-русски", "ru"),
+        ("ruscha yozing", "ru"),
+        ("Я не понимаю по-узбекски", "ru"),
+        ("o'zbekcha bilmayman ruscha yozing", "ru"),
+        ("buyragim ogriyapti", None),
+    ],
+)
+def test_a_language_request_is_read_with_its_negation(message: str, language: str | None) -> None:
+    assert asks_for_language(message) == language

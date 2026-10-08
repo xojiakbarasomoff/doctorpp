@@ -145,31 +145,60 @@ def looks_like_a_name(text: str) -> bool:
 # holds for the conversation: somebody who writes "давайте по-русски" and
 # then answers "ok" was being answered in Uzbek again, because the language
 # was read out of each message rather than remembered.
-_ASKS_FOR = (
-    (
-        "ru",
-        re.compile(
-            r"rus(?:cha|\s*tilida|\s*tilda)|по[\s-]?русски|на\s+русском|русск\w*\s+язык",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        "uz-latn",
-        re.compile(
-            r"o[o'’ʻ]?zbek(?:cha)?(?:\s*til\w*)?\s*(?:yoz|gapir|javob)"
-            r"|lotin(?:cha)?da|на\s+узбекском",
-            re.IGNORECASE,
-        ),
-    ),
-    ("uz-cyrl", re.compile(r"кирилл(?:ча|ицей|ица)|кирил\w*\s*(?:ёз|яз)", re.IGNORECASE)),
+#
+# Read with its negation. Matching the word alone saved "Ruscha emas,
+# o'zbekcha yozing" and "Men ruscha bilmayman" as a request for Russian, and
+# no Uzbek spelling but one was recognised, so those patients were answered
+# in Russian for the rest of the conversation.
+_RUSSIAN = re.compile(
+    r"\brus(?:cha|\s*til\w*)|по[\s-]?русски|на\s+русском|русск\w*|руском|ruski|ruskiy",
+    re.IGNORECASE,
 )
+_UZBEK = re.compile(
+    r"\b(?:o[o'’ʻ‘`]?|u)zbek\w*|ўзбек\w*|узбек\w*|lotin(?:cha)?da|лотинча",
+    re.IGNORECASE,
+)
+_CYRILLIC_ASK = re.compile(r"кирилл(?:ча|ицей|ица)|кирил\w*\s*(?:ёз|яз)|kirill\w*", re.IGNORECASE)
+# "emas", "bilmayman", "tushunmayman", "yozmang", "kerakmas", "не", "нет".
+_NEGATION = re.compile(
+    r"\bemas\b|\bmas\b|bilma\w*|bilmi\w*|tushunma\w*|yozma\w*|kerakmas|keremas"
+    r"|эмас|билма\w*|тушунма\w*|ёзма\w*|\bне\b|\bнет\b|\bnot\b",
+    re.IGNORECASE,
+)
+
+
+def _negated(message: str, match: re.Match[str]) -> bool:
+    """Whether the words right around a language name refuse it.
+
+    Uzbek puts the refusal after the word ("ruscha emas", "ruscha
+    bilmayman"); Russian puts it before, a verb away ("не понимаю
+    по-узбекски"), so the window reaches further back for "не" alone.
+    """
+    after = message[max(0, match.start() - 6) : match.end() + 16]
+    before = message[max(0, match.start() - 18) : match.start()]
+    return bool(_NEGATION.search(after) or re.search(r"\bне\b", before, re.IGNORECASE))
+
+
+def _uzbek_in_alphabet_of(message: str) -> str:
+    return "uz-cyrl" if re.search(r"[Ѐ-ӿ]", message) else "uz-latn"
 
 
 def asks_for_language(message: str) -> str | None:
     """The language this patient just asked to be answered in, if they did."""
-    for language, pattern in _ASKS_FOR:
-        if pattern.search(message):
-            return language
+    if _CYRILLIC_ASK.search(message):
+        return "uz-cyrl"
+    russian = _RUSSIAN.search(message)
+    uzbek = _UZBEK.search(message)
+    if uzbek is not None and not _negated(message, uzbek):
+        return _uzbek_in_alphabet_of(message)
+    if russian is not None and not _negated(message, russian):
+        return "ru"
+    if russian is not None:
+        # Refused Russian and named nothing else: Uzbek, in the alphabet they
+        # are writing in.
+        return _uzbek_in_alphabet_of(message)
+    if uzbek is not None:
+        return "ru"
     return None
 
 

@@ -110,3 +110,18 @@ def test_a_promise_to_come_back_is_kept_by_a_person(reply: str) -> None:
 )
 def test_booking_and_telephone_lines_are_not_promises(reply: str) -> None:
     assert handoff.extract(reply)[1] is False
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Albatta, administratorimiz shu yerda sizga javob beradi.",
+        "Hozir sizni administratorimizga ulayman.",
+        "Албатта, администраторимиз шу ерда сизга жавоб беради.",
+        "Конечно, администратор вам здесь ответит.",
+    ],
+)
+def test_a_handover_to_the_administrator_flags_the_conversation(reply: str) -> None:
+    """What the persona says to "odam bilan gaplashmoqchiman". The model left
+    the marker off every time it said it in testing, so nobody was told."""
+    assert handoff.extract(reply)[1]

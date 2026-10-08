@@ -1,5 +1,5 @@
 from app.rag.llm import ChatMessage
-from app.services.language import conversation_script, reply_script
+from app.services.language import conversation_script, reply_fits, reply_script
 
 
 def test_the_alphabet_is_the_conversations_own_not_the_last_message() -> None:
@@ -51,3 +51,42 @@ def test_a_short_ok_does_not_switch_the_alphabet() -> None:
 def test_anything_unrecognised_is_uzbek_latin() -> None:
     assert reply_script("hello") == "uz-latn"
     assert reply_script("") == "uz-latn"
+
+
+_RUSSIAN_CHAT: list[ChatMessage] = [
+    {"role": "user", "content": "Здравствуйте, хочу записаться к урологу"},
+    {"role": "assistant", "content": "Здравствуйте! На какой день вам удобно?"},
+]
+
+
+def test_a_short_russian_reply_keeps_a_russian_conversation_in_russian() -> None:
+    """ "Понятно" and "Да, давайте" have no "ы" or "ь"; they tied, the tie went
+    to Uzbek, and the Russian patient was answered in Uzbek mid-conversation."""
+    for message in ("Понятно", "Да, давайте", "Адрес?", "Доктор принимает?", "Алишер 90 123 45 67"):
+        assert conversation_script(_RUSSIAN_CHAT, message) == "ru", message
+
+
+def test_a_short_uzbek_reply_keeps_an_uzbek_cyrillic_conversation_in_uzbek() -> None:
+    history: list[ChatMessage] = [{"role": "user", "content": "Салом, кабулга ёзилмокчиман"}]
+
+    for message in ("Рахмат", "Алишер", "качон келсам булады"):
+        assert conversation_script(history, message) == "uz-cyrl", message
+
+
+def test_russian_typed_in_latin_letters_is_answered_in_russian() -> None:
+    assert reply_script("Zdravstvuyte, skolko stoit UZI?") == "ru"
+    assert reply_script("privet, mne nado k vrachu") == "ru"
+    assert reply_script("uzi qilasizlami") == "uz-latn"
+    assert reply_script("doktr qachon ishlidi") == "uz-latn"
+
+
+def test_an_english_reply_does_not_pass_as_uzbek_or_russian() -> None:
+    assert not reply_fits("Hi. What do you need help with?", "uz-latn")
+    assert not reply_fits("Hello. Какое время вам удобно?", "ru")
+    assert reply_fits("Va alaykum assalom! Qanday yordam kerak edi?", "uz-latn")
+
+
+def test_a_word_spelled_in_both_alphabets_does_not_pass() -> None:
+    assert not reply_fits("Да, доктор принимает. Қай соатда келishingiz қулай?", "ru")
+    assert not reply_fits("Ёзувингиз тасдиқланди, уролог Темуr", "uz-cyrl")
+    assert reply_fits("Ва алайкум ассалом. Қачон келишингиз қулай?", "uz-cyrl")
