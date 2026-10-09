@@ -212,16 +212,16 @@ DESCRIPTIONS: dict[str, str] = {
 # wrong costs more than being generic.
 SAFE_REPLIES: dict[str, str] = {
     "uz-latn": (
-        "Buni sizga men aytolmayman — dori va davolash haqida faqat shifokor, "
-        "ko'rikdan keyin gapira oladi. Sizni qabulga yozib qo'yaymi?"
+        "Buni sizga men aytolmayman — dori va davolash haqida faqat doktor, "
+        "ko'rikdan keyin, holatingizga qarab aytadi."
     ),
     "uz-cyrl": (
-        "Буни сизга мен айтолмайман — дори ва даволаш ҳақида фақат шифокор, "
-        "кўрикдан кейин гапира олади. Сизни қабулга ёзиб қўяйми?"
+        "Буни сизга мен айтолмайман — дори ва даволаш ҳақида фақат доктор, "
+        "кўрикдан кейин, ҳолатингизга қараб айтади."
     ),
     "ru": (
         "Этого я вам сказать не могу — о лекарствах и лечении говорит только "
-        "врач, после осмотра. Записать вас на приём?"
+        "врач, после осмотра и с учётом вашего состояния."
     ),
 }
 
