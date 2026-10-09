@@ -432,3 +432,40 @@ async def test_a_reaction_does_not_reopen_the_reply_window(
         )
     ).scalars()
     assert any(r.startswith("💟") for r in rows)
+
+
+async def test_a_reel_with_a_question_under_it_is_answered_not_greeted(
+    db_session: AsyncSession, seed: Seed, as_tenant: AsTenant
+) -> None:
+    """ "Amaliyot narxi qancha?" typed under a shared reel is a question, and
+    the debounced reply answers it. The greeting would be the clinic speaking
+    a second time, as if it had not read what the patient wrote."""
+    share = message_labels.TEXT[message_labels.SHARE]
+    await _conversation(db_session, seed, as_tenant, [("patient", share)])
+    with as_tenant(seed.tenant_a.id):
+        await MessageRepository(db_session).create(
+            conversation_id=seed.a.conversation.id,
+            sender="patient",
+            content="Amaliyot narxi qancha?",
+            channel="instagram",
+            created_at=datetime.now(UTC),
+        )
+
+    sent = await _attachment(db_session, seed, message_labels.SHARE)
+
+    assert sent == []
+
+
+async def test_a_reel_after_an_old_conversation_is_still_greeted(
+    db_session: AsyncSession, seed: Seed, as_tenant: AsTenant
+) -> None:
+    """Words from earlier in the day do not count: only a question typed
+    around the reel means somebody is already answering it."""
+    share = message_labels.TEXT[message_labels.SHARE]
+    await _conversation(
+        db_session, seed, as_tenant, [("patient", "Rahmat"), ("patient", share)], hours_ago=2
+    )
+
+    sent = await _attachment(db_session, seed, message_labels.SHARE)
+
+    assert [text for _, _, text in sent] == [ATTACHMENT_GREETINGS["uz-latn"]]

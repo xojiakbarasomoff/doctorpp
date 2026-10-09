@@ -33,7 +33,12 @@ from app.services.conversation import register_inbound_message
 from app.services.debounce import handle_inbound_message
 from app.services.idempotency import claim_event
 from app.services.profile import remember_username
-from app.services.tenant_resolution import ResolvedChannel, bot_replies_enabled, resolve_channel
+from app.services.tenant_resolution import (
+    ResolvedChannel,
+    bot_replies_enabled,
+    debounce_window,
+    resolve_channel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -290,4 +295,5 @@ async def _handle_update(
         sender_external_id=sender_external_id,
         message_text=message.text,
         reply_context=reply_context,
+        window_seconds=await debounce_window(session, channel.tenant_id),
     )

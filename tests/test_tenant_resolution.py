@@ -3,7 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.channels.base import ChannelType
 from app.models.tenant import Tenant
-from app.services.tenant_resolution import resolve_channel, resolve_instagram_channel
+from app.services.tenant_resolution import (
+    debounce_window,
+    resolve_channel,
+    resolve_instagram_channel,
+)
 from tests.conftest import Seed
 
 
@@ -123,3 +127,18 @@ async def test_bot_replies_enabled_is_per_clinic(db_session: AsyncSession, seed:
 
     assert await bot_replies_enabled(db_session, seed.tenant_a.id) is False
     assert await bot_replies_enabled(db_session, seed.tenant_b.id) is True
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [(12, 12), (0, 0), (None, None), (True, None), ("10", None), (-1, None), (301, None)],
+)
+async def test_the_typing_window_is_the_clinic_s_own_when_it_is_a_sane_one(
+    db_session: AsyncSession, seed: Seed, stored: object, expected: int | None
+) -> None:
+    """Whatever the dashboard saved, the worker gets a whole number of seconds
+    or nothing -- never True read as 1, or a string, or a window of minutes."""
+    seed.tenant_a.settings = {**seed.tenant_a.settings, "debounce_seconds": stored}
+    await db_session.flush()
+
+    assert await debounce_window(db_session, seed.tenant_a.id) == expected

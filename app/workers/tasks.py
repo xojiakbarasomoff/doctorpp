@@ -83,7 +83,7 @@ from app.services.sheets import (
     mirror_lead,
     summarise_problem,
 )
-from app.services.tenant_resolution import bot_replies_enabled
+from app.services.tenant_resolution import bot_replies_enabled, debounce_window
 from app.services.token_refresh import refresh_instagram_tokens
 from app.services.webhook_watch import verify_telegram_webhooks
 
@@ -1037,6 +1037,18 @@ async def answer_attachment(
                 return
             if kind == message_labels.REACTION:
                 return
+            window = await debounce_window(session, tenant_uuid)
+            if window is None:
+                window = get_settings().debounce_window_seconds
+            if await _patient_typed_since(
+                session, conversation_uuid, seconds=window + _TYPED_LOOKBACK_PADDING_SECONDS
+            ):
+                # A reel shared with "Narxi qancha?" under it is a question, and
+                # the debounced reply answers it. A greeting on top of that
+                # answer is the clinic speaking twice -- the second time as if
+                # it had not read what the patient wrote.
+                logger.info("attachment_greeting_skipped_patient_wrote")
+                return
             if await _said_today(session, conversation_uuid, ATTACHMENT_GREETINGS.values()):
                 logger.info("attachment_greeting_skipped_repeat")
                 return
@@ -1065,12 +1077,37 @@ async def answer_attachment(
         reset_current_tenant(token)
 
 
+# How far back answer_attachment looks for words the patient typed, beyond
+# the debounce window itself: the job runs a little after the window closes,
+# and a question typed just before the reel counts as much as one after it.
+_TYPED_LOOKBACK_PADDING_SECONDS = 30
+
+
+async def _patient_typed_since(
+    session: AsyncSession, conversation_id: uuid.UUID, *, seconds: int
+) -> bool:
+    """Whether the patient wrote any words of their own in the last `seconds`
+    -- not a label the system recorded for a photo, reel or sticker."""
+    since = datetime.now(UTC) - timedelta(seconds=seconds)
+    written = (
+        await session.execute(
+            select(Message.content).where(
+                Message.conversation_id == conversation_id,
+                Message.sender == MessageSender.PATIENT,
+                Message.created_at >= since,
+            )
+        )
+    ).scalars()
+    return any(not message_labels.is_label(content) for content in written)
+
+
 # What the clinic says to anything sent without words: the assistant cannot
-# open it, so it greets the patient and offers help.
+# open it, so it greets the patient and invites the question -- the way a
+# person on the front desk would, not "how may I help you".
 ATTACHMENT_GREETINGS = {
-    "uz-latn": "Assalomu alaykum! Sizga qanday yordam bera olaman?",
-    "uz-cyrl": "Ассалому алайкум! Сизга қандай ёрдам бера оламан?",
-    "ru": "Здравствуйте! Чем могу вам помочь?",
+    "uz-latn": "Assalomu alaykum! Savolingiz bo'lsa, bemalol yozing.",
+    "uz-cyrl": "Ассалому алайкум! Саволингиз бўлса, бемалол ёзинг.",
+    "ru": "Здравствуйте! Если есть вопрос, напишите, пожалуйста.",
 }
 
 

@@ -32,6 +32,7 @@ from app.services.idempotency import claim_event
 from app.services.tenant_resolution import (
     ResolvedChannel,
     bot_replies_enabled,
+    debounce_window,
     resolve_instagram_channel,
 )
 
@@ -366,6 +367,7 @@ async def _handle_event(
         conversation_id=inbound.conversation_id,
         sender_external_id=event.sender.id,
         message_text=event.message.text,
+        window_seconds=await debounce_window(session, channel.tenant_id),
     )
 
 
@@ -439,6 +441,10 @@ _KIND_BY_TYPE = {
 # Seen by a person, so the conversation waits on one -- as with a photo.
 _FOR_A_PERSON = {message_labels.VIDEO, message_labels.FILE}
 
+# How long past the debounce window the attachment greeting waits, so a
+# question typed under a reel has been recorded before the greeting looks.
+_ATTACHMENT_GREETING_DELAY_SECONDS = 2
+
 
 def _attachment_kind(message: WebhookMessage) -> str | None:
     """The label for a message with no text, or None for one we cannot name."""
@@ -500,6 +506,12 @@ async def _handle_attachment(
     await pool.enqueue_job(
         "resolve_username", str(channel.tenant_id), str(channel.channel_id), str(inbound.user_id)
     )
+    # After the debounce window, not at once: a reel and the question typed
+    # under it arrive as two events, and the greeting has to see the question
+    # to know the patient is already being answered.
+    window = await debounce_window(session, channel.tenant_id)
+    if window is None:
+        window = get_settings().debounce_window_seconds
     await pool.enqueue_job(
         "answer_attachment",
         str(channel.tenant_id),
@@ -507,6 +519,7 @@ async def _handle_attachment(
         str(inbound.conversation_id),
         event.sender.id,
         kind or "",
+        _defer_by=window + _ATTACHMENT_GREETING_DELAY_SECONDS,
     )
 
 

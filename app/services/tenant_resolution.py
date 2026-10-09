@@ -83,6 +83,27 @@ async def bot_replies_enabled(session: AsyncSession, tenant_id: uuid.UUID) -> bo
     return bool(tenant.settings.get("bot_replies_enabled", True))
 
 
+async def debounce_window(session: AsyncSession, tenant_id: uuid.UUID) -> int | None:
+    """How long this clinic waits for a patient to finish typing, in seconds.
+
+    The dashboard's "Kutish oynasi" (tenants.settings["debounce_seconds"]).
+    It was saved and shown back for months while every reply still waited
+    the deployment's DEBOUNCE_WINDOW_SECONDS, so a clinic that raised it to
+    stop answers landing between a patient's bubbles saw nothing change.
+
+    None when the clinic has not set one: the caller falls back to the
+    deployment's own default. A value that is not a whole number of seconds
+    within what the dashboard allows reads as unset rather than as zero.
+    """
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None:
+        return None
+    raw = tenant.settings.get("debounce_seconds")
+    if isinstance(raw, bool) or not isinstance(raw, int) or not 0 <= raw <= 300:
+        return None
+    return raw
+
+
 async def clinic_rules(session: AsyncSession, tenant_id: uuid.UUID) -> list[str]:
     """The clinic's own standing instructions, from tenants.settings.
 

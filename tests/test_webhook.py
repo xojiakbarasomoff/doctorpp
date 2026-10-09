@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractContextManager
@@ -852,3 +853,57 @@ async def test_a_malformed_event_is_refused_cleanly(
     response = await _post(client, _event(page_id, "odd", **payload))
 
     assert response.status_code in (200, 422)
+
+
+async def _deferred_seconds(job: Job) -> float:
+    """How far in the future arq will run this job, in seconds."""
+    info = await job.info()
+    assert info is not None
+    return info.score / 1000 - time.time()
+
+
+async def test_the_clinic_s_own_typing_window_is_what_the_reply_waits(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+) -> None:
+    """The dashboard's "Kutish oynasi", not the deployment default: a clinic
+    that raises it so answers stop landing between a patient's bubbles has
+    to see the reply wait that long."""
+    seed.tenant_a.settings = {**seed.tenant_a.settings, "debounce_seconds": 12}
+    await db_session.flush()
+    page_id = seed.a.channel.external_id
+    body = _messaging_payload(page_id, "user-1", page_id, "Salom")
+
+    response = await client.post(
+        "/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body, "test-app-secret")}
+    )
+
+    assert response.status_code == 200
+    [job] = await _answer_jobs(redis_pool)
+    assert 10 <= await _deferred_seconds(job) <= 12.5
+
+
+async def test_an_attachment_greeting_waits_for_the_question_typed_under_it(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed: Seed,
+    redis_pool: ArqRedis,
+) -> None:
+    """A reel and the question under it arrive as two events. The greeting
+    is held past the typing window, so the job can see the question and
+    leave the answering to the reply that is coming anyway."""
+    seed.tenant_a.settings = {**seed.tenant_a.settings, "debounce_seconds": 12}
+    await db_session.flush()
+    page_id = seed.a.channel.external_id
+    body = _messaging_payload(page_id, "user-1", page_id, None)
+
+    response = await client.post(
+        "/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body, "test-app-secret")}
+    )
+
+    assert response.status_code == 200
+    [job] = await _answer_jobs(redis_pool)
+    assert (await job.info()).function == "answer_attachment"  # type: ignore[union-attr]
+    assert 12 <= await _deferred_seconds(job) <= 14.5
