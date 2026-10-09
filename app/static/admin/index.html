@@ -522,7 +522,7 @@
 
   .rp-hero { display: flex; flex-direction: column; gap: 22px; padding: 24px; }
   .rp-figures { display: flex; align-items: flex-start; gap: 28px; flex-wrap: wrap; padding-bottom: 22px; border-bottom: 1px solid var(--rule); }
-  .rp-fig { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
+  .rp-fig { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
   .rp-fig-side { margin-left: auto; padding-left: 28px; border-left: 1px solid var(--rule); }
   .rp-arrow { align-self: center; color: var(--ink-4); padding-top: 18px; }
   .rp-arrow svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -541,8 +541,9 @@
     .rp-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 16px; }
     .rp-fig { min-width: 0; }
     .rp-fig:first-child { grid-column: 1 / -1; }
+    .rp-fig-side { grid-column: 1 / -1; }
     .rp-arrow { display: none; }
-    .rp-fig-side { margin: 0; padding: 0 0 0 16px; }
+    .rp-fig-side { margin: 0; padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--rule); }
     .rp-big { font-size: 36px; }
   }
   .rp-hero-chart { min-width: 0; display: flex; flex-direction: column; }
@@ -1082,6 +1083,12 @@
             <span class="rp-eyebrow">Qabulga yozildi</span>
             <b class="rp-big" id="rpBooked">—</b>
             <span class="rp-of" id="rpBookedOf"></span>
+          </div>
+          <span class="rp-arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+          <div class="rp-fig">
+            <span class="rp-eyebrow">Keldi</span>
+            <b class="rp-big" id="rpCame">—</b>
+            <span class="rp-of" id="rpCameOf"></span>
           </div>
           <div class="rp-fig rp-fig-side">
             <span class="rp-eyebrow">Bot yozgan qabullar</span>
@@ -3509,6 +3516,16 @@ async function loadReport() {
   document.getElementById("rpBookedOf").replaceChildren(
     active ? `${fmtNumber(active)} tadan ${fmtNumber(booked)} tasi` : "bu davrda bemor yozmagan",
     active && before ? el("small", {}, ` · oldin ${fmtNumber(before)}%`) : "");
+
+  // Of the visits whose day has come and that somebody marked, how many
+  // came. Unmarked ones are left out rather than counted as no-shows.
+  const statusCount = (key) => (r.appointment_status.find((s) => s.key === key) || { count: 0 }).count;
+  const came = statusCount("completed");
+  const marked = came + statusCount("no_show");
+  document.getElementById("rpCame").textContent = marked ? `${Math.round((came / marked) * 100)}%` : "—";
+  document.getElementById("rpCameOf").textContent = marked
+    ? `${fmtNumber(marked)} ta belgilangan qabuldan ${fmtNumber(came)} tasi`
+    : "hali \"Keldi / Kelmadi\" belgilanmagan";
 
   const sources = r.appointment_source;
   const allBooked = sources.reduce((n, s) => n + s.count, 0);
