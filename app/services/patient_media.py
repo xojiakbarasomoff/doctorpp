@@ -7,8 +7,8 @@ stopping the next:
 
 1. The image is downloaded and stored. Instagram's attachment links are
    signed and expire, so a link alone would be a blank square by next week.
-2. The patient is told "Hozir ko'rib beramiz", once per burst: three photos
-   sent in a row are one acknowledgement, not three.
+2. The patient is told the photo arrived and the doctor answers here, once
+   per burst: three photos sent in a row are one acknowledgement, not three.
 3. The doctor's Telegram gets the photo and who sent it.
 
 The assistant never answers a photo itself. A medical image is the last thing
@@ -46,10 +46,13 @@ MAX_IMAGE_BYTES = 15 * 1024 * 1024
 # One acknowledgement per burst of photos from the same conversation.
 ACK_WINDOW_SECONDS = 120
 
+# Said once per burst. Not "hozir ko'rib beramiz": nobody looks at once, and
+# the assistant cannot come back to say so -- the photo waits on the doctor,
+# who answers in this conversation.
 ACKNOWLEDGEMENTS = {
-    "uz-latn": "Hozir ko'rib beramiz.",
-    "uz-cyrl": "Ҳозир кўриб берамиз.",
-    "ru": "Сейчас посмотрим.",
+    "uz-latn": "Rasmingiz qabul qilindi. Doktor ko'rib chiqib, shu yerda javob beradi.",
+    "uz-cyrl": "Расмингиз қабул қилинди. Доктор кўриб чиқиб, шу ерда жавоб беради.",
+    "ru": "Фото получили. Врач посмотрит и ответит здесь.",
 }
 
 

@@ -19,16 +19,16 @@ from app.services.language import reply_script
 
 REPLIES = {
     "uz-latn": (
-        "Men administratorman, ovozli xabarlarga doktorning o'zlari javob beradilar. "
-        "Savolingizni yozib qoldirsangiz, men ham yordam bera olaman."
+        "Ovozli xabaringiz qabul qilindi, klinika xodimi eshitib, shu yerda javob beradi. "
+        "Savolingizni yozib yuborsangiz, men darhol javob bera olaman."
     ),
     "uz-cyrl": (
-        "Мен администраторман, овозли хабарларга докторнинг ўзлари жавоб берадилар. "
-        "Саволингизни ёзиб қолдирсангиз, мен ҳам ёрдам бера оламан."
+        "Овозли хабарингиз қабул қилинди, клиника ходими эшитиб, шу ерда жавоб беради. "
+        "Саволингизни ёзиб юборсангиз, мен дарҳол жавоб бера оламан."
     ),
     "ru": (
-        "Я администратор, на голосовые сообщения отвечает сам доктор. "
-        "Если напишете вопрос текстом, я тоже смогу помочь."
+        "Голосовое сообщение получили, сотрудник клиники прослушает и ответит здесь. "
+        "Если напишете вопрос текстом, я отвечу сразу."
     ),
 }
 

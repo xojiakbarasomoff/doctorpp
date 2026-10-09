@@ -18,8 +18,11 @@ from tests.conftest import Seed
 
 
 def test_a_voice_note_is_answered_by_the_administrator_not_the_model() -> None:
-    assert "administratorman" in voice_notes.REPLIES["uz-latn"]
-    assert "доктор" in voice_notes.REPLIES["ru"]
+    # The clinic's own rule: ask for the question in writing, and never
+    # promise that the doctor in person answers recordings.
+    assert "yozib" in voice_notes.REPLIES["uz-latn"]
+    assert "напишете" in voice_notes.REPLIES["ru"]
+    assert all("o'zlari" not in reply for reply in voice_notes.REPLIES.values())
     assert set(voice_notes.REPLIES) == {"uz-latn", "uz-cyrl", "ru"}
 
 
